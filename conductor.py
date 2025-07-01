@@ -21,8 +21,6 @@ def load_config(path: str):
 
     sections = parser.sections()
     global_present = parser.has_section("global")
-    timeout_cushion = parser.getfloat("TimeoutControl", "timeout_cushion", fallback=2.0)
-    rolling_window = parser.getint("TimeoutControl", "rolling_window", fallback=10)
     topic_in_models = any(
         parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
     )
@@ -36,15 +34,17 @@ def load_config(path: str):
         temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
         max_tokens_global = parser.getint("global", "max_tokens", fallback=300)
         chat_style_global = parser.get("global", "chat_style", fallback=None)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
     else:
         topic_prompt_global = None
         temperature_global = 0.7
         max_tokens_global = 300
         chat_style_global = None
+        watchdog_global = 300
 
     agents = []
     for section in sections:
-        if section in ("global", "TimeoutControl"):
+        if section == "global":
             continue
 
         if not parser.has_option(section, "model"):
@@ -59,6 +59,7 @@ def load_config(path: str):
         temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
         max_tokens = parser.getint(section, "max_tokens", fallback=max_tokens_global)
         chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
+        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
 
         topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
         if topic_prompt is None:
@@ -73,8 +74,7 @@ def load_config(path: str):
             "temperature": temperature,
             "max_tokens": max_tokens,
             "chat_style": chat_style,
-            "rolling_window": rolling_window,
-            "timeout_cushion": timeout_cushion,
+            "watchdog_timeout": watchdog,
         }
 
         if role == "archivist":
@@ -160,12 +160,7 @@ def main() -> None:
     try:
         while True:
             for ai in ruminators:
-                try:
-                    reply = ai.step(chat_log)
-                except TimeoutError:
-                    reply = f"[{ai.name} timed out]"
-                except Exception as exc:  # noqa: BLE001
-                    reply = f"[{ai.name} error: {exc}]"
+                reply = ai.step(chat_log)
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 chat_log.append(
                     {
@@ -182,12 +177,7 @@ def main() -> None:
                     )
 
             if archivist:
-                try:
-                    summary = archivist.step(chat_log)
-                except TimeoutError:
-                    summary = f"[{archivist.name} timed out]"
-                except Exception as exc:  # noqa: BLE001
-                    summary = f"[{archivist.name} error: {exc}]"
+                summary = archivist.step(chat_log)
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(
                     f"[{ts}] {archivist.name} archived transcript and wrote summary."
