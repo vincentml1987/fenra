@@ -21,6 +21,8 @@ def load_config(path: str):
 
     sections = parser.sections()
     global_present = parser.has_section("global")
+    timeout_cushion = parser.getfloat("TimeoutControl", "timeout_cushion", fallback=2.0)
+    rolling_window = parser.getint("TimeoutControl", "rolling_window", fallback=10)
     topic_in_models = any(
         parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
     )
@@ -42,7 +44,7 @@ def load_config(path: str):
 
     agents = []
     for section in sections:
-        if section == "global":
+        if section in ("global", "TimeoutControl"):
             continue
 
         if not parser.has_option(section, "model"):
@@ -71,6 +73,8 @@ def load_config(path: str):
             "temperature": temperature,
             "max_tokens": max_tokens,
             "chat_style": chat_style,
+            "rolling_window": rolling_window,
+            "timeout_cushion": timeout_cushion,
         }
 
         if role == "archivist":
@@ -156,7 +160,12 @@ def main() -> None:
     try:
         while True:
             for ai in ruminators:
-                reply = ai.step(chat_log)
+                try:
+                    reply = ai.step(chat_log)
+                except TimeoutError:
+                    reply = f"[{ai.name} timed out]"
+                except Exception as exc:  # noqa: BLE001
+                    reply = f"[{ai.name} error: {exc}]"
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 chat_log.append(
                     {
@@ -173,7 +182,12 @@ def main() -> None:
                     )
 
             if archivist:
-                summary = archivist.step(chat_log)
+                try:
+                    summary = archivist.step(chat_log)
+                except TimeoutError:
+                    summary = f"[{archivist.name} timed out]"
+                except Exception as exc:  # noqa: BLE001
+                    summary = f"[{archivist.name} error: {exc}]"
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(
                     f"[{ts}] {archivist.name} archived transcript and wrote summary."

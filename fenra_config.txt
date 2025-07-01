@@ -4,6 +4,10 @@ temperature=0.7
 max_tokens=300
 chat_style=formal debate
 
+[TimeoutControl]
+timeout_cushion = 2.0
+rolling_window = 10
+
 [Beluga]
 model=stable-beluga:13b
 role=ruminator
