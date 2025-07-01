@@ -7,14 +7,14 @@ import configparser
 
 import requests
 
-from ai_model import AIModel
+from ai_model import Ruminator, Archivist
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
 
 
-def load_config(path: str) -> List[AIModel]:
-    """Parse fenra_config.txt and return instantiated AIModel objects."""
+def load_config(path: str):
+    """Parse fenra_config.txt and return instantiated agent objects."""
     parser = configparser.ConfigParser()
     if not parser.read(path):
         raise RuntimeError(f"Failed to read config file {path}")
@@ -40,7 +40,7 @@ def load_config(path: str) -> List[AIModel]:
         max_tokens_global = 300
         chat_style_global = None
 
-    models: List[AIModel] = []
+    agents = []
     for section in sections:
         if section == "global":
             continue
@@ -64,22 +64,38 @@ def load_config(path: str) -> List[AIModel]:
                 f"Config error: topic_prompt missing for AI '{section}' and no global default."
             )
 
-        models.append(
-            AIModel(
-                name=section,
-                model_id=model_id,
-                topic_prompt=topic_prompt,
-                role_prompt=role_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                chat_style=chat_style,
-            )
-        )
+        role = parser.get(section, "role", fallback="ruminator").lower()
 
-    if not models:
+        cfg = {
+            "topic_prompt": topic_prompt,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "chat_style": chat_style,
+        }
+
+        if role == "archivist":
+            agents.append(
+                Archivist(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                )
+            )
+        else:
+            agents.append(
+                Ruminator(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                )
+            )
+
+    if not agents:
         raise RuntimeError("No active AI models found in config.")
 
-    return models
+    return agents
 
 
 def ensure_models_available(model_ids: List[str]) -> None:
@@ -128,31 +144,49 @@ def ensure_models_available(model_ids: List[str]) -> None:
 
 
 def main() -> None:
-    ai_models = load_config("fenra_config.txt")
-    ensure_models_available([m.model_id for m in ai_models])
+    agents = load_config("fenra_config.txt")
+    ensure_models_available([a.model_name for a in agents])
+
+    ruminators = [a for a in agents if isinstance(a, Ruminator)]
+    archivists = [a for a in agents if isinstance(a, Archivist)]
+    archivist = archivists[0] if archivists else None
 
     chat_log: List[Dict[str, str]] = []
 
-    index = 0
     try:
         while True:
-            ai = ai_models[index]
-            reply = ai.generate_response(chat_log)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            chat_log.append(
-                {
-                    "sender": ai.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                }
-            )
-            print(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
+            for ai in ruminators:
+                reply = ai.step(chat_log)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                chat_log.append(
+                    {
+                        "sender": ai.name,
+                        "timestamp": timestamp,
+                        "message": reply,
+                    }
+                )
+                print(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
 
-            with open("chat_log.txt", "a", encoding="utf-8") as log_file:
-                log_file.write(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
-                
-            index = (index + 1) % len(ai_models)
-            print(index)
+                with open("chat_log.txt", "a", encoding="utf-8") as log_file:
+                    log_file.write(
+                        f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
+                    )
+
+            if archivist:
+                summary = archivist.step(chat_log)
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(
+                    f"[{ts}] {archivist.name} archived transcript and wrote summary."
+                )
+
+                chat_log = [
+                    {
+                        "sender": archivist.name,
+                        "timestamp": ts,
+                        "message": summary,
+                    }
+                ]
+
             time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nConversation ended.")

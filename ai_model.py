@@ -76,3 +76,73 @@ class AIModel:
                 break
             result_text += chunk.get("response", "")
         return result_text
+
+
+class Agent:
+    """Base class for all agents."""
+
+    def __init__(
+        self,
+        name: str,
+        model_name: str,
+        role_prompt: str,
+        config: Dict[str, Optional[str]],
+    ) -> None:
+        self.name = name
+        self.model_name = model_name
+        self.role_prompt = role_prompt
+
+        self.model = AIModel(
+            name=name,
+            model_id=model_name,
+            topic_prompt=config.get("topic_prompt", ""),
+            role_prompt=role_prompt,
+            temperature=float(config.get("temperature", 0.7)),
+            max_tokens=int(config.get("max_tokens", 300)),
+            chat_style=config.get("chat_style"),
+        )
+
+    def step(self, context: List[Dict[str, str]]):
+        raise NotImplementedError
+
+
+class Ruminator(Agent):
+    """Regular discussion participant."""
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        return self.model.generate_response(context)
+
+
+class Archivist(Agent):
+    """Non-participating summarizer and archivist."""
+
+    def step(self, full_context: List[Dict[str, str]]) -> str:
+        """Archive transcript and return compressed summary."""
+        from datetime import datetime
+        import os
+
+        # Archive full transcript
+        try:
+            os.makedirs("archive", exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            fname = os.path.join("archive", f"{ts}_full.txt")
+            with open(fname, "w", encoding="utf-8") as f:
+                for entry in full_context:
+                    sender = entry.get("sender", "")
+                    message = entry.get("message", "")
+                    timestamp = entry.get("timestamp", "")
+                    f.write(f"[{timestamp}] {sender}: {message}\n")
+        except OSError as exc:
+            print(f"Failed to archive conversation: {exc}")
+
+        # Generate summary using the model
+        summary = self.model.generate_response(full_context)
+
+        # Save summary to file
+        try:
+            with open("summary.txt", "w", encoding="utf-8") as f:
+                f.write(summary)
+        except OSError as exc:
+            print(f"Failed to write summary: {exc}")
+
+        return summary

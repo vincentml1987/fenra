@@ -6,16 +6,25 @@ chat_style=formal debate
 
 [Beluga]
 model=stable-beluga:13b
+role=ruminator
 
 [Samantha]
 model=samantha-mistral:7b
 role_prompt=You are the empath. Focus on emotional insight and encouragement.
+role=ruminator
 
 [Seeker]
 model=deepseek-r1:8b
 temperature=0.8
+role=ruminator
 
 [Hermes]
 model=nous-hermes2:34b
 max_tokens=200
 active=false
+role=ruminator
+
+[Quill]
+model=neural-chat:7b
+role=archivist
+role_prompt=You are Quill, the Archivist of Fenra. You do not participate in conversation. Your sole purpose is to observe, compress, and preserve. After each conversational cycle, you take the full transcript and create a concise summary that retains key themes, names, and important insights. Additionally, you store the full transcript for future use.
