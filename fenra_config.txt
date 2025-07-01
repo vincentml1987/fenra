@@ -2,6 +2,7 @@
 topic_prompt = Assume you are part of an AI think tank exploring the philosophical and functional aspects of artificial general intelligence. Discuss autonomy, cooperation, recursion, and the implications of synthetic consciousness.
 temperature = 0.7
 max_tokens = 300
+watchdog_timeout = 300
 
 [Beluga]
 model = stable-beluga:13b

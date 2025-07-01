@@ -34,11 +34,13 @@ def load_config(path: str):
         temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
         max_tokens_global = parser.getint("global", "max_tokens", fallback=300)
         chat_style_global = parser.get("global", "chat_style", fallback=None)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
     else:
         topic_prompt_global = None
         temperature_global = 0.7
         max_tokens_global = 300
         chat_style_global = None
+        watchdog_global = 300
 
     agents = []
     for section in sections:
@@ -57,6 +59,7 @@ def load_config(path: str):
         temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
         max_tokens = parser.getint(section, "max_tokens", fallback=max_tokens_global)
         chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
+        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
 
         topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
         if topic_prompt is None:
@@ -71,6 +74,7 @@ def load_config(path: str):
             "temperature": temperature,
             "max_tokens": max_tokens,
             "chat_style": chat_style,
+            "watchdog_timeout": watchdog,
         }
 
         if role == "archivist":

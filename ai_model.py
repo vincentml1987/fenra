@@ -14,11 +14,13 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: int = 300,
         chat_style: Optional[str] = None,
+        watchdog_timeout: int = 300,
     ) -> None:
         self.name = name
         self.model_id = model_id
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.watchdog_timeout = watchdog_timeout
 
         parts = [topic_prompt]
         if role_prompt:
@@ -54,7 +56,10 @@ class AIModel:
 
         try:
             resp = requests.post(
-                "http://localhost:11434/api/generate", json=payload, stream=True
+                "http://localhost:11434/api/generate",
+                json=payload,
+                stream=True,
+                timeout=self.watchdog_timeout,
             )
         except requests.RequestException as exc:
             raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
@@ -100,6 +105,7 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=int(config.get("max_tokens", 300)),
             chat_style=config.get("chat_style"),
+            watchdog_timeout=int(config.get("watchdog_timeout", 300)),
         )
 
     def step(self, context: List[Dict[str, str]]):
