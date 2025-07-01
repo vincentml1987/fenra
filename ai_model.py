@@ -1,6 +1,13 @@
 import json
+from typing import Dict, List, Optional
+
 import requests
-from typing import List, Dict, Optional
+
+from runtime_utils import (
+    AITimeTracker,
+    generate_with_watchdog,
+    parse_model_size,
+)
 
 class AIModel:
     """A single AI agent powered by an Ollama model."""
@@ -14,11 +21,16 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: int = 300,
         chat_style: Optional[str] = None,
+        rolling_window: int = 10,
+        timeout_cushion: float = 2.0,
     ) -> None:
         self.name = name
         self.model_id = model_id
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.model_size = parse_model_size(model_id)
+        self.tracker = AITimeTracker(rolling_window=rolling_window)
+        self.timeout_cushion = timeout_cushion
 
         parts = [topic_prompt]
         if role_prompt:
@@ -47,35 +59,17 @@ class AIModel:
             "model": self.model_id,
             "prompt": prompt,
             "system": self.system_prompt,
-            "stream": True,
+            "stream": False,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
 
-        try:
-            resp = requests.post(
-                "http://localhost:11434/api/generate", json=payload, stream=True
-            )
-        except requests.RequestException as exc:
-            raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
-
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Ollama API error: {resp.status_code} {resp.text}"
-            )
-
-        result_text = ""
-        for line in resp.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line.decode("utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if chunk.get("done"):
-                break
-            result_text += chunk.get("response", "")
-        return result_text
+        return generate_with_watchdog(
+            payload=payload,
+            model_size_b=self.model_size,
+            tracker=self.tracker,
+            timeout_cushion=self.timeout_cushion,
+        )
 
 
 class Agent:
@@ -100,6 +94,8 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=int(config.get("max_tokens", 300)),
             chat_style=config.get("chat_style"),
+            rolling_window=int(config.get("rolling_window", 10)),
+            timeout_cushion=float(config.get("timeout_cushion", 2.0)),
         )
 
     def step(self, context: List[Dict[str, str]]):

@@ -3,6 +3,10 @@ topic_prompt = Assume you are part of an AI think tank exploring the philosophic
 temperature = 0.7
 max_tokens = 300
 
+[TimeoutControl]
+timeout_cushion = 2.0
+rolling_window = 10
+
 [Beluga]
 model = stable-beluga:13b
 role_prompt = You are Beluga, a poetic and intuitive thinker. You tend to view things in metaphor and speak in flowing, abstract concepts.
