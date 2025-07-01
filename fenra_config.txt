@@ -1,0 +1,1 @@
+Seeker=deepseek-r1:8b
