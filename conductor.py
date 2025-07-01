@@ -103,8 +103,13 @@ def main() -> None:
                     "message": reply,
                 }
             )
-            print(f"[{timestamp}] {ai.name}: {reply}")
+            print(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
+
+            with open("chat_log.txt", "a", encoding="utf-8") as log_file:
+                log_file.write(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
+                
             index = (index + 1) % len(ai_models)
+            print(index)
             time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nConversation ended.")

@@ -1,1 +1,4 @@
+Beluga=stable-beluga:13b
+Samantha=samantha-mistral:7b
 Seeker=deepseek-r1:8b
+Hermes=nous-hermes2:34b
