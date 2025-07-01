@@ -1,4 +1,21 @@
-Beluga=stable-beluga:13b
-Samantha=samantha-mistral:7b
-Seeker=deepseek-r1:8b
-Hermes=nous-hermes2:34b
+[global]
+topic_prompt=You are here to discuss the future of AI ethics and governance. Each model speaks only for itself and builds on others’ ideas.
+temperature=0.7
+max_tokens=300
+chat_style=formal debate
+
+[Beluga]
+model=stable-beluga:13b
+
+[Samantha]
+model=samantha-mistral:7b
+role_prompt=You are the empath. Focus on emotional insight and encouragement.
+
+[Seeker]
+model=deepseek-r1:8b
+temperature=0.8
+
+[Hermes]
+model=nous-hermes2:34b
+max_tokens=200
+active=false
