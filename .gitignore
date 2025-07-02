@@ -2,5 +2,6 @@
 fenra_config.txt
 chat_log.txt
 summary.txt
+summary_log.txt
 archive/
 __pycache__/

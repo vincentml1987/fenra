@@ -21,10 +21,10 @@ class AITimeTracker:
         self.data.append(ai_seconds)
 
     def average(self) -> float:
-        """Return the average AI Seconds; fallback to 1.0 if none."""
-        if not self.data:
-            return 1.0
-        return sum(self.data) / len(self.data)
+        """Return the rolling average AI Seconds with a 300s baseline."""
+        total = sum(self.data) + 300
+        count = len(self.data) + 1
+        return total / count
 
 
 def parse_model_size(model_id: str) -> float:
