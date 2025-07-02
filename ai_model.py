@@ -151,4 +151,11 @@ class Archivist(Agent):
         except OSError as exc:
             print(f"Failed to write summary: {exc}")
 
+        # Append summary with timestamp to running log
+        try:
+            with open("summary_log.txt", "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {summary}\n{'-' * 80}\n")
+        except OSError as exc:
+            print(f"Failed to update summary log: {exc}")
+
         return summary
