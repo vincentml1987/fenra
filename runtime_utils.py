@@ -1,11 +1,52 @@
 import json
+import os
 import re
 import threading
 import time
 from collections import deque
+from datetime import datetime, timedelta
 from typing import Dict
 
+import logging
 import requests
+
+
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+GLOBAL_LOG_LEVEL = logging.INFO
+
+
+def parse_log_level(level_name: str) -> int:
+    """Return a logging level constant from a name."""
+    return getattr(logging, level_name.upper(), logging.INFO)
+
+
+def init_global_logging(level: int) -> None:
+    """Initialize root logging and store the global level."""
+    global GLOBAL_LOG_LEVEL
+    GLOBAL_LOG_LEVEL = level
+    os.makedirs("logs", exist_ok=True)
+    logging.basicConfig(level=level, format=LOG_FORMAT)
+
+
+def create_object_logger(class_name: str) -> logging.Logger:
+    """Create a per-object logger writing to a timestamped file."""
+    os.makedirs("logs", exist_ok=True)
+    ts = datetime.utcnow()
+    while True:
+        stamp = ts.strftime("%Y%m%dT%H%M%SZ")
+        fname = f"{class_name}-{stamp}.log"
+        path = os.path.join("logs", fname)
+        if not os.path.exists(path):
+            break
+        ts += timedelta(seconds=1)
+
+    logger = logging.getLogger(f"{class_name}-{stamp}")
+    handler = logging.FileHandler(path, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(handler)
+    logger.setLevel(GLOBAL_LOG_LEVEL)
+    logger.propagate = False
+    return logger
 
 
 class AITimeTracker:
@@ -13,18 +54,28 @@ class AITimeTracker:
 
     def __init__(self, rolling_window: int = 10) -> None:
         self.data = deque(maxlen=rolling_window)
+        self.logger = create_object_logger(self.__class__.__name__)
+        self.logger.info("Initialized AITimeTracker")
 
     def record(self, wall_time: float, model_size_b: float) -> None:
         """Convert wall time to AI Seconds (normalized to 7b) and store."""
         factor = (model_size_b / 7) ** 1.2
         ai_seconds = wall_time / factor
         self.data.append(ai_seconds)
+        self.logger.debug(
+            "Recorded %.2fs wall time (%.2fB) -> %.2f AI seconds",
+            wall_time,
+            model_size_b,
+            ai_seconds,
+        )
 
     def average(self) -> float:
         """Return the rolling average AI Seconds with a 300s baseline."""
         total = sum(self.data) + 300
         count = len(self.data) + 1
-        return total / count
+        avg = total / count
+        self.logger.debug("Average AI seconds: %.2f", avg)
+        return avg
 
 
 def parse_model_size(model_id: str) -> float:
@@ -56,6 +107,8 @@ def generate_with_watchdog(
     """Call Ollama with a watchdog timeout based on normalized averages."""
 
     model_id = payload.get("model", "unknown")
+    logger = create_object_logger(f"Watchdog-{model_id}")
+    logger.info("Starting generation with watchdog")
     result: Dict[str, object] = {"response": None, "exception": None}
 
     def worker() -> None:
@@ -77,6 +130,7 @@ def generate_with_watchdog(
             result["response"] = text
         except Exception as exc:  # noqa: BLE001
             result["exception"] = exc
+            logger.error("Exception during generation: %s", exc)
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
@@ -84,13 +138,17 @@ def generate_with_watchdog(
     avg_ai = tracker.average()
     expected_wall = avg_ai * ((model_size_b / 7) ** 1.2)
     timeout = expected_wall * timeout_cushion
+    logger.debug("Timeout set to %.2fs", timeout)
 
     thread.join(timeout=timeout)
 
     if thread.is_alive():
+        logger.error("Timeout exceeded")
         raise TimeoutError(f"{model_id} exceeded timeout of {timeout:.1f}s")
 
     if result["exception"] is not None:
+        logger.error("Raising exception from worker")
         raise result["exception"]  # type: ignore[arg-type]
 
+    logger.info("Generation complete")
     return str(result.get("response", ""))

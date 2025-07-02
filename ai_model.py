@@ -2,6 +2,8 @@ import json
 import requests
 from typing import List, Dict, Optional
 
+from runtime_utils import create_object_logger
+
 class AIModel:
     """A single AI agent powered by an Ollama model."""
 
@@ -22,6 +24,11 @@ class AIModel:
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
 
+        self.logger = create_object_logger(self.__class__.__name__)
+        self.logger.info(
+            "Initialized AIModel for %s using %s", self.name, self.model_id
+        )
+
         parts = [topic_prompt]
         if role_prompt:
             parts.append(role_prompt)
@@ -39,7 +46,9 @@ class AIModel:
         # Cue for the current AI to speak next
         lines.append(f"{self.name}:")
         # Join with newlines to form the final prompt
-        return "\n".join(lines)
+        prompt = "\n".join(lines)
+        self.logger.debug("Built prompt of %d characters", len(prompt))
+        return prompt
 
     def generate_response(self, chat_log: List[Dict[str, str]]) -> str:
         """Generate a response from the model using Ollama's API."""
@@ -53,6 +62,7 @@ class AIModel:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        self.logger.debug("Sending generation request")
         try:
             resp = requests.post(
                 "http://localhost:11434/api/generate",
@@ -61,9 +71,13 @@ class AIModel:
                 timeout=self.watchdog_timeout,
             )
         except requests.RequestException as exc:
+            self.logger.error("Connection error: %s", exc)
             raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
 
         if resp.status_code != 200:
+            self.logger.error(
+                "Ollama API error: %s %s", resp.status_code, resp.text
+            )
             raise RuntimeError(
                 f"Ollama API error: {resp.status_code} {resp.text}"
             )
@@ -79,6 +93,7 @@ class AIModel:
             if chunk.get("done"):
                 break
             result_text += chunk.get("response", "")
+        self.logger.debug("Generated %d characters", len(result_text))
         return result_text
 
 
@@ -95,6 +110,8 @@ class Agent:
         self.name = name
         self.model_name = model_name
         self.role_prompt = role_prompt
+        self.logger = create_object_logger(self.__class__.__name__)
+        self.logger.info("Initialized agent %s", self.name)
 
         self.model = AIModel(
             name=name,
@@ -115,7 +132,10 @@ class Ruminator(Agent):
     """Regular discussion participant."""
 
     def step(self, context: List[Dict[str, str]]) -> str:
-        return self.model.generate_response(context)
+        self.logger.info("Generating response")
+        reply = self.model.generate_response(context)
+        self.logger.debug("Response length %d", len(reply))
+        return reply
 
 
 class Archivist(Agent):
@@ -125,6 +145,8 @@ class Archivist(Agent):
         """Archive transcript and return compressed summary."""
         from datetime import datetime
         import os
+
+        self.logger.info("Archiving full transcript")
 
         # Archive full transcript
         try:
@@ -138,7 +160,7 @@ class Archivist(Agent):
                     timestamp = entry.get("timestamp", "")
                     f.write(f"[{timestamp}] {sender}: {message}\n")
         except OSError as exc:
-            print(f"Failed to archive conversation: {exc}")
+            self.logger.error("Failed to archive conversation: %s", exc)
 
         # Generate summary using the model
         summary = self.model.generate_response(full_context)
@@ -148,13 +170,14 @@ class Archivist(Agent):
             with open("summary.txt", "w", encoding="utf-8") as f:
                 f.write(summary)
         except OSError as exc:
-            print(f"Failed to write summary: {exc}")
+            self.logger.error("Failed to write summary: %s", exc)
 
         # Append summary with timestamp to running log
         try:
             with open("summary_log.txt", "a", encoding="utf-8") as f:
                 f.write(f"[{ts}] {summary}\n{'-' * 80}\n")
         except OSError as exc:
-            print(f"Failed to update summary log: {exc}")
+            self.logger.error("Failed to update summary log: %s", exc)
 
+        self.logger.info("Summary generated")
         return summary

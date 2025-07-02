@@ -5,9 +5,14 @@ from datetime import datetime
 from typing import List, Dict
 import configparser
 
+import logging
 import requests
 
 from ai_model import Ruminator, Archivist
+from runtime_utils import init_global_logging, parse_log_level, create_object_logger
+
+
+logger = create_object_logger("Conductor")
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
@@ -18,6 +23,8 @@ def load_config(path: str):
     parser = configparser.ConfigParser()
     if not parser.read(path):
         raise RuntimeError(f"Failed to read config file {path}")
+
+    logger.info("Loaded configuration from %s", path)
 
     sections = parser.sections()
     global_present = parser.has_section("global")
@@ -35,12 +42,15 @@ def load_config(path: str):
         max_tokens_global = parser.getint("global", "max_tokens", fallback=300)
         chat_style_global = parser.get("global", "chat_style", fallback=None)
         watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
+        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
+        init_global_logging(parse_log_level(debug_level_str))
     else:
         topic_prompt_global = None
         temperature_global = 0.7
         max_tokens_global = 300
         chat_style_global = None
         watchdog_global = 300
+        init_global_logging(logging.INFO)
 
     agents = []
     for section in sections:
@@ -107,16 +117,16 @@ def ensure_models_available(model_ids: List[str]) -> None:
     try:
         resp = requests.get(TAGS_URL)
     except requests.RequestException as exc:
-        print(f"Error contacting Ollama server: {exc}")
+        logger.error("Error contacting Ollama server: %s", exc)
         sys.exit(1)
     if resp.status_code != 200:
-        print(f"Failed to list models: {resp.status_code} {resp.text}")
+        logger.error("Failed to list models: %s %s", resp.status_code, resp.text)
         sys.exit(1)
 
     try:
         tags_info = resp.json()
     except json.JSONDecodeError:
-        print("Invalid response from tags endpoint.")
+        logger.error("Invalid response from tags endpoint.")
         sys.exit(1)
 
     local_models = {m.get("name") for m in tags_info.get("models", [])}
@@ -124,30 +134,33 @@ def ensure_models_available(model_ids: List[str]) -> None:
     for mid in model_ids:
         if mid in local_models:
             continue
-        print(f"Model {mid} not found locally. Downloading...")
+        logger.info("Model %s not found locally. Downloading...", mid)
         try:
             pull_resp = requests.post(
                 PULL_URL,
                 json={"name": mid, "stream": False},
             )
         except requests.RequestException as exc:
-            print(f"Failed to pull model {mid}: {exc}")
+            logger.error("Failed to pull model %s: %s", mid, exc)
             sys.exit(1)
         if pull_resp.status_code != 200:
-            print(f"Error pulling model {mid}: {pull_resp.status_code} {pull_resp.text}")
+            logger.error(
+                "Error pulling model %s: %s %s", mid, pull_resp.status_code, pull_resp.text
+            )
             sys.exit(1)
         try:
             result = pull_resp.json()
         except json.JSONDecodeError:
-            print(f"Unexpected response pulling model {mid}: {pull_resp.text}")
+            logger.error("Unexpected response pulling model %s: %s", mid, pull_resp.text)
             sys.exit(1)
         status = result.get("status")
         if status != "success":
-            print(f"Model pull failed for {mid}: {result}")
+            logger.error("Model pull failed for %s: %s", mid, result)
             sys.exit(1)
 
 
 def main() -> None:
+    logger.info("Starting conductor")
     agents = load_config("fenra_config.txt")
     ensure_models_available([a.model_name for a in agents])
 
@@ -169,6 +182,7 @@ def main() -> None:
                         "message": reply,
                     }
                 )
+                logger.info("%s: generated response", ai.name)
                 print(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
 
                 with open("chat_log.txt", "a", encoding="utf-8") as log_file:
@@ -178,6 +192,7 @@ def main() -> None:
 
             if archivist:
                 summary = archivist.step(chat_log)
+                logger.info("%s archived transcript", archivist.name)
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(
                     f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
@@ -193,6 +208,7 @@ def main() -> None:
 
             time.sleep(0.5)
     except KeyboardInterrupt:
+        logger.info("Conversation ended by user")
         print("\nConversation ended.")
 
 
