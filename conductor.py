@@ -180,7 +180,7 @@ def main() -> None:
                 summary = archivist.step(chat_log)
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(
-                    f"[{ts}] {archivist.name} archived transcript and wrote summary."
+                    f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                 )
 
                 chat_log = [
