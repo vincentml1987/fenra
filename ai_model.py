@@ -49,7 +49,7 @@ class AIModel:
             "model": self.model_id,
             "prompt": prompt,
             "system": self.system_prompt,
-            "stream": False,
+            "stream": True,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
@@ -57,7 +57,7 @@ class AIModel:
             resp = requests.post(
                 "http://localhost:11434/api/generate",
                 json=payload,
-                stream=False,
+                stream=True,
                 timeout=self.watchdog_timeout,
             )
         except requests.RequestException as exc:
