@@ -21,8 +21,11 @@ PULL_URL = "http://localhost:11434/api/pull"
 def load_config(path: str):
     """Parse fenra_config.txt and return instantiated agent objects."""
     parser = configparser.ConfigParser()
-    if not parser.read(path):
-        raise RuntimeError(f"Failed to read config file {path}")
+    '''if not parser.read(path):
+        raise RuntimeError(f"Failed to read config file {path}")'''
+        
+    with open(path, 'r', encoding='utf-8') as f:
+        parser.read_file(f)
 
     logger.info("Loaded configuration from %s", path)
 

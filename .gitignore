@@ -5,3 +5,4 @@ summary.txt
 summary_log.txt
 archive/
 __pycache__/
+/logs
