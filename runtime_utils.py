@@ -114,6 +114,8 @@ def generate_with_watchdog(
     def worker() -> None:
         start = time.time()
         try:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
             resp = requests.post(
                 "http://localhost:11434/api/generate",
                 json=payload,
