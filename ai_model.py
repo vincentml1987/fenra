@@ -1,4 +1,5 @@
 import json
+import logging
 import requests
 from typing import List, Dict, Optional
 
@@ -63,6 +64,8 @@ class AIModel:
             "max_tokens": self.max_tokens,
         }
         self.logger.debug("Sending generation request")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         try:
             resp = requests.post(
                 "http://localhost:11434/api/generate",

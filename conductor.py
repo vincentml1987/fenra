@@ -139,9 +139,12 @@ def ensure_models_available(model_ids: List[str]) -> None:
             continue
         logger.info("Model %s not found locally. Downloading...", mid)
         try:
+            if logger.isEnabledFor(logging.DEBUG):
+                payload = {"name": mid, "stream": False}
+                logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
             pull_resp = requests.post(
                 PULL_URL,
-                json={"name": mid, "stream": False},
+                json=payload,
             )
         except requests.RequestException as exc:
             logger.error("Failed to pull model %s: %s", mid, exc)
