@@ -117,6 +117,31 @@ def load_config(path: str):
     return agents
 
 
+def load_global_defaults(path: str) -> Dict[str, object]:
+    """Return default model configuration from the global section."""
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    if parser.has_section("global"):
+        sec = parser["global"]
+        return {
+            "topic_prompt": sec.get("topic_prompt", ""),
+            "temperature": sec.getfloat("temperature", fallback=0.7),
+            "max_tokens": sec.getint("max_tokens", fallback=300),
+            "chat_style": sec.get("chat_style", fallback=None),
+            "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
+        }
+
+    return {
+        "topic_prompt": "",
+        "temperature": 0.7,
+        "max_tokens": 300,
+        "chat_style": None,
+        "watchdog_timeout": 300,
+    }
+
+
 def ensure_models_available(model_ids: List[str]) -> None:
     """Verify models are installed locally, pulling them if missing."""
     try:
@@ -169,14 +194,36 @@ def ensure_models_available(model_ids: List[str]) -> None:
 
 def main() -> None:
     logger.info("Starting conductor")
-    agents = load_config("fenra_config.txt")
+    config_path = "fenra_config.txt"
+    agents = load_config(config_path)
+    defaults = load_global_defaults(config_path)
     ensure_models_available([a.model_name for a in agents])
-
-    ui = FenraUI(agents)
 
     ruminators = [a for a in agents if isinstance(a, Ruminator)]
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
+
+    def add_agent(name: str, model_id: str, role_prompt: str):
+        cfg = {
+            "topic_prompt": defaults.get("topic_prompt", ""),
+            "temperature": defaults.get("temperature", 0.7),
+            "max_tokens": defaults.get("max_tokens", 300),
+            "chat_style": defaults.get("chat_style"),
+            "watchdog_timeout": defaults.get("watchdog_timeout", 300),
+        }
+
+        agent = Ruminator(
+            name=name,
+            model_name=model_id,
+            role_prompt=role_prompt,
+            config=cfg,
+        )
+        ensure_models_available([model_id])
+        agents.append(agent)
+        ruminators.append(agent)
+        return agent
+
+    ui = FenraUI(agents, add_agent_callback=add_agent)
 
     chat_log: List[Dict[str, str]] = []
 
