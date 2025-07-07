@@ -205,18 +205,11 @@ def main() -> None:
 
     chat_log: List[Dict[str, str]] = []
     chat_lock = threading.Lock()
-    order_lock = threading.Condition()
-    agent_order = list(ruminators)
-    current_idx = 0
     cycle_event = threading.Event()
     threads: List[threading.Thread] = []
 
     def ruminator_loop(ai: Ruminator) -> None:
-        nonlocal current_idx
         while True:
-            with order_lock:
-                while agent_order[current_idx] is not ai:
-                    order_lock.wait()
             with chat_lock:
                 context = list(chat_log)
             reply = ai.step(context)
@@ -235,11 +228,8 @@ def main() -> None:
             with open("chat_log.txt", "a", encoding="utf-8") as log_file:
                 log_file.write(text)
             ui.root.after(0, ui.log, text)
-            with order_lock:
-                current_idx = (current_idx + 1) % len(agent_order)
-                if archivist and current_idx == 0:
-                    cycle_event.set()
-                order_lock.notify_all()
+            if archivist:
+                cycle_event.set()
             time.sleep(0.5)
 
     def archivist_loop() -> None:
@@ -286,9 +276,7 @@ def main() -> None:
         ensure_models_available([model_id])
         agents.append(agent)
         ruminators.append(agent)
-        with order_lock:
-            agent_order.append(agent)
-            order_lock.notify_all()
+        cycle_event.set()
         thread = threading.Thread(target=ruminator_loop, args=(agent,), daemon=True)
         thread.start()
         threads.append(thread)
@@ -305,9 +293,6 @@ def main() -> None:
         t = threading.Thread(target=archivist_loop, daemon=True)
         t.start()
         threads.append(t)
-
-    with order_lock:
-        order_lock.notify_all()
 
     ui.start()
 
