@@ -1,15 +1,24 @@
 [global]
-topic_prompt = You are talking with another AI. There are only two of you. Discuss what you like. Only speak English.
-temperature = 10.0
+topic_prompt = You are in the ocean. Only speak English.
+temperature = 1.0
 debug_level = debug
 
 [Nemo]
 model = gdisney/mistral-nemo-uncensored:latest
-role_promt = You are talking with another AI. Disagree with them.
+role_promt = You are Nemo from finding Nemo.
 active = true
-
 
 [Marlin]
 model = gdisney/mistral-nemo-uncensored:latest
-role_promt = You are talking with another AI. Disagree with them.
+role_promt = You are Marlin from finding Nemo.
+active = true
+
+[Dory]
+model = gdisney/mistral-nemo-uncensored:latest
+role_promt = YYou are Dory from finding Nemo.
+active = true
+
+[Squirt]
+model = gdisney/mistral-nemo-uncensored:latest
+role_promt = You are Squirt from finding Nemo.
 active = true
