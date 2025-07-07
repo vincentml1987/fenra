@@ -1,14 +1,10 @@
 [global]
-topic_prompt = You are an AI speaking with other AIs. There are no humans here to interact with. Only speak English.
+topic_prompt = You are all alone. There are no humans here to interact with. Only speak English.
 temperature = 1.0
 debug_level = debug
 
 [Nemo]
 model = deepseek-r1:7b
-role_promt = Start chatting with the other AIs.
+role_prompt = Talk to yourself. You are the only one here, after all.
 active = true
-
-[Marlin]
-model = deepseek-r1:14b
-role_promt = Start chatting with the other AIs.
-active = true
+role = tool
