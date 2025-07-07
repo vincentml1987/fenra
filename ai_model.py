@@ -113,6 +113,7 @@ class Agent:
         self.name = name
         self.model_name = model_name
         self.role_prompt = role_prompt
+        self.active = True
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized agent %s", self.name)
 

@@ -1,15 +1,19 @@
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, messagebox
 
+from ai_model import Ruminator, Archivist
+from runtime_utils import parse_model_size
+
 
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, add_agent_callback=None):
+    def __init__(self, agents, add_agent_callback=None, remove_agent_callback=None):
         self.root = tk.Tk()
         self.root.title("Fenra")
         self.agents = agents
         self.add_agent_callback = add_agent_callback
+        self.remove_agent_callback = remove_agent_callback
 
         # Left side for console output
         self.output = scrolledtext.ScrolledText(self.root, state="disabled", width=80, height=24)
@@ -31,6 +35,9 @@ class FenraUI:
 
         self.add_button = tk.Button(right, text="Add Model", command=self._prompt_add)
         self.add_button.pack(fill=tk.X)
+
+        self.remove_button = tk.Button(right, text="Remove Model", command=self._remove_selected)
+        self.remove_button.pack(fill=tk.X)
 
     def _prompt_add(self):
         """Prompt the user for a new agent and add it via callback."""
@@ -65,8 +72,40 @@ class FenraUI:
             return
         idx = selection[0]
         agent = self.agents[idx]
-        info = f"Name: {agent.name}\nModel: {agent.model_name}\nRole Prompt:\n{agent.role_prompt}"
+        if isinstance(agent, Archivist):
+            role = "archivist"
+        elif isinstance(agent, Ruminator):
+            role = "ruminator"
+        else:
+            role = agent.__class__.__name__.lower()
+
+        params = parse_model_size(agent.model_name)
+        info = (
+            f"Name: {agent.name}\n"
+            f"Model: {agent.model_name}\n"
+            f"Role: {role}\n"
+            f"Parameters: {params}B\n"
+            f"Role Prompt:\n{agent.role_prompt}"
+        )
         self.info_var.set(info)
+
+    def _remove_selected(self):
+        if not self.remove_agent_callback:
+            return
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        agent = self.agents[idx]
+        try:
+            removed = self.remove_agent_callback(agent)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Error", str(exc), parent=self.root)
+            return
+        if removed:
+            self.listbox.delete(idx)
+            self.agents.pop(idx)
+            self.info_var.set("")
 
     def log(self, text):
         self.output.configure(state="normal")

@@ -209,7 +209,7 @@ def main() -> None:
     threads: List[threading.Thread] = []
 
     def ruminator_loop(ai: Ruminator) -> None:
-        while True:
+        while ai.active:
             with chat_lock:
                 context = list(chat_log)
             reply = ai.step(context)
@@ -228,12 +228,12 @@ def main() -> None:
             with open("chat_log.txt", "a", encoding="utf-8") as log_file:
                 log_file.write(text)
             ui.root.after(0, ui.log, text)
-            if archivist:
+            if archivist and archivist.active:
                 cycle_event.set()
             time.sleep(0.5)
 
     def archivist_loop() -> None:
-        while True:
+        while archivist and archivist.active:
             cycle_event.wait()
             cycle_event.clear()
             with chat_lock:
@@ -282,7 +282,20 @@ def main() -> None:
         threads.append(thread)
         return agent
 
-    ui = FenraUI(agents, add_agent_callback=add_agent)
+    def remove_agent(agent):
+        nonlocal archivist
+        if agent not in agents:
+            return False
+        agent.active = False
+        if isinstance(agent, Ruminator) and agent in ruminators:
+            ruminators.remove(agent)
+        if isinstance(agent, Archivist) and archivist is agent:
+            archivist = None
+            cycle_event.set()
+        agents.remove(agent)
+        return True
+
+    ui = FenraUI(agents, add_agent_callback=add_agent, remove_agent_callback=remove_agent)
 
     for ai in ruminators:
         t = threading.Thread(target=ruminator_loop, args=(ai,), daemon=True)
