@@ -9,7 +9,7 @@ import threading
 import logging
 import requests
 
-from ai_model import Ruminator, Archivist
+from ai_model import Ruminator, Archivist, ToolAgent
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
@@ -101,6 +101,27 @@ def load_config(path: str):
                     config=cfg,
                 )
             )
+        elif role in ("tool", "toolagent", "tools"):
+            agent = ToolAgent(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+            )
+            if agent.model.supports_tools:
+                agents.append(agent)
+            else:
+                logger.warning(
+                    "Model %s lacks tool capability; using ruminator instead", model_id
+                )
+                agents.append(
+                    Ruminator(
+                        name=section,
+                        model_name=model_id,
+                        role_prompt=role_prompt,
+                        config=cfg,
+                    )
+                )
         else:
             agents.append(
                 Ruminator(

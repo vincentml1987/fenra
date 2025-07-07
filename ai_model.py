@@ -3,7 +3,16 @@ import logging
 import requests
 from typing import List, Dict, Optional
 
+from tools import tool_schema, tool_descriptions, call_tool
+
 from runtime_utils import create_object_logger
+
+
+def model_supports_tools(model_id: str) -> bool:
+    """Return True if the model is known to support tool calling."""
+    id_lower = model_id.lower()
+    supported_keywords = ["nemo", "llama3", "tool"]
+    return any(k in id_lower for k in supported_keywords)
 
 class AIModel:
     """A single AI agent powered by an Ollama model."""
@@ -25,6 +34,8 @@ class AIModel:
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
 
+        self.supports_tools = model_supports_tools(model_id)
+
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info(
             "Initialized AIModel for %s using %s", self.name, self.model_id
@@ -33,6 +44,8 @@ class AIModel:
         parts = [topic_prompt]
         if role_prompt:
             parts.append(role_prompt)
+        if self.supports_tools:
+            parts.append("You have access to the following tools:\n" + tool_descriptions())
         if chat_style:
             parts.append(f"Use a {chat_style} tone.")
         self.system_prompt = "\n".join(parts)
@@ -99,6 +112,49 @@ class AIModel:
         self.logger.debug("Generated %d characters", len(result_text))
         return result_text
 
+    def chat_completion(
+        self,
+        messages: List[Dict[str, object]],
+        tools: Optional[List[Dict[str, object]]] = None,
+    ) -> Dict[str, object]:
+        """Call Ollama chat API optionally with tools."""
+        payload = {
+            "model": self.model_id,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = tools
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        try:
+            resp = requests.post(
+                "http://localhost:11434/api/chat",
+                json=payload,
+                timeout=self.watchdog_timeout,
+            )
+        except requests.RequestException as exc:
+            self.logger.error("Connection error: %s", exc)
+            raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
+
+        if resp.status_code != 200:
+            self.logger.error(
+                "Ollama API error: %s %s", resp.status_code, resp.text
+            )
+            raise RuntimeError(
+                f"Ollama API error: {resp.status_code} {resp.text}"
+            )
+
+        try:
+            data = resp.json()
+        except json.JSONDecodeError as exc:  # noqa: BLE001
+            self.logger.error("Invalid JSON from Ollama: %s", exc)
+            raise RuntimeError("Invalid JSON from Ollama") from exc
+
+        return data
+
 
 class Agent:
     """Base class for all agents."""
@@ -140,6 +196,49 @@ class Ruminator(Agent):
         reply = self.model.generate_response(context)
         self.logger.debug("Response length %d", len(reply))
         return reply
+
+
+class ToolAgent(Agent):
+    """Agent capable of using tools via the Ollama API."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.tools = tool_schema()
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        if not self.model.supports_tools:
+            self.logger.info("Model lacks tool support, falling back to text")
+            return self.model.generate_response(context)
+
+        messages: List[Dict[str, object]] = [
+            {"role": "system", "content": self.model.system_prompt}
+        ]
+        for entry in context:
+            sender = entry.get("sender", "")
+            content = entry.get("message", "")
+            role = "assistant" if sender == self.name else "user"
+            messages.append({"role": role, "content": content})
+
+        while True:
+            resp = self.model.chat_completion(messages, tools=self.tools)
+            msg = resp.get("message", {})
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                messages.append({"role": "assistant", "content": content})
+                return content
+
+            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+            for call in tool_calls:
+                fn = call.get("function", {})
+                name = fn.get("name")
+                args_str = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                except json.JSONDecodeError:
+                    args = {}
+                result = call_tool(str(name), args)
+                messages.append({"role": "tool", "name": name, "content": result})
 
 
 class Archivist(Agent):
@@ -185,3 +284,4 @@ class Archivist(Agent):
 
         self.logger.info("Summary generated")
         return summary
+
