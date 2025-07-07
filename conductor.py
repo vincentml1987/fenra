@@ -108,20 +108,7 @@ def load_config(path: str):
                 role_prompt=role_prompt,
                 config=cfg,
             )
-            if agent.model.supports_tools:
-                agents.append(agent)
-            else:
-                logger.warning(
-                    "Model %s lacks tool capability; using ruminator instead", model_id
-                )
-                agents.append(
-                    Ruminator(
-                        name=section,
-                        model_name=model_id,
-                        role_prompt=role_prompt,
-                        config=cfg,
-                    )
-                )
+            agents.append(agent)
         else:
             agents.append(
                 Ruminator(

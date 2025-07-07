@@ -9,10 +9,8 @@ from runtime_utils import create_object_logger
 
 
 def model_supports_tools(model_id: str) -> bool:
-    """Return True if the model is known to support tool calling."""
-    id_lower = model_id.lower()
-    supported_keywords = ["nemo", "llama3", "tool"]
-    return any(k in id_lower for k in supported_keywords)
+    """Return True to attempt tool use regardless of model name."""
+    return True
 
 class AIModel:
     """A single AI agent powered by an Ollama model."""
@@ -206,10 +204,6 @@ class ToolAgent(Agent):
         self.tools = tool_schema()
 
     def step(self, context: List[Dict[str, str]]) -> str:
-        if not self.model.supports_tools:
-            self.logger.info("Model lacks tool support, falling back to text")
-            return self.model.generate_response(context)
-
         messages: List[Dict[str, object]] = [
             {"role": "system", "content": self.model.system_prompt}
         ]
@@ -232,13 +226,14 @@ class ToolAgent(Agent):
             for call in tool_calls:
                 fn = call.get("function", {})
                 name = fn.get("name")
+                call_id = call.get("id")
                 args_str = fn.get("arguments", "{}")
                 try:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
                 except json.JSONDecodeError:
                     args = {}
                 result = call_tool(str(name), args)
-                messages.append({"role": "tool", "name": name, "content": result})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
 
 
 class Archivist(Agent):
