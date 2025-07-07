@@ -203,6 +203,71 @@ def main() -> None:
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
 
+    chat_log: List[Dict[str, str]] = []
+    chat_lock = threading.Lock()
+    order_lock = threading.Condition()
+    agent_order = list(ruminators)
+    current_idx = 0
+    cycle_event = threading.Event()
+    threads: List[threading.Thread] = []
+
+    def ruminator_loop(ai: Ruminator) -> None:
+        nonlocal current_idx
+        while True:
+            with order_lock:
+                while agent_order[current_idx] is not ai:
+                    order_lock.wait()
+            with chat_lock:
+                context = list(chat_log)
+            reply = ai.step(context)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with chat_lock:
+                chat_log.append(
+                    {
+                        "sender": ai.name,
+                        "timestamp": timestamp,
+                        "message": reply,
+                    }
+                )
+            logger.info("%s: generated response", ai.name)
+            text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
+            print(text)
+            with open("chat_log.txt", "a", encoding="utf-8") as log_file:
+                log_file.write(text)
+            ui.root.after(0, ui.log, text)
+            with order_lock:
+                current_idx = (current_idx + 1) % len(agent_order)
+                if archivist and current_idx == 0:
+                    cycle_event.set()
+                order_lock.notify_all()
+            time.sleep(0.5)
+
+    def archivist_loop() -> None:
+        while True:
+            cycle_event.wait()
+            cycle_event.clear()
+            with chat_lock:
+                context = list(chat_log)
+            summary = archivist.step(context) if archivist else ""
+            if archivist:
+                logger.info("%s archived transcript", archivist.name)
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                text = (
+                    f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                )
+                print(text)
+                ui.root.after(0, ui.log, text)
+                with chat_lock:
+                    chat_log.clear()
+                    chat_log.append(
+                        {
+                            "sender": archivist.name,
+                            "timestamp": ts,
+                            "message": summary,
+                        }
+                    )
+            time.sleep(0.5)
+
     def add_agent(name: str, model_id: str, role_prompt: str):
         cfg = {
             "topic_prompt": defaults.get("topic_prompt", ""),
@@ -221,58 +286,28 @@ def main() -> None:
         ensure_models_available([model_id])
         agents.append(agent)
         ruminators.append(agent)
+        with order_lock:
+            agent_order.append(agent)
+            order_lock.notify_all()
+        thread = threading.Thread(target=ruminator_loop, args=(agent,), daemon=True)
+        thread.start()
+        threads.append(thread)
         return agent
 
     ui = FenraUI(agents, add_agent_callback=add_agent)
 
-    chat_log: List[Dict[str, str]] = []
+    for ai in ruminators:
+        t = threading.Thread(target=ruminator_loop, args=(ai,), daemon=True)
+        t.start()
+        threads.append(t)
 
-    def loop() -> None:
-        try:
-            while True:
-                for ai in ruminators:
-                    reply = ai.step(chat_log)
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    chat_log.append(
-                        {
-                            "sender": ai.name,
-                            "timestamp": timestamp,
-                            "message": reply,
-                        }
-                    )
-                    logger.info("%s: generated response", ai.name)
-                    text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
-                    print(text)
-                    with open("chat_log.txt", "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                    ui.root.after(0, ui.log, text)
+    if archivist:
+        t = threading.Thread(target=archivist_loop, daemon=True)
+        t.start()
+        threads.append(t)
 
-                if archivist:
-                    summary = archivist.step(chat_log)
-                    logger.info("%s archived transcript", archivist.name)
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    text = (
-                        f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
-                    )
-                    print(text)
-                    ui.root.after(0, ui.log, text)
-
-                    chat_log.clear()
-                    chat_log.append(
-                        {
-                            "sender": archivist.name,
-                            "timestamp": ts,
-                            "message": summary,
-                        }
-                    )
-
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            logger.info("Conversation ended by user")
-            print("\nConversation ended.")
-
-    thread = threading.Thread(target=loop, daemon=True)
-    thread.start()
+    with order_lock:
+        order_lock.notify_all()
 
     ui.start()
 
