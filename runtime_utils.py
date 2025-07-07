@@ -5,7 +5,8 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional
+import ctypes
 
 import logging
 import requests
@@ -78,6 +79,37 @@ class AITimeTracker:
         return avg
 
 
+class ThreadTimeTracker:
+    """Manage per-thread time trackers and compute a global average."""
+
+    def __init__(self, rolling_window: int = 10) -> None:
+        self.trackers: Dict[int, AITimeTracker] = {}
+        self.rolling_window = rolling_window
+        self.logger = create_object_logger(self.__class__.__name__)
+        self.logger.info("Initialized ThreadTimeTracker")
+
+    def _tracker_for(self, tid: int) -> AITimeTracker:
+        if tid not in self.trackers:
+            self.trackers[tid] = AITimeTracker(self.rolling_window)
+        return self.trackers[tid]
+
+    def record(self, tid: int, wall_time: float, model_size_b: float) -> None:
+        self._tracker_for(tid).record(wall_time, model_size_b)
+
+    def average(self) -> float:
+        total = 300
+        count = 1
+        for tracker in self.trackers.values():
+            total += sum(tracker.data)
+            count += len(tracker.data)
+        avg = total / count
+        self.logger.debug("Global average AI seconds: %.2f", avg)
+        return avg
+
+
+WATCHDOG_TRACKER = ThreadTimeTracker()
+
+
 def parse_model_size(model_id: str) -> float:
     """Extract model size in billions from the model id string."""
     match = re.search(r"(\d+(?:\.\d+)?)\s*[bB]", model_id)
@@ -98,10 +130,23 @@ def parse_response(resp: requests.Response) -> str:
     return data.get("response", "")
 
 
+def kill_thread(thread: threading.Thread) -> None:
+    """Forcefully stop a thread by raising SystemExit within it."""
+    ident: Optional[int] = thread.ident
+    if ident is None:
+        return
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_long(ident), ctypes.py_object(SystemExit)
+    )
+    if res > 1:
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(ident), 0)
+        raise SystemError("PyThreadState_SetAsyncExc failed")
+
+
 def generate_with_watchdog(
     payload: Dict,
     model_size_b: float,
-    tracker: AITimeTracker,
+    tracker: ThreadTimeTracker,
     timeout_cushion: float = 2.0,
 ) -> str:
     """Call Ollama with a watchdog timeout based on normalized averages."""
@@ -128,29 +173,31 @@ def generate_with_watchdog(
                 return
             text = parse_response(resp)
             wall = time.time() - start
-            tracker.record(wall, model_size_b)
+            tracker.record(threading.get_ident(), wall, model_size_b)
             result["response"] = text
         except Exception as exc:  # noqa: BLE001
             result["exception"] = exc
             logger.error("Exception during generation: %s", exc)
 
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
+    while True:
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
 
-    avg_ai = tracker.average()
-    expected_wall = avg_ai * ((model_size_b / 7) ** 1.2)
-    timeout = expected_wall * timeout_cushion
-    logger.debug("Timeout set to %.2fs", timeout)
+        avg_ai = tracker.average()
+        expected_wall = avg_ai * ((model_size_b / 7) ** 1.2)
+        timeout = expected_wall * timeout_cushion
+        logger.debug("Timeout set to %.2fs", timeout)
 
-    thread.join(timeout=timeout)
+        thread.join(timeout=timeout)
 
-    if thread.is_alive():
-        logger.error("Timeout exceeded")
-        raise TimeoutError(f"{model_id} exceeded timeout of {timeout:.1f}s")
+        if thread.is_alive():
+            logger.error("Timeout exceeded, restarting worker")
+            kill_thread(thread)
+            continue
 
-    if result["exception"] is not None:
-        logger.error("Raising exception from worker")
-        raise result["exception"]  # type: ignore[arg-type]
+        if result["exception"] is not None:
+            logger.error("Raising exception from worker")
+            raise result["exception"]  # type: ignore[arg-type]
 
-    logger.info("Generation complete")
-    return str(result.get("response", ""))
+        logger.info("Generation complete")
+        return str(result.get("response", ""))

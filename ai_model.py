@@ -5,7 +5,12 @@ from typing import List, Dict, Optional
 
 from tools import tool_schema, tool_descriptions, call_tool
 
-from runtime_utils import create_object_logger
+from runtime_utils import (
+    create_object_logger,
+    generate_with_watchdog,
+    parse_model_size,
+    WATCHDOG_TRACKER,
+)
 
 
 def model_supports_tools(model_id: str) -> bool:
@@ -70,43 +75,18 @@ class AIModel:
             "model": self.model_id,
             "prompt": prompt,
             "system": self.system_prompt,
-            "stream": True,
+            "stream": False,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        try:
-            resp = requests.post(
-                "http://localhost:11434/api/generate",
-                json=payload,
-                stream=True,
-                timeout=self.watchdog_timeout,
-            )
-        except requests.RequestException as exc:
-            self.logger.error("Connection error: %s", exc)
-            raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
-
-        if resp.status_code != 200:
-            self.logger.error(
-                "Ollama API error: %s %s", resp.status_code, resp.text
-            )
-            raise RuntimeError(
-                f"Ollama API error: {resp.status_code} {resp.text}"
-            )
-
-        result_text = ""
-        for line in resp.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line.decode("utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if chunk.get("done"):
-                break
-            result_text += chunk.get("response", "")
+        result_text = generate_with_watchdog(
+            payload,
+            parse_model_size(self.model_id),
+            WATCHDOG_TRACKER,
+        )
         self.logger.debug("Generated %d characters", len(result_text))
         return result_text
 
@@ -127,30 +107,16 @@ class AIModel:
             payload["tools"] = tools
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        result_text = generate_with_watchdog(
+            payload,
+            parse_model_size(self.model_id),
+            WATCHDOG_TRACKER,
+        )
         try:
-            resp = requests.post(
-                "http://localhost:11434/api/chat",
-                json=payload,
-                timeout=self.watchdog_timeout,
-            )
-        except requests.RequestException as exc:
-            self.logger.error("Connection error: %s", exc)
-            raise RuntimeError(f"Failed to connect to Ollama: {exc}") from exc
-
-        if resp.status_code != 200:
-            self.logger.error(
-                "Ollama API error: %s %s", resp.status_code, resp.text
-            )
-            raise RuntimeError(
-                f"Ollama API error: {resp.status_code} {resp.text}"
-            )
-
-        try:
-            data = resp.json()
+            data = json.loads(result_text)
         except json.JSONDecodeError as exc:  # noqa: BLE001
             self.logger.error("Invalid JSON from Ollama: %s", exc)
             raise RuntimeError("Invalid JSON from Ollama") from exc
-
         return data
 
 
