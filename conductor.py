@@ -4,11 +4,13 @@ import time
 from datetime import datetime
 from typing import List, Dict
 import configparser
+import threading
 
 import logging
 import requests
 
 from ai_model import Ruminator, Archivist
+from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
 
@@ -170,52 +172,62 @@ def main() -> None:
     agents = load_config("fenra_config.txt")
     ensure_models_available([a.model_name for a in agents])
 
+    ui = FenraUI(agents)
+
     ruminators = [a for a in agents if isinstance(a, Ruminator)]
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
 
     chat_log: List[Dict[str, str]] = []
 
-    try:
-        while True:
-            for ai in ruminators:
-                reply = ai.step(chat_log)
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                chat_log.append(
-                    {
-                        "sender": ai.name,
-                        "timestamp": timestamp,
-                        "message": reply,
-                    }
-                )
-                logger.info("%s: generated response", ai.name)
-                print(f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n")
+    def loop() -> None:
+        try:
+            while True:
+                for ai in ruminators:
+                    reply = ai.step(chat_log)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    chat_log.append(
+                        {
+                            "sender": ai.name,
+                            "timestamp": timestamp,
+                            "message": reply,
+                        }
+                    )
+                    logger.info("%s: generated response", ai.name)
+                    text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
+                    print(text)
+                    with open("chat_log.txt", "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                    ui.root.after(0, ui.log, text)
 
-                with open("chat_log.txt", "a", encoding="utf-8") as log_file:
-                    log_file.write(
-                        f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
+                if archivist:
+                    summary = archivist.step(chat_log)
+                    logger.info("%s archived transcript", archivist.name)
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    text = (
+                        f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                    )
+                    print(text)
+                    ui.root.after(0, ui.log, text)
+
+                    chat_log.clear()
+                    chat_log.append(
+                        {
+                            "sender": archivist.name,
+                            "timestamp": ts,
+                            "message": summary,
+                        }
                     )
 
-            if archivist:
-                summary = archivist.step(chat_log)
-                logger.info("%s archived transcript", archivist.name)
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(
-                    f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
-                )
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            logger.info("Conversation ended by user")
+            print("\nConversation ended.")
 
-                chat_log = [
-                    {
-                        "sender": archivist.name,
-                        "timestamp": ts,
-                        "message": summary,
-                    }
-                ]
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
 
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        logger.info("Conversation ended by user")
-        print("\nConversation ended.")
+    ui.start()
 
 
 if __name__ == "__main__":
