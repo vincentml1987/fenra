@@ -7,4 +7,3 @@ debug_level = debug
 model = deepseek-r1:7b
 role_prompt = Talk to yourself. You are the only one here, after all.
 active = true
-role = tool

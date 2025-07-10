@@ -13,10 +13,6 @@ from runtime_utils import (
 )
 
 
-def model_supports_tools(model_id: str) -> bool:
-    """Return True to attempt tool use regardless of model name."""
-    return True
-
 class AIModel:
     """A single AI agent powered by an Ollama model."""
 
@@ -37,8 +33,6 @@ class AIModel:
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
 
-        self.supports_tools = model_supports_tools(model_id)
-
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info(
             "Initialized AIModel for %s using %s", self.name, self.model_id
@@ -46,9 +40,7 @@ class AIModel:
 
         parts = [topic_prompt]
         if role_prompt:
-            parts.append(role_prompt)
-        if self.supports_tools:
-            parts.append("You have access to the following tools:\n" + tool_descriptions())
+            parts.append(role_prompt)            
         if chat_style:
             parts.append(f"Use a {chat_style} tone.")
         self.system_prompt = "\n".join(parts)
@@ -104,6 +96,7 @@ class AIModel:
             "stream": False,
         }
         if tools:
+            parts.append("You have access to the following tools:\n" + tool_descriptions())
             payload["tools"] = tools
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
