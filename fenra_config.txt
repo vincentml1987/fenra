@@ -4,6 +4,6 @@ temperature = 1.0
 debug_level = debug
 
 [Nemo]
-model = deepseek-r1:7b
+model = mistral-small3.2:latest 
 role_prompt = Talk to yourself. You are the only one here, after all.
 active = true
