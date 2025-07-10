@@ -130,6 +130,11 @@ def parse_response(resp: requests.Response) -> str:
     return data.get("response", "")
 
 
+def strip_think_markup(text: str) -> str:
+    """Return text with any <think>...</think> sections removed."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+
 def kill_thread(thread: threading.Thread) -> None:
     """Forcefully stop a thread by raising SystemExit within it."""
     ident: Optional[int] = thread.ident

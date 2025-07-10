@@ -9,6 +9,7 @@ from runtime_utils import (
     create_object_logger,
     generate_with_watchdog,
     parse_model_size,
+    strip_think_markup,
     WATCHDOG_TRACKER,
 )
 
@@ -79,6 +80,7 @@ class AIModel:
             parse_model_size(self.model_id),
             WATCHDOG_TRACKER,
         )
+        result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         return result_text
 
@@ -110,6 +112,11 @@ class AIModel:
         except json.JSONDecodeError as exc:  # noqa: BLE001
             self.logger.error("Invalid JSON from Ollama: %s", exc)
             raise RuntimeError("Invalid JSON from Ollama") from exc
+        message = data.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = strip_think_markup(content)
         return data
 
 
