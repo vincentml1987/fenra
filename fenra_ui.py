@@ -84,7 +84,7 @@ class FenraUI:
             f"Name: {agent.name}\n"
             f"Model: {agent.model_name}\n"
             f"Role: {role}\n"
-            f"Parameters: {params}B\n"
+            f"Disk Size: {params} GB\n"
             f"Role Prompt:\n{agent.role_prompt}"
         )
         self.info_var.set(info)

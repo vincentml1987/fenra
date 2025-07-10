@@ -26,7 +26,11 @@ def init_global_logging(level: int) -> None:
     global GLOBAL_LOG_LEVEL
     GLOBAL_LOG_LEVEL = level
     os.makedirs("logs", exist_ok=True)
-    logging.basicConfig(level=level, format=LOG_FORMAT)
+    handlers = [
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join("logs", "global.log"), mode="a", encoding="utf-8"),
+    ]
+    logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers)
 
 
 def create_object_logger(class_name: str) -> logging.Logger:
@@ -42,9 +46,12 @@ def create_object_logger(class_name: str) -> logging.Logger:
         ts += timedelta(seconds=1)
 
     logger = logging.getLogger(f"{class_name}-{stamp}")
-    handler = logging.FileHandler(path, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger.addHandler(handler)
+    file_handler = logging.FileHandler(path, mode="w", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
     logger.setLevel(GLOBAL_LOG_LEVEL)
     logger.propagate = False
     return logger
@@ -58,15 +65,15 @@ class AITimeTracker:
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized AITimeTracker")
 
-    def record(self, wall_time: float, model_size_b: float) -> None:
-        """Convert wall time to AI Seconds (normalized to 7b) and store."""
-        factor = (model_size_b / 7) ** 1.2
+    def record(self, wall_time: float, model_size_gb: float) -> None:
+        """Convert wall time to AI Seconds (normalized to 7GB) and store."""
+        factor = (model_size_gb / 7) ** 1.2
         ai_seconds = wall_time / factor
         self.data.append(ai_seconds)
         self.logger.debug(
-            "Recorded %.2fs wall time (%.2fB) -> %.2f AI seconds",
+            "Recorded %.2fs wall time (%.2fGB) -> %.2f AI seconds",
             wall_time,
-            model_size_b,
+            model_size_gb,
             ai_seconds,
         )
 
@@ -93,8 +100,8 @@ class ThreadTimeTracker:
             self.trackers[tid] = AITimeTracker(self.rolling_window)
         return self.trackers[tid]
 
-    def record(self, tid: int, wall_time: float, model_size_b: float) -> None:
-        self._tracker_for(tid).record(wall_time, model_size_b)
+    def record(self, tid: int, wall_time: float, model_size_gb: float) -> None:
+        self._tracker_for(tid).record(wall_time, model_size_gb)
 
     def average(self) -> float:
         total = 300
@@ -111,14 +118,38 @@ WATCHDOG_TRACKER = ThreadTimeTracker()
 
 
 def parse_model_size(model_id: str) -> float:
-    """Extract model size in billions from the model id string."""
-    match = re.search(r"(\d+(?:\.\d+)?)\s*[bB]", model_id)
-    if not match:
-        return 7.0
+    """Return the disk size of the model in gigabytes."""
+    logger = logging.getLogger("ModelSize")
     try:
-        return float(match.group(1))
-    except ValueError:
-        return 7.0
+        import subprocess
+
+        result = subprocess.run(
+            ["ollama", "list", model_id], capture_output=True, text=True, check=True
+        )
+        lines = result.stdout.splitlines()
+        for line in lines:
+            if model_id in line:
+                match = re.search(r"(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)", line, re.IGNORECASE)
+                if not match:
+                    break
+                value = float(match.group(1))
+                unit = match.group(2).upper()
+                if unit == "KB":
+                    return value / (1024 * 1024)
+                if unit == "MB":
+                    return value / 1024
+                if unit == "GB":
+                    return value
+                if unit == "TB":
+                    return value * 1024
+        logger.error("Failed to parse model size from ollama output for %s", model_id)
+    except FileNotFoundError:
+        logger.error("ollama executable not found")
+    except subprocess.CalledProcessError as exc:
+        logger.error("Error running ollama list for %s: %s", model_id, exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Unexpected error obtaining size for %s: %s", model_id, exc)
+    return 7.0
 
 
 def parse_response(resp: requests.Response) -> str:
@@ -150,7 +181,7 @@ def kill_thread(thread: threading.Thread) -> None:
 
 def generate_with_watchdog(
     payload: Dict,
-    model_size_b: float,
+    model_size_gb: float,
     tracker: ThreadTimeTracker,
     timeout_cushion: float = 2.0,
 ) -> str:
@@ -159,50 +190,31 @@ def generate_with_watchdog(
     model_id = payload.get("model", "unknown")
     logger = create_object_logger(f"Watchdog-{model_id}")
     logger.info("Starting generation with watchdog")
-    result: Dict[str, object] = {"response": None, "exception": None}
 
-    def worker() -> None:
+    while True:
         start = time.time()
+        avg_ai = tracker.average()
+        expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
+        timeout = expected_wall * timeout_cushion
+        logger.debug("Timeout set to %.2fs", timeout)
         try:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
             resp = requests.post(
                 "http://localhost:11434/api/generate",
                 json=payload,
-                timeout=None,
+                timeout=timeout,
             )
             if resp.status_code != 200:
-                result["exception"] = RuntimeError(
-                    f"Ollama API error: {resp.status_code} {resp.text}"
-                )
-                return
+                raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
             text = parse_response(resp)
             wall = time.time() - start
-            tracker.record(threading.get_ident(), wall, model_size_b)
-            result["response"] = text
-        except Exception as exc:  # noqa: BLE001
-            result["exception"] = exc
-            logger.error("Exception during generation: %s", exc)
-
-    while True:
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-
-        avg_ai = tracker.average()
-        expected_wall = avg_ai * ((model_size_b / 7) ** 1.2)
-        timeout = expected_wall * timeout_cushion
-        logger.debug("Timeout set to %.2fs", timeout)
-
-        thread.join(timeout=timeout)
-
-        if thread.is_alive():
-            logger.error("Timeout exceeded, restarting worker")
-            kill_thread(thread)
+            tracker.record(threading.get_ident(), wall, model_size_gb)
+            logger.info("Generation complete")
+            return str(text)
+        except requests.Timeout:
+            logger.error("Timeout exceeded, retrying request")
             continue
-
-        if result["exception"] is not None:
-            logger.error("Raising exception from worker")
-            raise result["exception"]  # type: ignore[arg-type]
-
-        logger.info("Generation complete")
-        return str(result.get("response", ""))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Exception during generation: %s", exc)
+            raise
