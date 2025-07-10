@@ -27,6 +27,7 @@ class AIModel:
         max_tokens: int = 300,
         chat_style: Optional[str] = None,
         watchdog_timeout: int = 300,
+        system_prompt: Optional[str] = None,
     ) -> None:
         self.name = name
         self.model_id = model_id
@@ -41,14 +42,17 @@ class AIModel:
 
         parts = [topic_prompt]
         if role_prompt:
-            parts.append(role_prompt)            
+            parts.append(role_prompt)
         if chat_style:
             parts.append(f"Use a {chat_style} tone.")
-        self.system_prompt = "\n".join(parts)
+        self.base_prompt = "\n".join(parts)
+
+        # system_prompt is optional and comes from config
+        self.system_prompt = system_prompt
 
     def build_prompt(self, chat_log: List[Dict[str, str]]) -> str:
         """Assemble a prompt from system prompt and chat history."""
-        lines = [self.system_prompt]
+        lines = [self.base_prompt]
         for entry in chat_log:
             sender = entry.get("sender", "")
             message = entry.get("message", "")
@@ -67,11 +71,12 @@ class AIModel:
         payload = {
             "model": self.model_id,
             "prompt": prompt,
-            "system": self.system_prompt,
             "stream": False,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.system_prompt:
+            payload["system"] = self.system_prompt
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
@@ -146,6 +151,7 @@ class Agent:
             max_tokens=int(config.get("max_tokens", 300)),
             chat_style=config.get("chat_style"),
             watchdog_timeout=int(config.get("watchdog_timeout", 300)),
+            system_prompt=config.get("system_prompt"),
         )
 
     def step(self, context: List[Dict[str, str]]):
@@ -171,7 +177,7 @@ class ToolAgent(Agent):
 
     def step(self, context: List[Dict[str, str]]) -> str:
         messages: List[Dict[str, object]] = [
-            {"role": "system", "content": self.model.system_prompt}
+            {"role": "system", "content": self.model.base_prompt}
         ]
         for entry in context:
             sender = entry.get("sender", "")

@@ -75,6 +75,7 @@ def load_config(path: str):
         max_tokens = parser.getint(section, "max_tokens", fallback=max_tokens_global)
         chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
         watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
+        system_prompt = parser.get(section, "system_prompt", fallback=None)
 
         topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
         if topic_prompt is None:
@@ -90,6 +91,7 @@ def load_config(path: str):
             "max_tokens": max_tokens,
             "chat_style": chat_style,
             "watchdog_timeout": watchdog,
+            "system_prompt": system_prompt,
         }
 
         if role == "archivist":
@@ -139,6 +141,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
             "max_tokens": sec.getint("max_tokens", fallback=300),
             "chat_style": sec.get("chat_style", fallback=None),
             "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
+            "system_prompt": sec.get("system_prompt", fallback=None),
         }
 
     return {
@@ -147,6 +150,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
         "max_tokens": 300,
         "chat_style": None,
         "watchdog_timeout": 300,
+        "system_prompt": None,
     }
 
 
@@ -273,6 +277,7 @@ def main() -> None:
             "max_tokens": defaults.get("max_tokens", 300),
             "chat_style": defaults.get("chat_style"),
             "watchdog_timeout": defaults.get("watchdog_timeout", 300),
+            "system_prompt": defaults.get("system_prompt"),
         }
 
         agent = Ruminator(
