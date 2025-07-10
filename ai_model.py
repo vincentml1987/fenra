@@ -57,8 +57,6 @@ class AIModel:
             sender = entry.get("sender", "")
             message = entry.get("message", "")
             lines.append(f"{message}")
-        # Cue for the current AI to speak next
-        lines.append(f"{self.name}:")
         # Join with newlines to form the final prompt
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
