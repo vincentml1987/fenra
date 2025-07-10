@@ -52,12 +52,17 @@ class AIModel:
 
     def build_prompt(self, chat_log: List[Dict[str, str]]) -> str:
         """Assemble a prompt from system prompt and chat history."""
-        lines = [self.base_prompt]
+        lines = [self.base_prompt, f"Your name is {self.name}."]
         for entry in chat_log:
             sender = entry.get("sender", "")
             message = entry.get("message", "")
-            lines.append(f"{message}")
-        # Join with newlines to form the final prompt
+            timestamp = entry.get("timestamp", "")
+            lines.append(f"[{timestamp}] {sender}: {message}")
+            lines.append("-" * 80)
+        lines.append(
+            "The above message is the full chat log. Each message is separated by a series of hyphens. The names of the speakers are indicated before the message."
+        )
+
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
         return prompt
