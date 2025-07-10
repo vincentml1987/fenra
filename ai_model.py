@@ -43,7 +43,6 @@ class AIModel:
         parts = [topic_prompt]
         if chat_style:
             parts.append(f"Use a {chat_style} tone.")
-        parts.append(f"Your name is {name}.")
         if role_prompt:
             parts.append(role_prompt)
         self.base_prompt = "\n".join(parts)
@@ -53,7 +52,7 @@ class AIModel:
 
     def build_prompt(self, chat_log: List[Dict[str, str]]) -> str:
         """Assemble a prompt from system prompt and chat history."""
-        lines = [self.base_prompt, "=====Chat Begins====="]
+        lines = ["=====Chat Begins====="]
         for entry in chat_log:
             sender = entry.get("sender", "")
             message = entry.get("message", "")
@@ -64,6 +63,8 @@ class AIModel:
         lines.append(
             "The above message is the full chat log. Each message is separated by a series of hyphens. The names of the speakers are indicated before the message."
         )
+        lines.append(self.base_prompt)
+        lines.append(f"Your name is {self.name}.")
 
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
