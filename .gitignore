@@ -7,3 +7,4 @@ archive/
 __pycache__/
 /logs
 chat_log_cradle.txt
+chat_log_new.txt
