@@ -5,6 +5,9 @@ from datetime import datetime
 from typing import List, Dict
 import configparser
 import threading
+import os
+import re
+import shutil
 
 import logging
 import requests
@@ -204,6 +207,49 @@ def ensure_models_available(model_ids: List[str]) -> None:
             sys.exit(1)
 
 
+def load_chat_history(path: str) -> List[Dict[str, str]]:
+    """Return chat history parsed from a log file and archive it."""
+    history: List[Dict[str, str]] = []
+    if not os.path.exists(path):
+        return history
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = f.read()
+    except OSError as exc:
+        logger.error("Failed to read %s: %s", path, exc)
+        return history
+
+    sep = "-" * 80
+    pattern = re.compile(r"\[(.*?)\]\s*(.*?):\s*(.*)")
+    blocks = data.split(f"\n{sep}\n\n")
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        if not lines:
+            continue
+        match = pattern.match(lines[0])
+        if not match:
+            continue
+        ts, sender, first = match.groups()
+        message = first
+        if len(lines) > 1:
+            message += "\n" + "\n".join(lines[1:])
+        history.append({"sender": sender, "timestamp": ts, "message": message})
+
+    try:
+        os.makedirs("chatlogs", exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+        dest = os.path.join("chatlogs", f"chatlog-{stamp}.txt")
+        shutil.copy2(path, dest)
+    except OSError as exc:
+        logger.error("Failed to archive chat log: %s", exc)
+
+    return history
+
+
 def main() -> None:
     logger.info("Starting conductor")
     config_path = "fenra_config.txt"
@@ -215,7 +261,7 @@ def main() -> None:
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
 
-    chat_log: List[Dict[str, str]] = []
+    chat_log: List[Dict[str, str]] = load_chat_history("chat_log.txt")
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
