@@ -191,30 +191,29 @@ def generate_with_watchdog(
     logger = create_object_logger(f"Watchdog-{model_id}")
     logger.info("Starting generation with watchdog")
 
-    while True:
-        start = time.time()
-        avg_ai = tracker.average()
-        expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
-        timeout = expected_wall * timeout_cushion
-        logger.debug("Timeout set to %.2fs", timeout)
-        try:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-            resp = requests.post(
-                "http://localhost:11434/api/generate",
-                json=payload,
-                timeout=timeout,
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
-            text = parse_response(resp)
-            wall = time.time() - start
-            tracker.record(threading.get_ident(), wall, model_size_gb)
-            logger.info("Generation complete")
-            return str(text)
-        except requests.Timeout:
-            logger.error("Timeout exceeded, retrying request")
-            continue
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Exception during generation: %s", exc)
-            raise
+    start = time.time()
+    avg_ai = tracker.average()
+    expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
+    timeout = expected_wall * timeout_cushion
+    logger.debug("Timeout set to %.2fs", timeout)
+    try:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        resp = requests.post(
+            "http://localhost:11434/api/generate",
+            json=payload,
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
+        text = parse_response(resp)
+        wall = time.time() - start
+        tracker.record(threading.get_ident(), wall, model_size_gb)
+        logger.info("Generation complete")
+        return str(text)
+    except requests.Timeout as exc:
+        logger.error("Timeout exceeded")
+        raise exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Exception during generation: %s", exc)
+        raise

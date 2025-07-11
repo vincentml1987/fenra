@@ -217,14 +217,29 @@ def main() -> None:
 
     chat_log: List[Dict[str, str]] = []
     chat_lock = threading.Lock()
-    cycle_event = threading.Event()
     threads: List[threading.Thread] = []
 
-    def ruminator_loop(ai: Ruminator) -> None:
-        while ai.active:
+    def conversation_loop() -> None:
+        idx = 0
+        while True:
             with chat_lock:
+                active_ruminators = [a for a in ruminators if a.active]
                 context = list(chat_log)
-            reply = ai.step(context)
+            if not active_ruminators:
+                time.sleep(0.5)
+                continue
+            ai = active_ruminators[idx % len(active_ruminators)]
+            try:
+                reply = ai.step(context)
+            except requests.Timeout:
+                logger.error("%s timed out", ai.name)
+                idx = (idx + 1) % len(active_ruminators)
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error from %s: %s", ai.name, exc)
+                idx = (idx + 1) % len(active_ruminators)
+                continue
+
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with chat_lock:
                 chat_log.append(
@@ -240,34 +255,36 @@ def main() -> None:
             with open("chat_log.txt", "a", encoding="utf-8") as log_file:
                 log_file.write(text)
             ui.root.after(0, ui.log, text)
-            if archivist and archivist.active:
-                cycle_event.set()
-            time.sleep(0.5)
 
-    def archivist_loop() -> None:
-        while archivist and archivist.active:
-            cycle_event.wait()
-            cycle_event.clear()
-            with chat_lock:
-                context = list(chat_log)
-            summary = archivist.step(context) if archivist else ""
-            if archivist:
-                logger.info("%s archived transcript", archivist.name)
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                text = (
-                    f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
-                )
-                print(text)
-                ui.root.after(0, ui.log, text)
+            idx = (idx + 1) % len(active_ruminators)
+
+            if idx == 0 and archivist and archivist.active:
                 with chat_lock:
-                    chat_log.clear()
-                    chat_log.append(
-                        {
-                            "sender": archivist.name,
-                            "timestamp": ts,
-                            "message": summary,
-                        }
+                    context = list(chat_log)
+                try:
+                    summary = archivist.step(context)
+                except requests.Timeout:
+                    logger.error("%s timed out", archivist.name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error from %s: %s", archivist.name, exc)
+                else:
+                    logger.info("%s archived transcript", archivist.name)
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    text = (
+                        f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                     )
+                    print(text)
+                    ui.root.after(0, ui.log, text)
+                    with chat_lock:
+                        chat_log.clear()
+                        chat_log.append(
+                            {
+                                "sender": archivist.name,
+                                "timestamp": ts,
+                                "message": summary,
+                            }
+                        )
+
             time.sleep(0.5)
 
     def add_agent(name: str, model_id: str, role_prompt: str):
@@ -289,10 +306,6 @@ def main() -> None:
         ensure_models_available([model_id])
         agents.append(agent)
         ruminators.append(agent)
-        cycle_event.set()
-        thread = threading.Thread(target=ruminator_loop, args=(agent,), daemon=True)
-        thread.start()
-        threads.append(thread)
         return agent
 
     def remove_agent(agent):
@@ -304,21 +317,14 @@ def main() -> None:
             ruminators.remove(agent)
         if isinstance(agent, Archivist) and archivist is agent:
             archivist = None
-            cycle_event.set()
         agents.remove(agent)
         return True
 
     ui = FenraUI(agents, add_agent_callback=add_agent, remove_agent_callback=remove_agent)
 
-    for ai in ruminators:
-        t = threading.Thread(target=ruminator_loop, args=(ai,), daemon=True)
-        t.start()
-        threads.append(t)
-
-    if archivist:
-        t = threading.Thread(target=archivist_loop, daemon=True)
-        t.start()
-        threads.append(t)
+    t = threading.Thread(target=conversation_loop, daemon=True)
+    t.start()
+    threads.append(t)
 
     ui.start()
 
