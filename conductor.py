@@ -212,8 +212,8 @@ def ensure_models_available(model_ids: List[str]) -> None:
             sys.exit(1)
 
 
-def load_chat_history(path: str) -> List[Dict[str, str]]:
-    """Return chat history parsed from a log file and archive it."""
+def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
+    """Return chat history parsed from a single group log and archive it."""
     history: List[Dict[str, str]] = []
     if not os.path.exists(path):
         return history
@@ -242,15 +242,35 @@ def load_chat_history(path: str) -> List[Dict[str, str]]:
         message = first
         if len(lines) > 1:
             message += "\n" + "\n".join(lines[1:])
-        history.append({"sender": sender, "timestamp": ts, "message": message, "groups": ["general"]})
+        history.append(
+            {"sender": sender, "timestamp": ts, "message": message, "groups": [group]}
+        )
 
     try:
         os.makedirs("chatlogs", exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        dest = os.path.join("chatlogs", f"chatlog-{stamp}.txt")
+        base = os.path.basename(path)
+        dest = os.path.join("chatlogs", f"{base}-{stamp}")
         shutil.copy2(path, dest)
     except OSError as exc:
-        logger.error("Failed to archive chat log: %s", exc)
+        logger.error("Failed to archive chat log %s: %s", path, exc)
+
+    return history
+
+
+def load_all_chat_histories() -> List[Dict[str, str]]:
+    """Load chat history from all chat_log_[group].txt files."""
+    history: List[Dict[str, str]] = []
+    pattern = re.compile(r"chat_log_(.+)\.txt$")
+    for fname in os.listdir('.'):
+        m = pattern.match(fname)
+        if m:
+            group = m.group(1)
+            history.extend(_load_chat_history_for_group(fname, group))
+
+    # Backwards compatibility with single chat_log.txt file
+    if os.path.exists("chat_log.txt"):
+        history.extend(_load_chat_history_for_group("chat_log.txt", "general"))
 
     return history
 
@@ -266,7 +286,7 @@ def main() -> None:
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
 
-    chat_log: List[Dict[str, str]] = load_chat_history("chat_log.txt")
+    chat_log: List[Dict[str, str]] = load_all_chat_histories()
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
@@ -309,8 +329,10 @@ def main() -> None:
             logger.info("%s: generated response", ai.name)
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
-            with open("chat_log.txt", "a", encoding="utf-8") as log_file:
-                log_file.write(text)
+            for group in ai.groups:
+                fname = f"chat_log_{group}.txt"
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
             ui.root.after(0, ui.log, text)
 
             idx = (idx + 1) % len(active_ruminators)
@@ -337,6 +359,11 @@ def main() -> None:
                     )
                     print(text)
                     ui.root.after(0, ui.log, text)
+                    summary_text = f"[{ts}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
+                    for group in archivist.groups:
+                        fname = f"chat_log_{group}.txt"
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(summary_text)
                     with chat_lock:
                         chat_log.clear()
                         chat_log.append(
