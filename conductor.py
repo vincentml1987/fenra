@@ -8,6 +8,7 @@ import threading
 import os
 import re
 import shutil
+import random
 
 import logging
 import requests
@@ -291,7 +292,7 @@ def main() -> None:
     threads: List[threading.Thread] = []
 
     def conversation_loop() -> None:
-        idx = 0
+        msg_count = 0
         while True:
             with chat_lock:
                 active_ruminators = [a for a in ruminators if a.active]
@@ -299,7 +300,7 @@ def main() -> None:
             if not active_ruminators:
                 time.sleep(0.5)
                 continue
-            ai = active_ruminators[idx % len(active_ruminators)]
+            ai = random.choice(active_ruminators)
             context = [
                 m
                 for m in current_log
@@ -309,11 +310,9 @@ def main() -> None:
                 reply = ai.step(context)
             except requests.Timeout:
                 logger.error("%s timed out", ai.name)
-                idx = (idx + 1) % len(active_ruminators)
                 continue
             except Exception as exc:  # noqa: BLE001
                 logger.error("Error from %s: %s", ai.name, exc)
-                idx = (idx + 1) % len(active_ruminators)
                 continue
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -334,10 +333,9 @@ def main() -> None:
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
             ui.root.after(0, ui.log, text)
+            msg_count += 1
 
-            idx = (idx + 1) % len(active_ruminators)
-
-            if idx == 0 and archivist and archivist.active:
+            if msg_count >= len(active_ruminators) and archivist and archivist.active:
                 with chat_lock:
                     current_log = list(chat_log)
                 context = [
@@ -374,6 +372,7 @@ def main() -> None:
                                 "groups": archivist.groups,
                             }
                         )
+                    msg_count = 0
 
             time.sleep(0.5)
 
