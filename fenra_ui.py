@@ -85,6 +85,7 @@ class FenraUI:
             f"Model: {agent.model_name}\n"
             f"Role: {role}\n"
             f"Disk Size: {params} GB\n"
+            f"Groups: {', '.join(agent.groups)}\n"
             f"Role Prompt:\n{agent.role_prompt}"
         )
         self.info_var.set(info)

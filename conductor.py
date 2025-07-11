@@ -74,6 +74,8 @@ def load_config(path: str):
 
         model_id = parser.get(section, "model")
         role_prompt = parser.get(section, "role_prompt", fallback="")
+        groups_str = parser.get(section, "groups", fallback="general")
+        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
         temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
         max_tokens = parser.getint(section, "max_tokens", fallback=max_tokens_global)
         chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
@@ -104,6 +106,7 @@ def load_config(path: str):
                     model_name=model_id,
                     role_prompt=role_prompt,
                     config=cfg,
+                    groups=groups,
                 )
             )
         elif role in ("tool", "toolagent", "tools"):
@@ -112,6 +115,7 @@ def load_config(path: str):
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
+                groups=groups,
             )
             agents.append(agent)
         else:
@@ -121,6 +125,7 @@ def load_config(path: str):
                     model_name=model_id,
                     role_prompt=role_prompt,
                     config=cfg,
+                    groups=groups,
                 )
             )
 
@@ -237,7 +242,7 @@ def load_chat_history(path: str) -> List[Dict[str, str]]:
         message = first
         if len(lines) > 1:
             message += "\n" + "\n".join(lines[1:])
-        history.append({"sender": sender, "timestamp": ts, "message": message})
+        history.append({"sender": sender, "timestamp": ts, "message": message, "groups": ["general"]})
 
     try:
         os.makedirs("chatlogs", exist_ok=True)
@@ -270,11 +275,16 @@ def main() -> None:
         while True:
             with chat_lock:
                 active_ruminators = [a for a in ruminators if a.active]
-                context = list(chat_log)
+                current_log = list(chat_log)
             if not active_ruminators:
                 time.sleep(0.5)
                 continue
             ai = active_ruminators[idx % len(active_ruminators)]
+            context = [
+                m
+                for m in current_log
+                if set(m.get("groups", ["general"])) & set(ai.groups)
+            ]
             try:
                 reply = ai.step(context)
             except requests.Timeout:
@@ -293,6 +303,7 @@ def main() -> None:
                         "sender": ai.name,
                         "timestamp": timestamp,
                         "message": reply,
+                        "groups": ai.groups,
                     }
                 )
             logger.info("%s: generated response", ai.name)
@@ -306,7 +317,12 @@ def main() -> None:
 
             if idx == 0 and archivist and archivist.active:
                 with chat_lock:
-                    context = list(chat_log)
+                    current_log = list(chat_log)
+                context = [
+                    m
+                    for m in current_log
+                    if set(m.get("groups", ["general"])) & set(archivist.groups)
+                ]
                 try:
                     summary = archivist.step(context)
                 except requests.Timeout:
@@ -328,6 +344,7 @@ def main() -> None:
                                 "sender": archivist.name,
                                 "timestamp": ts,
                                 "message": summary,
+                                "groups": archivist.groups,
                             }
                         )
 
@@ -348,6 +365,7 @@ def main() -> None:
             model_name=model_id,
             role_prompt=role_prompt,
             config=cfg,
+            groups=["general"],
         )
         ensure_models_available([model_id])
         agents.append(agent)

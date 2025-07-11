@@ -140,10 +140,12 @@ class Agent:
         model_name: str,
         role_prompt: str,
         config: Dict[str, Optional[str]],
+        groups: Optional[List[str]] = None,
     ) -> None:
         self.name = name
         self.model_name = model_name
         self.role_prompt = role_prompt
+        self.groups = groups or ["general"]
         self.active = True
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized agent %s", self.name)
