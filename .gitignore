@@ -8,3 +8,6 @@ __pycache__/
 /logs
 chat_log_cradle.txt
 chat_log_new.txt
+chat_log_fringe.txt
+chat_log_pulse.txt
+chat_log_veil.txt
