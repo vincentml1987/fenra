@@ -376,41 +376,26 @@ def main() -> None:
 
             time.sleep(0.5)
 
-    def add_agent(name: str, model_id: str, role_prompt: str):
-        cfg = {
-            "topic_prompt": defaults.get("topic_prompt", ""),
-            "temperature": defaults.get("temperature", 0.7),
-            "max_tokens": defaults.get("max_tokens", 300),
-            "chat_style": defaults.get("chat_style"),
-            "watchdog_timeout": defaults.get("watchdog_timeout", 300),
-            "system_prompt": defaults.get("system_prompt"),
-        }
+    ui = FenraUI(agents)
 
-        agent = Ruminator(
-            name=name,
-            model_name=model_id,
-            role_prompt=role_prompt,
-            config=cfg,
-            groups=["general"],
-        )
-        ensure_models_available([model_id])
-        agents.append(agent)
-        ruminators.append(agent)
-        return agent
+    def inject_message(agent, message):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = f"[{timestamp}] {agent.name}: {message}\n{'-' * 80}\n\n"
+        with chat_lock:
+            chat_log.append({
+                "sender": agent.name,
+                "timestamp": timestamp,
+                "message": message,
+                "groups": agent.groups,
+            })
+        for group in agent.groups:
+            fname = f"chat_log_{group}.txt"
+            with open(fname, "a", encoding="utf-8") as log_file:
+                log_file.write(text)
+        print(text)
+        ui.root.after(0, ui.log, text)
 
-    def remove_agent(agent):
-        nonlocal archivist
-        if agent not in agents:
-            return False
-        agent.active = False
-        if isinstance(agent, Ruminator) and agent in ruminators:
-            ruminators.remove(agent)
-        if isinstance(agent, Archivist) and archivist is agent:
-            archivist = None
-        agents.remove(agent)
-        return True
-
-    ui = FenraUI(agents, add_agent_callback=add_agent, remove_agent_callback=remove_agent)
+    ui.inject_callback = inject_message
 
     t = threading.Thread(target=conversation_loop, daemon=True)
     t.start()

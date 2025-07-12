@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import scrolledtext, simpledialog, messagebox
+from tkinter import scrolledtext, simpledialog
 
 from ai_model import Ruminator, Archivist
 from runtime_utils import parse_model_size
@@ -8,12 +8,11 @@ from runtime_utils import parse_model_size
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, add_agent_callback=None, remove_agent_callback=None):
+    def __init__(self, agents, inject_callback=None):
         self.root = tk.Tk()
         self.root.title("Fenra")
         self.agents = agents
-        self.add_agent_callback = add_agent_callback
-        self.remove_agent_callback = remove_agent_callback
+        self.inject_callback = inject_callback
 
         # Left side for console output
         self.output = scrolledtext.ScrolledText(self.root, state="disabled", width=80, height=24)
@@ -33,38 +32,54 @@ class FenraUI:
         self.info_label = tk.Label(right, textvariable=self.info_var, justify=tk.LEFT, anchor="w")
         self.info_label.pack(fill=tk.BOTH, expand=True)
 
-        self.add_button = tk.Button(right, text="Add Model", command=self._prompt_add)
-        self.add_button.pack(fill=tk.X)
+        self.inject_button = tk.Button(right, text="Inject Message", command=self._inject_message)
+        self.inject_button.pack(fill=tk.X)
 
-        self.remove_button = tk.Button(right, text="Remove Model", command=self._remove_selected)
-        self.remove_button.pack(fill=tk.X)
+    class _InjectDialog(simpledialog.Dialog):
+        """Dialog for injecting a message as a specific AI."""
 
-    def _prompt_add(self):
-        """Prompt the user for a new agent and add it via callback."""
-        if not self.add_agent_callback:
+        def __init__(self, parent, agents):
+            self.agents = agents
+            self.selected = agents[0]
+            self.message = ""
+            super().__init__(parent, title="Inject Message")
+
+        def body(self, master):
+            tk.Label(master, text="AI:").grid(row=0, column=0, sticky="w")
+            self.ai_var = tk.StringVar(value=self.selected.name)
+            option = tk.OptionMenu(master, self.ai_var, *[a.name for a in self.agents], command=self._update_info)
+            option.grid(row=0, column=1, sticky="ew")
+
+            self.info = tk.Label(master, text=self._format_info(self.selected), justify=tk.LEFT, anchor="w")
+            self.info.grid(row=1, column=0, columnspan=2, sticky="w")
+
+            tk.Label(master, text="Message:").grid(row=2, column=0, sticky="nw")
+            self.text = scrolledtext.ScrolledText(master, width=40, height=10)
+            self.text.grid(row=2, column=1, sticky="nsew")
+            return self.text
+
+        def _format_info(self, agent):
+            groups = ", ".join(agent.groups)
+            return f"Role Prompt:\n{agent.role_prompt}\nGroups: {groups}"
+
+        def _update_info(self, value):
+            for a in self.agents:
+                if a.name == value:
+                    self.selected = a
+                    break
+            self.info.configure(text=self._format_info(self.selected))
+
+        def apply(self):
+            self.message = self.text.get("1.0", tk.END).strip()
+            self.result = (self.selected, self.message)
+
+    def _inject_message(self):
+        if not self.inject_callback:
             return
-
-        name = simpledialog.askstring("Add Model", "Name:", parent=self.root)
-        if not name:
-            return
-
-        model = simpledialog.askstring("Add Model", "Model ID:", parent=self.root)
-        if not model:
-            return
-
-        role = simpledialog.askstring("Add Model", "Role Prompt:", parent=self.root)
-        if role is None:
-            role = ""
-
-        try:
-            agent = self.add_agent_callback(name, model, role)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Error", str(exc), parent=self.root)
-            return
-
-        if agent is not None:
-            self.agents.append(agent)
-            self.listbox.insert(tk.END, agent.name)
+        dialog = self._InjectDialog(self.root, self.agents)
+        result = dialog.result
+        if result and result[1]:
+            self.inject_callback(*result)
 
     def _on_select(self, event):
         selection = event.widget.curselection()
@@ -89,24 +104,6 @@ class FenraUI:
             f"Role Prompt:\n{agent.role_prompt}"
         )
         self.info_var.set(info)
-
-    def _remove_selected(self):
-        if not self.remove_agent_callback:
-            return
-        selection = self.listbox.curselection()
-        if not selection:
-            return
-        idx = selection[0]
-        agent = self.agents[idx]
-        try:
-            removed = self.remove_agent_callback(agent)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Error", str(exc), parent=self.root)
-            return
-        if removed:
-            self.listbox.delete(idx)
-            self.agents.pop(idx)
-            self.info_var.set("")
 
     def log(self, text):
         self.output.configure(state="normal")
