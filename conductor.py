@@ -288,15 +288,32 @@ def main() -> None:
     archivist = archivists[0] if archivists else None
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
+    inject_queue: List[Dict[str, str]] = []
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
     def conversation_loop() -> None:
         msg_count = 0
         while True:
+            pending: List[Dict[str, str]] = []
             with chat_lock:
+                if inject_queue:
+                    pending = list(inject_queue)
+                    inject_queue.clear()
+                    chat_log.extend(pending)
                 active_ruminators = [a for a in ruminators if a.active]
                 current_log = list(chat_log)
+            for msg in pending:
+                text = (
+                    f"[{msg['timestamp']}] {msg['sender']}: {msg['message']}\n"
+                    f"{'-' * 80}\n\n"
+                )
+                for group in msg.get("groups", ["general"]):
+                    fname = f"chat_log_{group}.txt"
+                    with open(fname, "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                print(text)
+                ui.root.after(0, ui.log, text)
             if not active_ruminators:
                 time.sleep(0.5)
                 continue
@@ -378,22 +395,18 @@ def main() -> None:
 
     ui = FenraUI(agents)
 
-    def inject_message(agent, message):
+    def inject_message(agent, message, send_as_human=False, human_name=""):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        text = f"[{timestamp}] {agent.name}: {message}\n{'-' * 80}\n\n"
+        sender = human_name if send_as_human and human_name else agent.name
         with chat_lock:
-            chat_log.append({
-                "sender": agent.name,
-                "timestamp": timestamp,
-                "message": message,
-                "groups": agent.groups,
-            })
-        for group in agent.groups:
-            fname = f"chat_log_{group}.txt"
-            with open(fname, "a", encoding="utf-8") as log_file:
-                log_file.write(text)
-        print(text)
-        ui.root.after(0, ui.log, text)
+            inject_queue.append(
+                {
+                    "sender": sender,
+                    "timestamp": timestamp,
+                    "message": message,
+                    "groups": agent.groups,
+                }
+            )
 
     ui.inject_callback = inject_message
 

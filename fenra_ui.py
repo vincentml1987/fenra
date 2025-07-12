@@ -36,12 +36,14 @@ class FenraUI:
         self.inject_button.pack(fill=tk.X)
 
     class _InjectDialog(simpledialog.Dialog):
-        """Dialog for injecting a message as a specific AI."""
+        """Dialog for injecting a message as a specific AI or human."""
 
         def __init__(self, parent, agents):
             self.agents = agents
             self.selected = agents[0]
             self.message = ""
+            self.send_as_human = tk.BooleanVar(value=False)
+            self.human_name = tk.StringVar()
             super().__init__(parent, title="Inject Message")
 
         def body(self, master):
@@ -50,12 +52,22 @@ class FenraUI:
             option = tk.OptionMenu(master, self.ai_var, *[a.name for a in self.agents], command=self._update_info)
             option.grid(row=0, column=1, sticky="ew")
 
-            self.info = tk.Label(master, text=self._format_info(self.selected), justify=tk.LEFT, anchor="w")
-            self.info.grid(row=1, column=0, columnspan=2, sticky="w")
+            self.human_check = tk.Checkbutton(
+                master,
+                text="Send as human",
+                variable=self.send_as_human,
+                command=self._toggle_human,
+            )
+            self.human_check.grid(row=1, column=0, sticky="w")
+            self.name_entry = tk.Entry(master, textvariable=self.human_name, state="disabled")
+            self.name_entry.grid(row=1, column=1, sticky="ew")
 
-            tk.Label(master, text="Message:").grid(row=2, column=0, sticky="nw")
+            self.info = tk.Label(master, text=self._format_info(self.selected), justify=tk.LEFT, anchor="w")
+            self.info.grid(row=2, column=0, columnspan=2, sticky="w")
+
+            tk.Label(master, text="Message:").grid(row=3, column=0, sticky="nw")
             self.text = scrolledtext.ScrolledText(master, width=40, height=10)
-            self.text.grid(row=2, column=1, sticky="nsew")
+            self.text.grid(row=3, column=1, sticky="nsew")
             return self.text
 
         def _format_info(self, agent):
@@ -69,9 +81,18 @@ class FenraUI:
                     break
             self.info.configure(text=self._format_info(self.selected))
 
+        def _toggle_human(self):
+            state = "normal" if self.send_as_human.get() else "disabled"
+            self.name_entry.configure(state=state)
+
         def apply(self):
             self.message = self.text.get("1.0", tk.END).strip()
-            self.result = (self.selected, self.message)
+            self.result = (
+                self.selected,
+                self.message,
+                self.send_as_human.get(),
+                self.human_name.get().strip(),
+            )
 
     def _inject_message(self):
         if not self.inject_callback:
