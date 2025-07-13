@@ -65,6 +65,9 @@ class AIModel:
         )
         lines.append(self.base_prompt)
         lines.append(f"Your name is {self.name}.")
+        lines.append(
+            f"Keep your response to less than {self.max_tokens} words. Otherwise, your response will be truncated."
+        )
 
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
@@ -184,8 +187,13 @@ class ToolAgent(Agent):
         self.tools = tool_schema()
 
     def step(self, context: List[Dict[str, str]]) -> str:
+        system_msg = (
+            f"{self.model.base_prompt}\n"
+            f"Your name is {self.name}.\n"
+            f"Keep your response to less than {self.model.max_tokens} words. Otherwise, your response will be truncated."
+        )
         messages: List[Dict[str, object]] = [
-            {"role": "system", "content": self.model.base_prompt}
+            {"role": "system", "content": system_msg}
         ]
         for entry in context:
             sender = entry.get("sender", "")
