@@ -40,11 +40,12 @@ class AIModel:
             "Initialized AIModel for %s using %s", self.name, self.model_id
         )
 
-        parts = [topic_prompt]
+        self.role_prompt = role_prompt
+        self.topic_prompt = topic_prompt
+
+        parts = []
         if chat_style:
             parts.append(f"Use a {chat_style} tone.")
-        if role_prompt:
-            parts.append(role_prompt)
         self.base_prompt = "\n".join(parts)
 
         # system_prompt is optional and comes from config
@@ -63,7 +64,8 @@ class AIModel:
         lines.append(
             "The above message is the full chat log. Each message is separated by a series of hyphens. The names of the speakers are indicated before the message."
         )
-        lines.append(self.base_prompt)
+        if self.base_prompt:
+            lines.append(self.base_prompt)
         lines.append(f"Your name is {self.name}.")
         lines.append(
             f"Keep your response to less than {self.max_tokens} words. Otherwise, your response will be truncated."
@@ -84,8 +86,16 @@ class AIModel:
             "temperature": self.temperature,
             "options": {"num_predict": self.max_tokens},
         }
+        system_parts = []
         if self.system_prompt:
-            payload["system"] = self.system_prompt
+            system_parts.append(self.system_prompt)
+        role_topic = " ".join(
+            [p for p in [self.role_prompt, self.topic_prompt] if p]
+        )
+        if role_topic:
+            system_parts.append(role_topic)
+        if system_parts:
+            payload["system"] = "\n".join(system_parts)
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
@@ -112,8 +122,17 @@ class AIModel:
             "stream": False,
         }
         if tools:
-            parts.append("You have access to the following tools:\n" + tool_descriptions())
             payload["tools"] = tools
+        system_parts = []
+        if self.system_prompt:
+            system_parts.append(self.system_prompt)
+        role_topic = " ".join(
+            [p for p in [self.role_prompt, self.topic_prompt] if p]
+        )
+        if role_topic:
+            system_parts.append(role_topic)
+        if system_parts:
+            payload["system"] = "\n".join(system_parts)
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         result_text = generate_with_watchdog(
@@ -187,11 +206,19 @@ class ToolAgent(Agent):
         self.tools = tool_schema()
 
     def step(self, context: List[Dict[str, str]]) -> str:
-        system_msg = (
-            f"{self.model.base_prompt}\n"
-            f"Your name is {self.name}.\n"
+        parts = []
+        role_topic = " ".join(
+            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+        )
+        if role_topic:
+            parts.append(role_topic)
+        if self.model.base_prompt:
+            parts.append(self.model.base_prompt)
+        parts.append(f"Your name is {self.name}.")
+        parts.append(
             f"Keep your response to less than {self.model.max_tokens} words. Otherwise, your response will be truncated."
         )
+        system_msg = "\n".join(parts)
         messages: List[Dict[str, object]] = [
             {"role": "system", "content": system_msg}
         ]
