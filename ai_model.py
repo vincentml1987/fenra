@@ -79,7 +79,7 @@ class AIModel:
             "prompt": prompt,
             "stream": False,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "options": {"num_ctx": self.max_tokens},
         }
         if self.system_prompt:
             payload["system"] = self.system_prompt
@@ -105,7 +105,7 @@ class AIModel:
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "options": {"num_ctx": self.max_tokens},
             "stream": False,
         }
         if tools:
