@@ -43,16 +43,20 @@ def init_global_logging(level: int) -> None:
 def create_object_logger(class_name: str) -> logging.Logger:
     """Create a per-object logger writing to a timestamped file."""
     os.makedirs("logs", exist_ok=True)
+
+    # Remove characters that could result in invalid file names or paths.
+    safe_name = re.sub(r"[^A-Za-z0-9_-]", "", class_name)
+
     ts = datetime.utcnow()
     while True:
         stamp = ts.strftime("%Y%m%dT%H%M%SZ")
-        fname = f"{class_name}-{stamp}.log"
+        fname = f"{safe_name}-{stamp}.log"
         path = os.path.join("logs", fname)
         if not os.path.exists(path):
             break
         ts += timedelta(seconds=1)
 
-    logger = logging.getLogger(f"{class_name}-{stamp}")
+    logger = logging.getLogger(f"{safe_name}-{stamp}")
     file_handler = logging.FileHandler(path, mode="w", encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     stream_handler = logging.StreamHandler()
