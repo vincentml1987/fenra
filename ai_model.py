@@ -31,6 +31,7 @@ class AIModel:
     ) -> None:
         self.name = name
         self.model_id = model_id
+        self.model_size = parse_model_size(model_id)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
@@ -101,7 +102,7 @@ class AIModel:
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         result_text = generate_with_watchdog(
             payload,
-            parse_model_size(self.model_id),
+            self.model_size,
             WATCHDOG_TRACKER,
         )
         result_text = strip_think_markup(result_text)
@@ -137,7 +138,7 @@ class AIModel:
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         result_text = generate_with_watchdog(
             payload,
-            parse_model_size(self.model_id),
+            self.model_size,
             WATCHDOG_TRACKER,
         )
         try:
