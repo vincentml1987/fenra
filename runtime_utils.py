@@ -42,7 +42,6 @@ def init_global_logging(level: int) -> None:
 
 def create_object_logger(class_name: str) -> logging.Logger:
     """Create a per-object logger writing to a timestamped file."""
-    logger.debug("Entering create_object_logger class_name=%s", class_name)
     os.makedirs("logs", exist_ok=True)
     ts = datetime.utcnow()
     while True:
@@ -62,7 +61,6 @@ def create_object_logger(class_name: str) -> logging.Logger:
     logger.addHandler(stream_handler)
     logger.setLevel(GLOBAL_LOG_LEVEL)
     logger.propagate = False
-    logger.debug("Exiting create_object_logger")
     return logger
 
 
