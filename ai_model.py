@@ -129,6 +129,42 @@ class AIModel:
         self.logger.debug("Exiting generate_response")
         return result_text
 
+    def generate_from_prompt(self, prompt: str, num_ctx: Optional[int] = None) -> str:
+        """Generate a response from a custom prompt."""
+        self.logger.debug(
+            "Entering generate_from_prompt with num_ctx=%s", num_ctx
+        )
+        payload = {
+            "model": self.model_id,
+            "prompt": prompt,
+            "stream": False,
+            "temperature": self.temperature,
+            "options": {"num_predict": self.max_tokens},
+        }
+        if num_ctx is not None:
+            payload["options"]["num_ctx"] = num_ctx
+        system_parts = []
+        if self.system_prompt:
+            system_parts.append(self.system_prompt)
+        role_topic = " ".join(
+            [p for p in [self.role_prompt, self.topic_prompt] if p]
+        )
+        if role_topic:
+            system_parts.append(role_topic)
+        if system_parts:
+            payload["system"] = "\n".join(system_parts)
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        result_text = generate_with_watchdog(
+            payload,
+            self.model_size,
+            WATCHDOG_TRACKER,
+        )
+        result_text = strip_think_markup(result_text)
+        self.logger.debug("Generated %d characters", len(result_text))
+        self.logger.debug("Exiting generate_from_prompt")
+        return result_text
+
     def chat_completion(
         self,
         messages: List[Dict[str, object]],
@@ -300,37 +336,45 @@ class Archivist(Agent):
 
     def step(self, full_context: List[Dict[str, str]]) -> str:
         """Archive transcript and return compressed summary."""
-        self.logger.debug("Entering Archivist.step with full_context=%s", full_context)
+        self.logger.debug(
+            "Entering Archivist.step with full_context=%s", full_context
+        )
         from datetime import datetime
         import os
 
         self.logger.info("Archiving full transcript")
 
-        # Archive full transcript
+        lines = []
+        for entry in full_context:
+            sender = entry.get("sender", "")
+            message = entry.get("message", "")
+            timestamp = entry.get("timestamp", "")
+            lines.append(f"[{timestamp}] {sender}: {message}")
+
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         try:
             os.makedirs("archive", exist_ok=True)
-            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             fname = os.path.join("archive", f"{ts}_full.txt")
             with open(fname, "w", encoding="utf-8") as f:
-                for entry in full_context:
-                    sender = entry.get("sender", "")
-                    message = entry.get("message", "")
-                    timestamp = entry.get("timestamp", "")
-                    f.write(f"[{timestamp}] {sender}: {message}\n")
+                for line in lines:
+                    f.write(line + "\n")
         except OSError as exc:
             self.logger.error("Failed to archive conversation: %s", exc)
 
-        # Generate summary using the model
-        summary = self.model.generate_response(full_context)
+        lines.append(
+            "Your job is to summarize the above chat. Keep as much of the meaning of the conversation as you can, including the names of people in the conversation. You are not responding to anyone, so do not actually speak directly to anyone. Simply summarize the chat."
+        )
+        prompt = "\n".join(lines)
+        word_count = len(prompt.split())
 
-        # Save summary to file
+        summary = self.model.generate_from_prompt(prompt, word_count)
+
         try:
             with open("summary.txt", "w", encoding="utf-8") as f:
                 f.write(summary)
         except OSError as exc:
             self.logger.error("Failed to write summary: %s", exc)
 
-        # Append summary with timestamp to running log
         try:
             with open("summary_log.txt", "a", encoding="utf-8") as f:
                 f.write(f"[{ts}] {summary}\n{'-' * 80}\n")

@@ -385,23 +385,38 @@ def main() -> None:
                     logger.error("Error from %s: %s", archivist.name, exc)
                 else:
                     logger.info("%s archived transcript", archivist.name)
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ts_display = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ts_file = datetime.now().strftime("%Y%m%d%H%M%S")
                     text = (
-                        f"[{ts}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                        f"[{ts_display}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                     )
                     print(text)
                     ui.root.after(0, ui.log, text)
-                    summary_text = f"[{ts}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
+                    summary_text = f"[{ts_display}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
                     for group in archivist.groups:
                         fname = f"chat_log_{group}.txt"
-                        with open(fname, "a", encoding="utf-8") as log_file:
+                        if os.path.exists(fname):
+                            os.makedirs("chatlogs", exist_ok=True)
+                            dest = os.path.join(
+                                "chatlogs",
+                                f"chat_log_{group}_summarized_{ts_file}.txt",
+                            )
+                            shutil.copy2(fname, dest)
+                        with open(fname, "w", encoding="utf-8") as log_file:
                             log_file.write(summary_text)
                     with chat_lock:
-                        chat_log.clear()
+                        chat_log[:] = [
+                            m
+                            for m in chat_log
+                            if not (
+                                set(m.get("groups", ["general"]))
+                                & set(archivist.groups)
+                            )
+                        ]
                         chat_log.append(
                             {
                                 "sender": archivist.name,
-                                "timestamp": ts,
+                                "timestamp": ts_display,
                                 "message": summary,
                                 "groups": archivist.groups,
                             }
