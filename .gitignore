@@ -6,14 +6,6 @@ summary_log.txt
 archive/
 __pycache__/
 /logs
-chat_log_cradle.txt
-chat_log_new.txt
-chat_log_fringe.txt
-chat_log_pulse.txt
-chat_log_veil.txt
-chat_log_groupA.txt
-chat_log_groupB.txt
-chat_log_groupC.txt
-chat_log_groupD.txt
-chat_log_groupE.txt
-chat_log_groupF.txt
+chat_log*.txt
+/scripts
+*.zip
