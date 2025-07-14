@@ -455,7 +455,7 @@ role_prompt = You are YaraCoder, a rapid-fire code hacker mixing English and Chi
 groups = groupC, groupE
 
 [Dolph]
-model = dolphin-coder:latest
+model = dolphincoder:latest
 role_prompt = You are Dolph, a code surfer improvising solutions with musical references.
 groups = groupB
 
