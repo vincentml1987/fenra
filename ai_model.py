@@ -13,6 +13,8 @@ from runtime_utils import (
     WATCHDOG_TRACKER,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class AIModel:
     """A single AI agent powered by an Ollama model."""
@@ -29,6 +31,18 @@ class AIModel:
         watchdog_timeout: int = 300,
         system_prompt: Optional[str] = None,
     ) -> None:
+        logger.debug(
+            "Entering AIModel.__init__ with name=%s model_id=%s topic_prompt=%s role_prompt=%s temperature=%s max_tokens=%s chat_style=%s watchdog_timeout=%s system_prompt=%s",
+            name,
+            model_id,
+            topic_prompt,
+            role_prompt,
+            temperature,
+            max_tokens,
+            chat_style,
+            watchdog_timeout,
+            system_prompt,
+        )
         self.name = name
         self.model_id = model_id
         self.model_size = parse_model_size(model_id)
@@ -52,8 +66,11 @@ class AIModel:
         # system_prompt is optional and comes from config
         self.system_prompt = system_prompt
 
+        self.logger.debug("Exiting AIModel.__init__")
+
     def build_prompt(self, chat_log: List[Dict[str, str]]) -> str:
         """Assemble a prompt from system prompt and chat history."""
+        self.logger.debug("Entering build_prompt with chat_log=%s", chat_log)
         lines = ["=====Chat Begins====="]
         for entry in chat_log:
             sender = entry.get("sender", "")
@@ -74,10 +91,12 @@ class AIModel:
 
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
+        self.logger.debug("Exiting build_prompt")
         return prompt
 
     def generate_response(self, chat_log: List[Dict[str, str]]) -> str:
         """Generate a response from the model using Ollama's API."""
+        self.logger.debug("Entering generate_response with chat_log=%s", chat_log)
         prompt = self.build_prompt(chat_log)
 
         payload = {
@@ -107,6 +126,7 @@ class AIModel:
         )
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
+        self.logger.debug("Exiting generate_response")
         return result_text
 
     def chat_completion(
@@ -115,6 +135,11 @@ class AIModel:
         tools: Optional[List[Dict[str, object]]] = None,
     ) -> Dict[str, object]:
         """Call Ollama chat API optionally with tools."""
+        self.logger.debug(
+            "Entering chat_completion with messages=%s tools=%s",
+            messages,
+            tools,
+        )
         payload = {
             "model": self.model_id,
             "messages": messages,
@@ -151,6 +176,7 @@ class AIModel:
             content = message.get("content")
             if isinstance(content, str):
                 message["content"] = strip_think_markup(content)
+        self.logger.debug("Exiting chat_completion")
         return data
 
 
@@ -165,6 +191,13 @@ class Agent:
         config: Dict[str, Optional[str]],
         groups: Optional[List[str]] = None,
     ) -> None:
+        logger.debug(
+            "Entering Agent.__init__ with name=%s model_name=%s role_prompt=%s groups=%s",
+            name,
+            model_name,
+            role_prompt,
+            groups,
+        )
         self.name = name
         self.model_name = model_name
         self.role_prompt = role_prompt
@@ -185,7 +218,11 @@ class Agent:
             system_prompt=config.get("system_prompt"),
         )
 
+        self.logger.debug("Exiting Agent.__init__")
+
     def step(self, context: List[Dict[str, str]]):
+        self.logger.debug("Entering Agent.step with context=%s", context)
+        self.logger.debug("Exiting Agent.step")
         raise NotImplementedError
 
 
@@ -193,9 +230,11 @@ class Ruminator(Agent):
     """Regular discussion participant."""
 
     def step(self, context: List[Dict[str, str]]) -> str:
+        self.logger.debug("Entering Ruminator.step with context=%s", context)
         self.logger.info("Generating response")
         reply = self.model.generate_response(context)
         self.logger.debug("Response length %d", len(reply))
+        self.logger.debug("Exiting Ruminator.step")
         return reply
 
 
@@ -203,10 +242,13 @@ class ToolAgent(Agent):
     """Agent capable of using tools via the Ollama API."""
 
     def __init__(self, *args, **kwargs) -> None:
+        logger.debug("Entering ToolAgent.__init__ with args=%s kwargs=%s", args, kwargs)
         super().__init__(*args, **kwargs)
         self.tools = tool_schema()
+        self.logger.debug("Exiting ToolAgent.__init__")
 
     def step(self, context: List[Dict[str, str]]) -> str:
+        self.logger.debug("Entering ToolAgent.step with context=%s", context)
         parts = []
         role_topic = " ".join(
             [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
@@ -250,6 +292,7 @@ class ToolAgent(Agent):
                     args = {}
                 result = call_tool(str(name), args)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+        self.logger.debug("Exiting ToolAgent.step")
 
 
 class Archivist(Agent):
@@ -257,6 +300,7 @@ class Archivist(Agent):
 
     def step(self, full_context: List[Dict[str, str]]) -> str:
         """Archive transcript and return compressed summary."""
+        self.logger.debug("Entering Archivist.step with full_context=%s", full_context)
         from datetime import datetime
         import os
 
@@ -294,5 +338,6 @@ class Archivist(Agent):
             self.logger.error("Failed to update summary log: %s", exc)
 
         self.logger.info("Summary generated")
+        self.logger.debug("Exiting Archivist.step")
         return summary
 

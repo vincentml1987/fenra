@@ -26,6 +26,7 @@ PULL_URL = "http://localhost:11434/api/pull"
 
 def load_config(path: str):
     """Parse fenra_config.txt and return instantiated agent objects."""
+    logger.debug("Entering load_config path=%s", path)
     parser = configparser.ConfigParser()
     '''if not parser.read(path):
         raise RuntimeError(f"Failed to read config file {path}")'''
@@ -133,18 +134,20 @@ def load_config(path: str):
     if not agents:
         raise RuntimeError("No active AI models found in config.")
 
+    logger.debug("Exiting load_config")
     return agents
 
 
 def load_global_defaults(path: str) -> Dict[str, object]:
     """Return default model configuration from the global section."""
+    logger.debug("Entering load_global_defaults path=%s", path)
     parser = configparser.ConfigParser()
     with open(path, "r", encoding="utf-8") as f:
         parser.read_file(f)
 
     if parser.has_section("global"):
         sec = parser["global"]
-        return {
+        result = {
             "topic_prompt": sec.get("topic_prompt", ""),
             "temperature": sec.getfloat("temperature", fallback=0.7),
             "max_tokens": sec.getint("max_tokens", fallback=300),
@@ -152,8 +155,10 @@ def load_global_defaults(path: str) -> Dict[str, object]:
             "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
             "system_prompt": sec.get("system_prompt", fallback=None),
         }
+        logger.debug("Exiting load_global_defaults")
+        return result
 
-    return {
+    result = {
         "topic_prompt": "",
         "temperature": 0.7,
         "max_tokens": 300,
@@ -161,10 +166,13 @@ def load_global_defaults(path: str) -> Dict[str, object]:
         "watchdog_timeout": 300,
         "system_prompt": None,
     }
+    logger.debug("Exiting load_global_defaults")
+    return result
 
 
 def ensure_models_available(model_ids: List[str]) -> None:
     """Verify models are installed locally, pulling them if missing."""
+    logger.debug("Entering ensure_models_available model_ids=%s", model_ids)
     try:
         resp = requests.get(TAGS_URL)
     except requests.RequestException as exc:
@@ -211,10 +219,14 @@ def ensure_models_available(model_ids: List[str]) -> None:
         if status != "success":
             logger.error("Model pull failed for %s: %s", mid, result)
             sys.exit(1)
+    logger.debug("Exiting ensure_models_available")
 
 
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
     """Return chat history parsed from a single group log and archive it."""
+    logger.debug(
+        "Entering _load_chat_history_for_group path=%s group=%s", path, group
+    )
     history: List[Dict[str, str]] = []
     if not os.path.exists(path):
         return history
@@ -256,11 +268,13 @@ def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
     except OSError as exc:
         logger.error("Failed to archive chat log %s: %s", path, exc)
 
+    logger.debug("Exiting _load_chat_history_for_group")
     return history
 
 
 def load_all_chat_histories() -> List[Dict[str, str]]:
     """Load chat history from all chat_log_[group].txt files."""
+    logger.debug("Entering load_all_chat_histories")
     history: List[Dict[str, str]] = []
     pattern = re.compile(r"chat_log_(.+)\.txt$")
     for fname in os.listdir('.'):
@@ -273,10 +287,12 @@ def load_all_chat_histories() -> List[Dict[str, str]]:
     if os.path.exists("chat_log.txt"):
         history.extend(_load_chat_history_for_group("chat_log.txt", "general"))
 
+    logger.debug("Exiting load_all_chat_histories")
     return history
 
 
 def main() -> None:
+    logger.debug("Entering main")
     logger.info("Starting conductor")
     config_path = "fenra_config.txt"
     agents = load_config(config_path)
@@ -293,6 +309,7 @@ def main() -> None:
     threads: List[threading.Thread] = []
 
     def conversation_loop() -> None:
+        logger.debug("Entering conversation_loop")
         msg_count = 0
         while True:
             pending: List[Dict[str, str]] = []
@@ -392,10 +409,18 @@ def main() -> None:
                     msg_count = 0
 
             time.sleep(0.5)
+        logger.debug("Exiting conversation_loop")
 
     ui = FenraUI(agents)
 
     def inject_message(agent, message, send_as_human=False, human_name=""):
+        logger.debug(
+            "Entering inject_message agent=%s message=%s send_as_human=%s human_name=%s",
+            getattr(agent, 'name', str(agent)),
+            message,
+            send_as_human,
+            human_name,
+        )
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sender = human_name if send_as_human and human_name else agent.name
         with chat_lock:
@@ -407,6 +432,7 @@ def main() -> None:
                     "groups": agent.groups,
                 }
             )
+        logger.debug("Exiting inject_message")
 
     ui.inject_callback = inject_message
 
@@ -415,6 +441,7 @@ def main() -> None:
     threads.append(t)
 
     ui.start()
+    logger.debug("Exiting main")
 
 
 if __name__ == "__main__":
