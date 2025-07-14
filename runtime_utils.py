@@ -150,8 +150,8 @@ WATCHDOG_TRACKER = ThreadTimeTracker()
 
 def parse_model_size(model_id: str) -> float:
     """Return the disk size of the model in gigabytes."""
-    logger.debug("Entering parse_model_size model_id=%s", model_id)
     logger = logging.getLogger("ModelSize")
+    logger.debug("Entering parse_model_size model_id=%s", model_id)
     try:
         import subprocess
 
