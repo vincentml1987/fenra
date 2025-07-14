@@ -1,9 +1,9 @@
 import logging
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog
+from tkinter import ttk
 
 from ai_model import Ruminator, Archivist
-from runtime_utils import parse_model_size
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +26,18 @@ class FenraUI:
         right = tk.Frame(self.root)
         right.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.listbox = tk.Listbox(right)
-        self.listbox.pack(fill=tk.BOTH, expand=True)
-        for agent in agents:
-            self.listbox.insert(tk.END, agent.name)
-        self.listbox.bind("<<ListboxSelect>>", self._on_select)
+        self.tree = ttk.Treeview(right, show="tree")
+        self.tree.pack(fill=tk.BOTH, expand=True)
 
-        self.info_var = tk.StringVar()
-        self.info_label = tk.Label(right, textvariable=self.info_var, justify=tk.LEFT, anchor="w")
-        self.info_label.pack(fill=tk.BOTH, expand=True)
+        group_map = {}
+        for a in agents:
+            for g in a.groups:
+                group_map.setdefault(g, []).append(a.name)
+
+        for group in sorted(group_map):
+            parent = self.tree.insert("", tk.END, text=group, open=True)
+            for name in sorted(group_map[group]):
+                self.tree.insert(parent, tk.END, text=name)
 
         self.inject_button = tk.Button(right, text="Inject Message", command=self._inject_message)
         self.inject_button.pack(fill=tk.X)
@@ -123,32 +126,6 @@ class FenraUI:
             self.inject_callback(*result)
         logger.debug("Exiting _inject_message")
 
-    def _on_select(self, event):
-        logger.debug("Entering _on_select event=%s", event)
-        selection = event.widget.curselection()
-        if not selection:
-            logger.debug("Exiting _on_select: nothing selected")
-            return
-        idx = selection[0]
-        agent = self.agents[idx]
-        if isinstance(agent, Archivist):
-            role = "archivist"
-        elif isinstance(agent, Ruminator):
-            role = "ruminator"
-        else:
-            role = agent.__class__.__name__.lower()
-
-        params = parse_model_size(agent.model_name)
-        info = (
-            f"Name: {agent.name}\n"
-            f"Model: {agent.model_name}\n"
-            f"Role: {role}\n"
-            f"Disk Size: {params} GB\n"
-            f"Groups: {', '.join(agent.groups)}\n"
-            f"Role Prompt:\n{agent.role_prompt}"
-        )
-        self.info_var.set(info)
-        logger.debug("Exiting _on_select")
 
     def log(self, text):
         logger.debug("Entering log text=%s", text)
