@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import requests
 from typing import List, Dict, Optional
 
@@ -129,10 +130,17 @@ class AIModel:
         self.logger.debug("Exiting generate_response")
         return result_text
 
-    def generate_from_prompt(self, prompt: str, num_ctx: Optional[int] = None) -> str:
+    def generate_from_prompt(
+        self,
+        prompt: str,
+        num_ctx: Optional[int] = None,
+        num_predict: Optional[int] = None,
+    ) -> str:
         """Generate a response from a custom prompt."""
         self.logger.debug(
-            "Entering generate_from_prompt with num_ctx=%s", num_ctx
+            "Entering generate_from_prompt with num_ctx=%s num_predict=%s",
+            num_ctx,
+            num_predict,
         )
         payload = {
             "model": self.model_id,
@@ -143,6 +151,8 @@ class AIModel:
         }
         if num_ctx is not None:
             payload["options"]["num_ctx"] = num_ctx
+        if num_predict is not None:
+            payload["options"]["num_predict"] = num_predict
         system_parts = []
         if self.system_prompt:
             system_parts.append(self.system_prompt)
@@ -367,7 +377,7 @@ class Archivist(Agent):
         prompt = "\n".join(lines)
         word_count = len(prompt.split())
 
-        summary = self.model.generate_from_prompt(prompt, word_count)
+        summary = self.model.generate_from_prompt(prompt, num_ctx=word_count)
 
         try:
             with open("summary.txt", "w", encoding="utf-8") as f:
@@ -384,4 +394,46 @@ class Archivist(Agent):
         self.logger.info("Summary generated")
         self.logger.debug("Exiting Archivist.step")
         return summary
+
+
+class Listener(Agent):
+    """Agent that monitors user questions and notifies other AIs."""
+
+    CHECK_INSTRUCTIONS = (
+        "You are a Listener AI. You are not speaking to a human. "
+        "Determine if the user's question has been answered in the output to the world. "
+        "Reply with 'Yes.' if it has been answered or 'No.' if it has not."
+    )
+
+    PROMPT_INSTRUCTIONS = (
+        "You are a Listener AI speaking to other AIs. "
+        "Gently remind them that the user asked a question and restate it in your own words."
+    )
+
+    def check_answered(self, message: str, outputs: List[str]) -> bool:
+        """Return True if the user's question appears answered."""
+        lines = ["-----Message from User-----", message]
+        if outputs:
+            lines.append("-----Output to World-----")
+            lines.extend(outputs)
+        lines.append("-----Your Instructions-----")
+        lines.append(self.CHECK_INSTRUCTIONS)
+        prompt = "\n".join(lines)
+        wc = len(prompt.split())
+        reply = self.model.generate_from_prompt(
+            prompt, num_ctx=wc, num_predict=1
+        )
+        cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
+        return "yes" in cleaned
+
+    def prompt_ais(self, ruminations: str, message: str) -> str:
+        """Ask other AIs to answer the user's question."""
+        lines = ["-----Ruminations-----", ruminations]
+        lines.append("-----Message to User-----")
+        lines.append(message)
+        lines.append("-----Your Instructions-----")
+        lines.append(self.PROMPT_INSTRUCTIONS)
+        prompt = "\n".join(lines)
+        wc = len(prompt.split())
+        return self.model.generate_from_prompt(prompt, num_ctx=wc)
 

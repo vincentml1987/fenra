@@ -9,11 +9,12 @@ import os
 import re
 import shutil
 import random
+import math
 
 import logging
 import requests
 
-from ai_model import Ruminator, Archivist, ToolAgent
+from ai_model import Ruminator, Archivist, ToolAgent, Listener
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
@@ -120,6 +121,16 @@ def load_config(path: str):
                 groups=groups,
             )
             agents.append(agent)
+        elif role == "listener":
+            agents.append(
+                Listener(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                )
+            )
         else:
             agents.append(
                 Ruminator(
@@ -301,17 +312,22 @@ def main() -> None:
 
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
-    participants = [a for a in agents if a not in archivists]
+    listeners = [a for a in agents if isinstance(a, Listener)]
+    participants = [a for a in agents if a not in archivists + listeners]
     all_groups = sorted({g for a in agents for g in a.groups})
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
+    message_queue: List[Dict[str, object]] = []
+    sent_messages: List[Dict[str, object]] = []
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
     def conversation_loop() -> None:
         logger.debug("Entering conversation_loop")
         msg_count = 0
+        listener_counter = 0
+        BASE_LOOPS = 50
         while True:
             pending: List[Dict[str, str]] = []
             with chat_lock:
@@ -321,7 +337,10 @@ def main() -> None:
                     chat_log.extend(pending)
                 active_participants = [a for a in participants if a.active]
                 active_archivists = [a for a in archivists if a.active]
+                active_listeners = [a for a in listeners if a.active]
                 current_log = list(chat_log)
+                current_queue = list(message_queue)
+                current_sent = list(sent_messages)
             for msg in pending:
                 text = (
                     f"[{msg['timestamp']}] {msg['sender']}: {msg['message']}\n"
@@ -333,6 +352,36 @@ def main() -> None:
                         log_file.write(text)
                 print(text)
                 ui.root.after(0, ui.log, text)
+
+            if current_queue and active_listeners:
+                now_ms = time.time() * 1000
+                oldest_age = now_ms - current_queue[0]["epoch"] * 1000
+                newest_age = now_ms - current_queue[-1]["epoch"] * 1000
+                count = len(current_queue)
+                priority = count * (oldest_age / (newest_age + 1))
+                if listener_counter <= 0:
+                    listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
+                    listener_ai = random.choice(active_listeners)
+                    msg = current_queue[0]
+                    outputs = [m["message"] for m in current_sent if m["epoch"] >= msg["epoch"]]
+                    if listener_ai.check_answered(msg["message"], outputs):
+                        with chat_lock:
+                            message_queue.pop(0)
+                        ui.root.after(0, ui.update_queue, list(message_queue))
+                    else:
+                        lines = [f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in current_log]
+                        ruminations = "\n".join(lines)
+                        reply = listener_ai.prompt_ais(ruminations, msg["message"])
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        with chat_lock:
+                            inject_queue.append({
+                                "sender": listener_ai.name,
+                                "timestamp": ts,
+                                "message": reply,
+                                "groups": all_groups,
+                            })
+                else:
+                    listener_counter -= 1
             active_choices = active_participants + active_archivists
             if not active_choices:
                 time.sleep(0.5)
@@ -472,7 +521,16 @@ def main() -> None:
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
-    ui = FenraUI(agents)
+    ui = FenraUI(agents, inject_callback=None, send_callback=None)
+
+    def send_message(message: str) -> None:
+        logger.debug("Entering send_message message=%s", message)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = {"message": message, "timestamp": ts, "epoch": time.time()}
+        with chat_lock:
+            message_queue.append(entry)
+        ui.root.after(0, ui.update_queue, list(message_queue))
+        logger.debug("Exiting send_message")
 
     def inject_message(group: str, message: str) -> None:
         logger.debug("Entering inject_message group=%s message=%s", group, message)
@@ -490,6 +548,8 @@ def main() -> None:
         logger.debug("Exiting inject_message")
 
     ui.inject_callback = inject_message
+    ui.send_callback = send_message
+    ui.update_queue(message_queue)
 
     t = threading.Thread(target=conversation_loop, daemon=True)
     t.start()
