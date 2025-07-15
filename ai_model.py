@@ -423,22 +423,26 @@ class Listener(Agent):
 
     def check_answered(self, message: str, outputs: List[str]) -> bool:
         """Return True if the user's question appears answered."""
+        if not outputs:
+            return False
         for out in outputs:
             lines = [
-                f"A human said the following: {message}",
-                "",
-                f"The following response was sent: {out}",
-                "",
                 (
-                    "Was the human's messages responded to by the response? "
-                    "Only answer 'Yes' or 'No.'"
+                    "Below is a message receive from the humans and a message "
+                    "sent to the humans. Does the sent message respond to the "
+                    "received message? Only answer yes or no:"
                 ),
+                "-----------------",
+                f"Received Message: {message}",
+                "-----------------",
+                f"Sent Message: {out}",
             ]
             prompt = "\n".join(lines)
             wc = len(prompt.split())
             reply = self.model.generate_from_prompt(
                 prompt,
                 num_ctx=wc,
+                num_predict=3,
                 temperature=0.0,
                 system="",
             )
