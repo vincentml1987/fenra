@@ -299,9 +299,10 @@ def main() -> None:
     defaults = load_global_defaults(config_path)
     ensure_models_available([a.model_name for a in agents])
 
-    ruminators = [a for a in agents if isinstance(a, Ruminator)]
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
+    participants = [a for a in agents if a not in archivists]
+    all_groups = sorted({g for a in agents for g in a.groups})
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
@@ -318,7 +319,7 @@ def main() -> None:
                     pending = list(inject_queue)
                     inject_queue.clear()
                     chat_log.extend(pending)
-                active_ruminators = [a for a in ruminators if a.active]
+                active_participants = [a for a in participants if a.active]
                 current_log = list(chat_log)
             for msg in pending:
                 text = (
@@ -331,10 +332,10 @@ def main() -> None:
                         log_file.write(text)
                 print(text)
                 ui.root.after(0, ui.log, text)
-            if not active_ruminators:
+            if not active_participants:
                 time.sleep(0.5)
                 continue
-            ai = random.choice(active_ruminators)
+            ai = random.choice(active_participants)
             context = [
                 m
                 for m in current_log
@@ -369,7 +370,7 @@ def main() -> None:
             ui.root.after(0, ui.log, text)
             msg_count += 1
 
-            if msg_count >= len(active_ruminators) and archivist and archivist.active:
+            if msg_count >= len(active_participants) and archivist and archivist.active:
                 with chat_lock:
                     current_log = list(chat_log)
                 context = [
@@ -428,23 +429,17 @@ def main() -> None:
 
     ui = FenraUI(agents)
 
-    def inject_message(agent, message, send_as_human=False, human_name=""):
-        logger.debug(
-            "Entering inject_message agent=%s message=%s send_as_human=%s human_name=%s",
-            getattr(agent, 'name', str(agent)),
-            message,
-            send_as_human,
-            human_name,
-        )
+    def inject_message(group: str, message: str) -> None:
+        logger.debug("Entering inject_message group=%s message=%s", group, message)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sender = human_name if send_as_human and human_name else agent.name
+        target_groups = all_groups if group == "All Groups" else [group]
         with chat_lock:
             inject_queue.append(
                 {
-                    "sender": sender,
+                    "sender": "Human",
                     "timestamp": timestamp,
                     "message": message,
-                    "groups": agent.groups,
+                    "groups": target_groups,
                 }
             )
         logger.debug("Exiting inject_message")

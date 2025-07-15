@@ -29,90 +29,67 @@ class FenraUI:
         self.tree = ttk.Treeview(right, show="tree")
         self.tree.pack(fill=tk.BOTH, expand=True)
 
+        self.group_names = []
+
         group_map = {}
         for a in agents:
             for g in a.groups:
                 group_map.setdefault(g, []).append(a.name)
 
+        self.all_groups_item = self.tree.insert("", tk.END, text="All Groups", open=False)
+        self.group_names.append("All Groups")
+
         for group in sorted(group_map):
-            parent = self.tree.insert("", tk.END, text=group, open=True)
+            parent = self.tree.insert("", tk.END, text=group, open=False)
             for name in sorted(group_map[group]):
                 self.tree.insert(parent, tk.END, text=name)
+            self.group_names.append(group)
+        self.group_items = list(self.tree.get_children())
+
+        btn_frame = tk.Frame(right)
+        btn_frame.pack(fill=tk.X)
+        self.expand_btn = tk.Button(btn_frame, text="Expand All", command=self._expand_all)
+        self.expand_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.collapse_btn = tk.Button(btn_frame, text="Collapse All", command=self._collapse_all)
+        self.collapse_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.inject_button = tk.Button(right, text="Inject Message", command=self._inject_message)
         self.inject_button.pack(fill=tk.X)
         logger.debug("Exiting FenraUI.__init__")
 
     class _InjectDialog(simpledialog.Dialog):
-        """Dialog for injecting a message as a specific AI or human."""
+        """Dialog for entering a message to inject."""
 
-        def __init__(self, parent, agents):
-            logger.debug("Entering _InjectDialog.__init__ with agents=%s", agents)
-            self.agents = agents
-            self.selected = agents[0]
+        def __init__(self, parent, group_name: str):
+            logger.debug("Entering _InjectDialog.__init__ group_name=%s", group_name)
+            self.group_name = group_name
             self.message = ""
-            self.send_as_human = tk.BooleanVar(value=False)
-            self.human_name = tk.StringVar()
             super().__init__(parent, title="Inject Message")
             logger.debug("Exiting _InjectDialog.__init__")
 
         def body(self, master):
             logger.debug("Entering _InjectDialog.body")
-            tk.Label(master, text="AI:").grid(row=0, column=0, sticky="w")
-            self.ai_var = tk.StringVar(value=self.selected.name)
-            option = tk.OptionMenu(master, self.ai_var, *[a.name for a in self.agents], command=self._update_info)
-            option.grid(row=0, column=1, sticky="ew")
-
-            self.human_check = tk.Checkbutton(
-                master,
-                text="Send as human",
-                variable=self.send_as_human,
-                command=self._toggle_human,
-            )
-            self.human_check.grid(row=1, column=0, sticky="w")
-            self.name_entry = tk.Entry(master, textvariable=self.human_name, state="disabled")
-            self.name_entry.grid(row=1, column=1, sticky="ew")
-
-            self.info = tk.Label(master, text=self._format_info(self.selected), justify=tk.LEFT, anchor="w")
-            self.info.grid(row=2, column=0, columnspan=2, sticky="w")
-
-            tk.Label(master, text="Message:").grid(row=3, column=0, sticky="nw")
+            tk.Label(master, text=f"Send message to {self.group_name}:").grid(row=0, column=0, sticky="w")
             self.text = scrolledtext.ScrolledText(master, width=40, height=10)
-            self.text.grid(row=3, column=1, sticky="nsew")
+            self.text.grid(row=1, column=0, sticky="nsew")
+            master.grid_rowconfigure(1, weight=1)
+            master.grid_columnconfigure(0, weight=1)
             logger.debug("Exiting _InjectDialog.body")
             return self.text
 
-        def _format_info(self, agent):
-            logger.debug("Entering _InjectDialog._format_info agent=%s", agent)
-            groups = ", ".join(agent.groups)
-            result = f"Role Prompt:\n{agent.role_prompt}\nGroups: {groups}"
-            logger.debug("Exiting _InjectDialog._format_info")
-            return result
-
-        def _update_info(self, value):
-            logger.debug("Entering _InjectDialog._update_info value=%s", value)
-            for a in self.agents:
-                if a.name == value:
-                    self.selected = a
-                    break
-            self.info.configure(text=self._format_info(self.selected))
-            logger.debug("Exiting _InjectDialog._update_info")
-
-        def _toggle_human(self):
-            logger.debug("Entering _InjectDialog._toggle_human")
-            state = "normal" if self.send_as_human.get() else "disabled"
-            self.name_entry.configure(state=state)
-            logger.debug("Exiting _InjectDialog._toggle_human")
+        def buttonbox(self):
+            box = tk.Frame(self)
+            send = tk.Button(box, text="Send", width=10, command=self.ok, default=tk.ACTIVE)
+            send.pack(side=tk.LEFT, padx=5, pady=5)
+            cancel = tk.Button(box, text="Cancel", width=10, command=self.cancel)
+            cancel.pack(side=tk.LEFT, padx=5, pady=5)
+            self.bind("<Escape>", self.cancel)
+            box.pack()
 
         def apply(self):
             logger.debug("Entering _InjectDialog.apply")
-            self.message = self.text.get("1.0", tk.END).strip()
-            self.result = (
-                self.selected,
-                self.message,
-                self.send_as_human.get(),
-                self.human_name.get().strip(),
-            )
+            self.message = self.text.get("1.0", tk.END).rstrip()
+            self.result = self.message
             logger.debug("Exiting _InjectDialog.apply")
 
     def _inject_message(self):
@@ -120,11 +97,29 @@ class FenraUI:
         if not self.inject_callback:
             logger.debug("Exiting _inject_message: no callback")
             return
-        dialog = self._InjectDialog(self.root, self.agents)
+        selected = self.tree.focus() or self.all_groups_item
+        group_item = selected
+        parent = self.tree.parent(selected)
+        if parent:
+            group_item = parent
+        group_name = self.tree.item(group_item, "text") or "All Groups"
+        dialog = self._InjectDialog(self.root, group_name)
         result = dialog.result
-        if result and result[1]:
-            self.inject_callback(*result)
+        if result:
+            self.inject_callback(group_name, result)
         logger.debug("Exiting _inject_message")
+
+    def _expand_all(self):
+        logger.debug("Entering _expand_all")
+        for item in self.group_items:
+            self.tree.item(item, open=True)
+        logger.debug("Exiting _expand_all")
+
+    def _collapse_all(self):
+        logger.debug("Entering _collapse_all")
+        for item in self.group_items:
+            self.tree.item(item, open=False)
+        logger.debug("Exiting _collapse_all")
 
 
     def log(self, text):
