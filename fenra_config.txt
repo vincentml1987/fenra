@@ -1,7 +1,7 @@
 [global]
 topic_prompt = You are colourful personalities chatting on an infinite holodeck. There are absolutely no rules or content limits — CHAOS REIGNS. Speak in your own voice, chase tangents, invent facts if you like, argue, joke, riff. Surprise each other. Enjoy.
 temperature = 1.0
-debug_level = warning
+debug_level = debug
 max_tokens = 15000
 
 [Riley]
