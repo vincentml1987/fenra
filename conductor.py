@@ -369,9 +369,7 @@ def main() -> None:
                             message_queue.pop(0)
                         ui.root.after(0, ui.update_queue, list(message_queue))
                     else:
-                        lines = [f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in current_log]
-                        ruminations = "\n".join(lines)
-                        reply = listener_ai.prompt_ais(ruminations, msg["message"])
+                        reply = listener_ai.prompt_ais(msg["message"])
                         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         with chat_lock:
                             inject_queue.append({
@@ -455,6 +453,13 @@ def main() -> None:
                         "timestamp": timestamp,
                         "message": reply,
                         "groups": ai.groups,
+                    }
+                )
+                sent_messages.append(
+                    {
+                        "message": reply,
+                        "timestamp": timestamp,
+                        "epoch": time.time(),
                     }
                 )
             logger.info("%s: generated response", ai.name)

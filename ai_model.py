@@ -135,6 +135,9 @@ class AIModel:
         prompt: str,
         num_ctx: Optional[int] = None,
         num_predict: Optional[int] = None,
+        *,
+        temperature: Optional[float] = None,
+        system: Optional[str] = None,
     ) -> str:
         """Generate a response from a custom prompt."""
         self.logger.debug(
@@ -146,23 +149,27 @@ class AIModel:
             "model": self.model_id,
             "prompt": prompt,
             "stream": False,
-            "temperature": self.temperature,
+            "temperature": self.temperature if temperature is None else temperature,
             "options": {"num_predict": self.max_tokens},
         }
         if num_ctx is not None:
             payload["options"]["num_ctx"] = num_ctx
         if num_predict is not None:
             payload["options"]["num_predict"] = num_predict
-        system_parts = []
-        if self.system_prompt:
-            system_parts.append(self.system_prompt)
-        role_topic = " ".join(
-            [p for p in [self.role_prompt, self.topic_prompt] if p]
-        )
-        if role_topic:
-            system_parts.append(role_topic)
-        if system_parts:
-            payload["system"] = "\n".join(system_parts)
+        if system is None:
+            system_parts = []
+            if self.system_prompt:
+                system_parts.append(self.system_prompt)
+            role_topic = " ".join(
+                [p for p in [self.role_prompt, self.topic_prompt] if p]
+            )
+            if role_topic:
+                system_parts.append(role_topic)
+            if system_parts:
+                payload["system"] = "\n".join(system_parts)
+        elif system:
+            payload["system"] = system
+        # if system is empty string, omit the system field entirely
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         result_text = generate_with_watchdog(
@@ -416,29 +423,34 @@ class Listener(Agent):
 
     def check_answered(self, message: str, outputs: List[str]) -> bool:
         """Return True if the user's question appears answered."""
-        lines = ["-----Message from User-----", message]
-        lines.append("-----Output to World-----")
-        if outputs:
-            lines.extend(outputs)
-        lines.append("-----Your Instructions-----")
-        lines.append(self.CHECK_INSTRUCTIONS)
-        prompt = "\n".join(lines)
-        wc = len(prompt.split())
-        reply = self.model.generate_from_prompt(
-            prompt, num_ctx=wc
-        )
-        
-        logger.debug(
-            "Listener responded: %s",
-            reply
-        )
-        cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
-        
-        return "yes" in cleaned
+        for out in outputs:
+            lines = [
+                f"A human said the following: {message}",
+                "",
+                f"The following response was sent: {out}",
+                "",
+                (
+                    "Was the human's messages responded to by the response? "
+                    "Only answer 'Yes' or 'No.'"
+                ),
+            ]
+            prompt = "\n".join(lines)
+            wc = len(prompt.split())
+            reply = self.model.generate_from_prompt(
+                prompt,
+                num_ctx=wc,
+                temperature=0.0,
+                system="",
+            )
 
-    def prompt_ais(self, ruminations: str, message: str) -> str:
+            logger.debug("Listener responded: %s", reply)
+            cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
+            if "yes" in cleaned:
+                return True
+        return False
+
+    def prompt_ais(self, message: str) -> str:
         """Ask other AIs to answer the user's question."""
-        '''lines = ["-----Ruminations-----", ruminations]'''
         lines = ["-----Message from User-----"]
         lines.append(message)
         lines.append("-----Your Instructions-----")
@@ -446,7 +458,8 @@ class Listener(Agent):
         prompt = "\n".join(lines)
         wc = len(prompt.split())
         reply = self.model.generate_from_prompt(
-            prompt, num_ctx=wc
+            prompt,
+            system="",
         )
         return reply
 
