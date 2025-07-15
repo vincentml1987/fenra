@@ -369,15 +369,29 @@ def main() -> None:
                             message_queue.pop(0)
                         ui.root.after(0, ui.update_queue, list(message_queue))
                     else:
-                        reply = listener_ai.prompt_ais(msg["message"])
+                        lines = [
+                            f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in current_log
+                        ]
+                        ruminations = "\n".join(lines)
+                        reply = listener_ai.prompt_ais(ruminations, msg["message"])
                         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        entry = {
+                            "sender": listener_ai.name,
+                            "timestamp": ts,
+                            "message": reply,
+                            "groups": all_groups,
+                            "epoch": time.time(),
+                        }
                         with chat_lock:
-                            inject_queue.append({
-                                "sender": listener_ai.name,
-                                "timestamp": ts,
-                                "message": reply,
-                                "groups": all_groups,
-                            })
+                            chat_log.append(entry)
+                            sent_messages.append(entry)
+                        text = f"[{ts}] {listener_ai.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in all_groups:
+                            fname = f"chat_log_{group}.txt"
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                        print(text)
+                        ui.root.after(0, ui.log, text)
                         
                     listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
                 else:
@@ -434,34 +448,29 @@ def main() -> None:
                             set(m.get("groups", ["general"])) & set(ai.groups)
                         )
                     ]
-                    chat_log.append(
-                        {
-                            "sender": ai.name,
-                            "timestamp": ts_display,
-                            "message": summary,
-                            "groups": ai.groups,
-                        }
-                    )
+                    entry = {
+                        "sender": ai.name,
+                        "timestamp": ts_display,
+                        "message": summary,
+                        "groups": ai.groups,
+                        "epoch": time.time(),
+                    }
+                    chat_log.append(entry)
+                    sent_messages.append(entry)
                 msg_count = 0
                 continue
 
             reply = result
             with chat_lock:
-                chat_log.append(
-                    {
-                        "sender": ai.name,
-                        "timestamp": timestamp,
-                        "message": reply,
-                        "groups": ai.groups,
-                    }
-                )
-                sent_messages.append(
-                    {
-                        "message": reply,
-                        "timestamp": timestamp,
-                        "epoch": time.time(),
-                    }
-                )
+                entry = {
+                    "sender": ai.name,
+                    "timestamp": timestamp,
+                    "message": reply,
+                    "groups": ai.groups,
+                    "epoch": time.time(),
+                }
+                chat_log.append(entry)
+                sent_messages.append(entry)
             logger.info("%s: generated response", ai.name)
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
@@ -516,14 +525,15 @@ def main() -> None:
                                 & set(archivist.groups)
                             )
                         ]
-                        chat_log.append(
-                            {
-                                "sender": archivist.name,
-                                "timestamp": ts_display,
-                                "message": summary,
-                                "groups": archivist.groups,
-                            }
-                        )
+                        entry = {
+                            "sender": archivist.name,
+                            "timestamp": ts_display,
+                            "message": summary,
+                            "groups": archivist.groups,
+                            "epoch": time.time(),
+                        }
+                        chat_log.append(entry)
+                        sent_messages.append(entry)
                     msg_count = 0
 
             time.sleep(0.5)
