@@ -4,7 +4,7 @@ import re
 import threading
 import time
 from collections import deque
-from datetime import datetime, timedelta
+
 from typing import Dict, Optional
 import ctypes
 
@@ -34,37 +34,21 @@ def init_global_logging(level: int) -> None:
     os.makedirs("logs", exist_ok=True)
     handlers = [
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join("logs", "global.log"), mode="a", encoding="utf-8"),
+        logging.FileHandler(os.path.join("logs", "fenra.log"), mode="a", encoding="utf-8"),
     ]
     logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers)
     logger.debug("Exiting init_global_logging")
 
 
 def create_object_logger(class_name: str) -> logging.Logger:
-    """Create a per-object logger writing to a timestamped file."""
-    os.makedirs("logs", exist_ok=True)
-
-    # Remove characters that could result in invalid file names or paths.
+    """Return a logger that propagates to the global handlers."""
+    # Remove characters that could result in invalid names.
     safe_name = re.sub(r"[^A-Za-z0-9_-]", "", class_name)
 
-    ts = datetime.utcnow()
-    while True:
-        stamp = ts.strftime("%Y%m%dT%H%M%SZ")
-        fname = f"{safe_name}-{stamp}.log"
-        path = os.path.join("logs", fname)
-        if not os.path.exists(path):
-            break
-        ts += timedelta(seconds=1)
-
-    logger = logging.getLogger(f"{safe_name}-{stamp}")
-    file_handler = logging.FileHandler(path, mode="w", encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
+    logger = logging.getLogger(safe_name)
+    logger.handlers.clear()
     logger.setLevel(GLOBAL_LOG_LEVEL)
-    logger.propagate = False
+    logger.propagate = True
     return logger
 
 

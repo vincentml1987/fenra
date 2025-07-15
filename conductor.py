@@ -320,6 +320,7 @@ def main() -> None:
                     inject_queue.clear()
                     chat_log.extend(pending)
                 active_participants = [a for a in participants if a.active]
+                active_archivists = [a for a in archivists if a.active]
                 current_log = list(chat_log)
             for msg in pending:
                 text = (
@@ -332,17 +333,18 @@ def main() -> None:
                         log_file.write(text)
                 print(text)
                 ui.root.after(0, ui.log, text)
-            if not active_participants:
+            active_choices = active_participants + active_archivists
+            if not active_choices:
                 time.sleep(0.5)
                 continue
-            ai = random.choice(active_participants)
+            ai = random.choice(active_choices)
             context = [
                 m
                 for m in current_log
                 if set(m.get("groups", ["general"])) & set(ai.groups)
             ]
             try:
-                reply = ai.step(context)
+                result = ai.step(context)
             except requests.Timeout:
                 logger.error("%s timed out", ai.name)
                 continue
@@ -351,6 +353,49 @@ def main() -> None:
                 continue
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if isinstance(ai, Archivist):
+                summary = result
+                logger.info("%s archived transcript", ai.name)
+                ts_display = timestamp
+                ts_file = datetime.now().strftime("%Y%m%d%H%M%S")
+                text = (
+                    f"[{ts_display}] {ai.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                )
+                print(text)
+                ui.root.after(0, ui.log, text)
+                summary_text = f"[{ts_display}] {ai.name}: {summary}\n{'-' * 80}\n\n"
+                for group in ai.groups:
+                    fname = f"chat_log_{group}.txt"
+                    if os.path.exists(fname):
+                        os.makedirs("chatlogs", exist_ok=True)
+                        dest = os.path.join(
+                            "chatlogs",
+                            f"chat_log_{group}_summarized_{ts_file}.txt",
+                        )
+                        shutil.copy2(fname, dest)
+                    with open(fname, "w", encoding="utf-8") as log_file:
+                        log_file.write(summary_text)
+                with chat_lock:
+                    chat_log[:] = [
+                        m
+                        for m in chat_log
+                        if not (
+                            set(m.get("groups", ["general"])) & set(ai.groups)
+                        )
+                    ]
+                    chat_log.append(
+                        {
+                            "sender": ai.name,
+                            "timestamp": ts_display,
+                            "message": summary,
+                            "groups": ai.groups,
+                        }
+                    )
+                msg_count = 0
+                continue
+
+            reply = result
             with chat_lock:
                 chat_log.append(
                     {
