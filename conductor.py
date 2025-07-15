@@ -320,6 +320,7 @@ def main() -> None:
     inject_queue: List[Dict[str, str]] = []
     message_queue: List[Dict[str, object]] = []
     sent_messages: List[Dict[str, object]] = []
+    messages_to_humans: List[Dict[str, object]] = []
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
@@ -342,6 +343,7 @@ def main() -> None:
                 current_log = list(chat_log)
                 current_queue = list(message_queue)
                 current_sent = list(sent_messages)
+                current_human = list(messages_to_humans)
             for msg in pending:
                 text = (
                     f"[{msg['timestamp']}] {msg['sender']}: {msg['message']}\n"
@@ -363,7 +365,7 @@ def main() -> None:
                 if listener_counter <= 0:
                     listener_ai = random.choice(active_listeners)
                     msg = current_queue[0]
-                    outputs = [m["message"] for m in current_sent if m["epoch"] >= msg["epoch"]]
+                    outputs = [m["message"] for m in current_human if m["epoch"] >= msg["epoch"]]
                     if listener_ai.check_answered(msg["message"], outputs):
                         with chat_lock:
                             message_queue.pop(0)

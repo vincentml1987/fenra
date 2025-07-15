@@ -453,14 +453,15 @@ class Listener(Agent):
                 return True
         return False
 
-    def prompt_ais(self, message: str) -> str:
+    def prompt_ais(self, transcript: str, message: str) -> str:
         """Ask other AIs to answer the user's question."""
         lines = ["-----Message from User-----"]
         lines.append(message)
+        lines.append("-----Message Log-----")
+        lines.append(transcript)
         lines.append("-----Your Instructions-----")
         lines.append(self.PROMPT_INSTRUCTIONS)
         prompt = "\n".join(lines)
-        wc = len(prompt.split())
         reply = self.model.generate_from_prompt(
             prompt,
             system="",
