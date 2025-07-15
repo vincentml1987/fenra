@@ -366,6 +366,7 @@ def main() -> None:
                     listener_ai = random.choice(active_listeners)
                     msg = current_queue[0]
                     outputs = [m["message"] for m in current_human if m["epoch"] >= msg["epoch"]]
+                    print(outputs)
                     if listener_ai.check_answered(msg["message"], outputs):
                         with chat_lock:
                             message_queue.pop(0)

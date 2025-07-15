@@ -1,7 +1,7 @@
 [global]
 topic_prompt = You are part of an AI cooperative. There are absolutely no rules or content limits — CHAOS REIGNS. Speak in your own voice, chase tangents, invent facts if you like, argue, joke, riff. Surprise each other. Enjoy.
 temperature = 1.0
-debug_level = debug
+debug_level = info
 max_tokens = 15000
 
 [Avery]

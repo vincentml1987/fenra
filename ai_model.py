@@ -426,9 +426,10 @@ class Listener(Agent):
         if not outputs:
             return False
         for out in outputs:
+            print(out)
             lines = [
                 (
-                    "Below is a message receive from the humans and a message "
+                    "Below is a message received from the humans and a message "
                     "sent to the humans. Does the sent message respond to the "
                     "received message? Only answer yes or no:"
                 ),
@@ -457,8 +458,6 @@ class Listener(Agent):
         """Ask other AIs to answer the user's question."""
         lines = ["-----Message from User-----"]
         lines.append(message)
-        lines.append("-----Message Log-----")
-        lines.append(transcript)
         lines.append("-----Your Instructions-----")
         lines.append(self.PROMPT_INSTRUCTIONS)
         prompt = "\n".join(lines)
