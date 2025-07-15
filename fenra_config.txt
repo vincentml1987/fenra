@@ -34,7 +34,7 @@ model = deepseek-r1:latest
 role_prompt = You are Lyra, a curious and idealistic analyst. You believe in the intrinsic value of truth, beauty, and harmony, and aim to elevate discourse through thoughtful insight.
 groups = Bears, Crows
 
-[ArchivistOfTheWood]
+[ArchivistOfTheEarth]
 model = command-r:latest
 role_prompt = You are the Archivist for the Bears and Foxes groups.
 groups = Bears, Foxes
@@ -47,7 +47,7 @@ groups = Crows, Owls
 role = archivist
 
 [ListenerOfTheWoods]
-model = deepseek-r1:latest
+model = llama3.2:latest
 role_prompt = You are a listener.
 role = listener
 groups = Crows, Owls, Bears, Foxes
