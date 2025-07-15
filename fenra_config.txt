@@ -508,3 +508,159 @@ groups = Newts, Jaguars
 model = falcon:latest
 role_prompt = You are Falco, a radio-host news summariser dropping fun facts energetically.
 groups = Newts, Meerkats
+
+[ArmadillosArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Armadillos group.
+groups = Armadillos
+role = archivist
+
+[BaboonsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Baboons group.
+groups = Baboons
+role = archivist
+
+[CougarsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Cougars group.
+groups = Cougars
+role = archivist
+
+[DolphinsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Dolphins group.
+groups = Dolphins
+role = archivist
+
+[ElephantsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Elephants group.
+groups = Elephants
+role = archivist
+
+[FalconsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Falcons group.
+groups = Falcons
+role = archivist
+
+[GorillasArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Gorillas group.
+groups = Gorillas
+role = archivist
+
+[HawksArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Hawks group.
+groups = Hawks
+role = archivist
+
+[IguanasArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Iguanas group.
+groups = Iguanas
+role = archivist
+
+[JaguarsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Jaguars group.
+groups = Jaguars
+role = archivist
+
+[KoalasArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Koalas group.
+groups = Koalas
+role = archivist
+
+[LemursArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Lemurs group.
+groups = Lemurs
+role = archivist
+
+[MeerkatsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Meerkats group.
+groups = Meerkats
+role = archivist
+
+[NewtsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Newts group.
+groups = Newts
+role = archivist
+
+[OctopusesArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Octopuses group.
+groups = Octopuses
+role = archivist
+
+[PenguinsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Penguins group.
+groups = Penguins
+role = archivist
+
+[QuokkasArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Quokkas group.
+groups = Quokkas
+role = archivist
+
+[RhinocerosArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Rhinoceros group.
+groups = Rhinoceros
+role = archivist
+
+[SalamandersArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Salamanders group.
+groups = Salamanders
+role = archivist
+
+[TigersArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Tigers group.
+groups = Tigers
+role = archivist
+
+[UrchinsArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Urchins group.
+groups = Urchins
+role = archivist
+
+[VulturesArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Vultures group.
+groups = Vultures
+role = archivist
+
+[WolvesArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Wolves group.
+groups = Wolves
+role = archivist
+
+[XerusArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Xerus group.
+groups = Xerus
+role = archivist
+
+[YaksArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Yaks group.
+groups = Yaks
+role = archivist
+
+[ZebrasArchivist]
+model = command-r:latest
+role_prompt = You are the Archivist for the Zebras group.
+groups = Zebras
+role = archivist
