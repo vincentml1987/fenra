@@ -402,38 +402,51 @@ class Listener(Agent):
     CHECK_INSTRUCTIONS = (
         "You are a Listener AI. You are not speaking to a human. "
         "Determine if the user's question has been answered in the output to the world. "
-        "Reply with 'Yes.' if it has been answered or 'No.' if it has not."
+        "The user's message displays under -----Message from User----- "
+        "Messages sent to the user appear under -----Output to World----- "
+        "Reply with 'Yes' if the output contains the answer to he message from the user. Reply with 'No' if it has not. "
+        "Do not respond with anything but 'Yes' or 'No'."
     )
 
     PROMPT_INSTRUCTIONS = (
         "You are a Listener AI speaking to other AIs. "
-        "Gently remind them that the user asked a question and restate it in your own words."
+        "The user's message displays under -----Message from User----- "
+        "Gently remind the other AIs that the user asked a question and restate the question in your own words."
     )
 
     def check_answered(self, message: str, outputs: List[str]) -> bool:
         """Return True if the user's question appears answered."""
         lines = ["-----Message from User-----", message]
+        lines.append("-----Output to World-----")
         if outputs:
-            lines.append("-----Output to World-----")
             lines.extend(outputs)
         lines.append("-----Your Instructions-----")
         lines.append(self.CHECK_INSTRUCTIONS)
         prompt = "\n".join(lines)
         wc = len(prompt.split())
         reply = self.model.generate_from_prompt(
-            prompt, num_ctx=wc, num_predict=1
+            prompt, num_ctx=wc
+        )
+        
+        logger.debug(
+            "Listener responded: %s",
+            reply
         )
         cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
+        
         return "yes" in cleaned
 
     def prompt_ais(self, ruminations: str, message: str) -> str:
         """Ask other AIs to answer the user's question."""
-        lines = ["-----Ruminations-----", ruminations]
-        lines.append("-----Message to User-----")
+        '''lines = ["-----Ruminations-----", ruminations]'''
+        lines = ["-----Message from User-----"]
         lines.append(message)
         lines.append("-----Your Instructions-----")
         lines.append(self.PROMPT_INSTRUCTIONS)
         prompt = "\n".join(lines)
         wc = len(prompt.split())
-        return self.model.generate_from_prompt(prompt, num_ctx=wc)
+        reply = self.model.generate_from_prompt(
+            prompt, num_ctx=wc
+        )
+        return reply
 

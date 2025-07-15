@@ -329,6 +329,7 @@ def main() -> None:
         listener_counter = 0
         BASE_LOOPS = 50
         while True:
+            
             pending: List[Dict[str, str]] = []
             with chat_lock:
                 if inject_queue:
@@ -360,7 +361,6 @@ def main() -> None:
                 count = len(current_queue)
                 priority = count * (oldest_age / (newest_age + 1))
                 if listener_counter <= 0:
-                    listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
                     listener_ai = random.choice(active_listeners)
                     msg = current_queue[0]
                     outputs = [m["message"] for m in current_sent if m["epoch"] >= msg["epoch"]]
@@ -380,8 +380,11 @@ def main() -> None:
                                 "message": reply,
                                 "groups": all_groups,
                             })
+                        
+                    listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
                 else:
                     listener_counter -= 1
+                
             active_choices = active_participants + active_archivists
             if not active_choices:
                 time.sleep(0.5)
