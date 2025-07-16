@@ -322,10 +322,9 @@ def main() -> None:
     listeners = [a for a in agents if isinstance(a, Listener)]
     participants = [a for a in agents if a not in archivists + listeners]
 
-    # Listeners should participate in every group regardless of config
-    all_groups = sorted({g for a in participants + archivists for g in a.groups})
-    for listener in listeners:
-        listener.groups = list(all_groups)
+    # Build set of all groups
+    all_groups = sorted({g for a in participants + archivists + listeners for g in a.groups})
+    available_agents = participants + archivists + listeners
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
@@ -338,8 +337,6 @@ def main() -> None:
     def conversation_loop() -> None:
         logger.debug("Entering conversation_loop")
         msg_count = 0
-        listener_counter = 0
-        BASE_LOOPS = 50
         while True:
             
             pending: List[Dict[str, str]] = []
@@ -353,8 +350,6 @@ def main() -> None:
                 active_listeners = [a for a in listeners if a.active]
                 log_snapshot = list(chat_log)
                 current_queue = list(message_queue)
-                current_sent = list(sent_messages)
-                current_human = list(messages_to_humans)
             for msg in pending:
                 text = (
                     f"[{msg['timestamp']}] {msg['sender']}: {msg['message']}\n"
@@ -367,73 +362,11 @@ def main() -> None:
                 print(text)
                 ui.root.after(0, ui.log, text)
 
-            if current_queue and active_listeners:
-                now_ms = time.time() * 1000
-                oldest_age = now_ms - current_queue[0]["epoch"] * 1000
-                newest_age = now_ms - current_queue[-1]["epoch"] * 1000
-                count = len(current_queue)
-                priority = count * (oldest_age / (newest_age + 1))
-                if listener_counter <= 0:
-                    listener_ai = random.choice(active_listeners)
-                    msg = current_queue[0]
-                    outputs = [m["message"] for m in current_human if m["epoch"] >= msg["epoch"]]
-                    print(outputs)
-                    if listener_ai.check_answered(msg["message"], outputs):
-                        with chat_lock:
-                            message_queue.pop(0)
-                        ui.root.after(0, ui.update_queue, list(message_queue))
-                        reply = listener_ai.clear_ais(msg["message"])
-                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        entry = {
-                            "sender": listener_ai.name,
-                            "timestamp": ts,
-                            "message": reply,
-                            "groups": all_groups,
-                            "epoch": time.time(),
-                        }
-                        with chat_lock:
-                            chat_log.append(entry)
-                            sent_messages.append(entry)
-                        text = f"[{ts}] {listener_ai.name}: {reply}\n{'-' * 80}\n\n"
-                        for group in all_groups:
-                            fname = f"chat_log_{group}.txt"
-                            with open(fname, "a", encoding="utf-8") as log_file:
-                                log_file.write(text)
-                        print(text)
-                        ui.root.after(0, ui.log, text)
-                    else:
-                        lines = [
-                            f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in log_snapshot
-                        ]
-                        ruminations = "\n".join(lines)
-                        reply = listener_ai.prompt_ais(ruminations, msg["message"])
-                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        entry = {
-                            "sender": listener_ai.name,
-                            "timestamp": ts,
-                            "message": reply,
-                            "groups": all_groups,
-                            "epoch": time.time(),
-                        }
-                        with chat_lock:
-                            chat_log.append(entry)
-                            sent_messages.append(entry)
-                        text = f"[{ts}] {listener_ai.name}: {reply}\n{'-' * 80}\n\n"
-                        for group in all_groups:
-                            fname = f"chat_log_{group}.txt"
-                            with open(fname, "a", encoding="utf-8") as log_file:
-                                log_file.write(text)
-                        print(text)
-                        ui.root.after(0, ui.log, text)
-                        
-                    listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
-                else:
-                    listener_counter -= 1
 
             with chat_lock:
                 current_log = list(chat_log)
                 
-            active_choices = active_participants + active_archivists
+            active_choices = active_participants + active_archivists + active_listeners
             if not active_choices:
                 time.sleep(0.5)
                 continue
@@ -453,6 +386,40 @@ def main() -> None:
                 continue
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if isinstance(ai, Listener):
+                if not current_queue:
+                    time.sleep(0.5)
+                    continue
+                msg = current_queue[0]
+                outputs = [m["message"] for m in sent_messages if m["epoch"] >= msg["epoch"]]
+                if ai.check_answered(msg["message"], outputs):
+                    with chat_lock:
+                        message_queue.pop(0)
+                    ui.root.after(0, ui.update_queue, list(message_queue))
+                    reply = ai.clear_ais(msg["message"])
+                else:
+                    lines = [f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in log_snapshot]
+                    ruminations = "\n".join(lines)
+                    reply = ai.prompt_ais(ruminations, msg["message"])
+                entry = {
+                    "sender": ai.name,
+                    "timestamp": timestamp,
+                    "message": reply,
+                    "groups": ai.groups,
+                    "epoch": time.time(),
+                }
+                with chat_lock:
+                    chat_log.append(entry)
+                    sent_messages.append(entry)
+                text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
+                for group in ai.groups:
+                    fname = f"chat_log_{group}.txt"
+                    with open(fname, "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                print(text)
+                ui.root.after(0, ui.log, text)
+                continue
 
             if isinstance(ai, Archivist):
                 summary = result
