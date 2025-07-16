@@ -321,7 +321,11 @@ def main() -> None:
     archivist = archivists[0] if archivists else None
     listeners = [a for a in agents if isinstance(a, Listener)]
     participants = [a for a in agents if a not in archivists + listeners]
-    all_groups = sorted({g for a in agents for g in a.groups})
+
+    # Listeners should participate in every group regardless of config
+    all_groups = sorted({g for a in participants + archivists for g in a.groups})
+    for listener in listeners:
+        listener.groups = list(all_groups)
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
