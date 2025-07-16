@@ -351,7 +351,7 @@ def main() -> None:
                 active_participants = [a for a in participants if a.active]
                 active_archivists = [a for a in archivists if a.active]
                 active_listeners = [a for a in listeners if a.active]
-                current_log = list(chat_log)
+                log_snapshot = list(chat_log)
                 current_queue = list(message_queue)
                 current_sent = list(sent_messages)
                 current_human = list(messages_to_humans)
@@ -384,7 +384,7 @@ def main() -> None:
                         ui.root.after(0, ui.update_queue, list(message_queue))
                     else:
                         lines = [
-                            f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in current_log
+                            f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in log_snapshot
                         ]
                         ruminations = "\n".join(lines)
                         reply = listener_ai.prompt_ais(ruminations, msg["message"])
@@ -410,6 +410,9 @@ def main() -> None:
                     listener_counter = max(1, math.ceil(BASE_LOOPS / priority)) if priority > 0 else BASE_LOOPS
                 else:
                     listener_counter -= 1
+
+            with chat_lock:
+                current_log = list(chat_log)
                 
             active_choices = active_participants + active_archivists
             if not active_choices:
