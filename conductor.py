@@ -14,7 +14,7 @@ import math
 import logging
 import requests
 
-from ai_model import Ruminator, Archivist, ToolAgent, Listener
+from ai_model import Ruminator, Archivist, ToolAgent, Listener, Speaker
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
@@ -129,6 +129,16 @@ def load_config(path: str):
         elif role == "listener":
             agents.append(
                 Listener(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                )
+            )
+        elif role == "speaker":
+            agents.append(
+                Speaker(
                     name=section,
                     model_name=model_id,
                     role_prompt=role_prompt,
@@ -442,7 +452,8 @@ def main() -> None:
                 with chat_lock:
                     chat_log.append(entry)
                     sent_messages.append(entry)
-                    messages_to_humans.append(entry)
+                    if isinstance(ai, Speaker):
+                        messages_to_humans.append(entry)
                 text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
                 for group in ai.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
@@ -518,7 +529,8 @@ def main() -> None:
                 }
                 chat_log.append(entry)
                 sent_messages.append(entry)
-                messages_to_humans.append(entry)
+                if isinstance(ai, Speaker):
+                    messages_to_humans.append(entry)
             logger.info("%s: generated response", ai.name)
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
@@ -584,7 +596,6 @@ def main() -> None:
                         }
                         chat_log.append(entry)
                         sent_messages.append(entry)
-                        messages_to_humans.append(entry)
                     msg_count = 0
 
             time.sleep(0.5)

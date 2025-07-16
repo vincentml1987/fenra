@@ -472,3 +472,16 @@ class Listener(Agent):
         reply = self.model.generate_from_prompt(prompt, system="")
         return reply
 
+
+class Speaker(Agent):
+    """Agent responsible for communicating with humans."""
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        """Generate a response intended for the outside world."""
+        self.logger.debug("Entering Speaker.step with context=%s", context)
+        self.logger.info("Generating response")
+        reply = self.model.generate_response(context)
+        self.logger.debug("Response length %d", len(reply))
+        self.logger.debug("Exiting Speaker.step")
+        return reply
+
