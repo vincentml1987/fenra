@@ -387,18 +387,6 @@ class Archivist(Agent):
 
         summary = self.model.generate_from_prompt(prompt, num_ctx=word_count)
 
-        try:
-            with open("summary.txt", "w", encoding="utf-8") as f:
-                f.write(summary)
-        except OSError as exc:
-            self.logger.error("Failed to write summary: %s", exc)
-
-        try:
-            with open("summary_log.txt", "a", encoding="utf-8") as f:
-                f.write(f"[{ts}] {summary}\n{'-' * 80}\n")
-        except OSError as exc:
-            self.logger.error("Failed to update summary log: %s", exc)
-
         self.logger.info("Summary generated")
         self.logger.debug("Exiting Archivist.step")
         return summary

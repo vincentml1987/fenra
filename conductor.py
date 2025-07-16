@@ -241,7 +241,7 @@ def ensure_models_available(model_ids: List[str]) -> None:
 
 
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
-    """Return chat history parsed from a single group log and archive it."""
+    """Return chat history parsed from a single group log."""
     logger.debug(
         "Entering _load_chat_history_for_group path=%s group=%s", path, group
     )
@@ -277,36 +277,66 @@ def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
             {"sender": sender, "timestamp": ts, "message": message, "groups": [group]}
         )
 
-    try:
-        os.makedirs("chatlogs", exist_ok=True)
-        stamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        base = os.path.basename(path)
-        dest = os.path.join("chatlogs", f"{base}-{stamp}")
-        shutil.copy2(path, dest)
-    except OSError as exc:
-        logger.error("Failed to archive chat log %s: %s", path, exc)
+
 
     logger.debug("Exiting _load_chat_history_for_group")
     return history
 
 
 def load_all_chat_histories() -> List[Dict[str, str]]:
-    """Load chat history from all chat_log_[group].txt files."""
+    """Load chat history from all chatlogs/chat_log_[group].txt files."""
     logger.debug("Entering load_all_chat_histories")
     history: List[Dict[str, str]] = []
+    log_dir = "chatlogs"
     pattern = re.compile(r"chat_log_(.+)\.txt$")
+    if os.path.isdir(log_dir):
+        for fname in os.listdir(log_dir):
+            m = pattern.match(fname)
+            if m:
+                group = m.group(1)
+                path = os.path.join(log_dir, fname)
+                history.extend(_load_chat_history_for_group(path, group))
+
+    # Backwards compatibility with old location
     for fname in os.listdir('.'):
         m = pattern.match(fname)
         if m:
             group = m.group(1)
             history.extend(_load_chat_history_for_group(fname, group))
 
-    # Backwards compatibility with single chat_log.txt file
+    if os.path.exists(os.path.join(log_dir, "chat_log.txt")):
+        history.extend(
+            _load_chat_history_for_group(os.path.join(log_dir, "chat_log.txt"), "general")
+        )
+
     if os.path.exists("chat_log.txt"):
         history.extend(_load_chat_history_for_group("chat_log.txt", "general"))
 
     logger.debug("Exiting load_all_chat_histories")
     return history
+
+
+def load_message_queue() -> List[Dict[str, object]]:
+    """Return queued user messages from disk."""
+    path = os.path.join("chatlogs", "queued_messages.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load queued messages: %s", exc)
+    return []
+
+
+def save_message_queue(queue: List[Dict[str, object]]) -> None:
+    """Persist queued user messages to disk."""
+    os.makedirs("chatlogs", exist_ok=True)
+    path = os.path.join("chatlogs", "queued_messages.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(queue, f)
+    except OSError as exc:
+        logger.error("Failed to save queued messages: %s", exc)
 
 
 def main() -> None:
@@ -328,7 +358,7 @@ def main() -> None:
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
-    message_queue: List[Dict[str, object]] = []
+    message_queue: List[Dict[str, object]] = load_message_queue()
     sent_messages: List[Dict[str, object]] = []
     messages_to_humans: List[Dict[str, object]] = []
     chat_lock = threading.Lock()
@@ -356,7 +386,8 @@ def main() -> None:
                     f"{'-' * 80}\n\n"
                 )
                 for group in msg.get("groups", ["general"]):
-                    fname = f"chat_log_{group}.txt"
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
@@ -387,6 +418,7 @@ def main() -> None:
                 if ai.check_answered(msg["message"], outputs):
                     with chat_lock:
                         message_queue.pop(0)
+                        save_message_queue(message_queue)
                     ui.root.after(0, ui.update_queue, list(message_queue))
                     reply = ai.clear_ais(msg["message"])
                 else:
@@ -405,7 +437,8 @@ def main() -> None:
                     sent_messages.append(entry)
                 text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
                 for group in ai.groups:
-                    fname = f"chat_log_{group}.txt"
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
@@ -435,12 +468,13 @@ def main() -> None:
                 ui.root.after(0, ui.log, text)
                 summary_text = f"[{ts_display}] {ai.name}: {summary}\n{'-' * 80}\n\n"
                 for group in ai.groups:
-                    fname = f"chat_log_{group}.txt"
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                     if os.path.exists(fname):
-                        os.makedirs("chatlogs", exist_ok=True)
+                        os.makedirs(os.path.join("chatlogs", "summarized"), exist_ok=True)
                         dest = os.path.join(
                             "chatlogs",
-                            f"chat_log_{group}_summarized_{ts_file}.txt",
+                            "summarized",
+                            f"chat_log_{group}_{ts_file}.txt",
                         )
                         shutil.copy2(fname, dest)
                     with open(fname, "w", encoding="utf-8") as log_file:
@@ -480,7 +514,8 @@ def main() -> None:
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
             for group in ai.groups:
-                fname = f"chat_log_{group}.txt"
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
             ui.root.after(0, ui.log, text)
@@ -511,12 +546,13 @@ def main() -> None:
                     ui.root.after(0, ui.log, text)
                     summary_text = f"[{ts_display}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
                     for group in archivist.groups:
-                        fname = f"chat_log_{group}.txt"
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                         if os.path.exists(fname):
-                            os.makedirs("chatlogs", exist_ok=True)
+                            os.makedirs(os.path.join("chatlogs", "summarized"), exist_ok=True)
                             dest = os.path.join(
                                 "chatlogs",
-                                f"chat_log_{group}_summarized_{ts_file}.txt",
+                                "summarized",
+                                f"chat_log_{group}_{ts_file}.txt",
                             )
                             shutil.copy2(fname, dest)
                         with open(fname, "w", encoding="utf-8") as log_file:
@@ -552,6 +588,7 @@ def main() -> None:
         entry = {"message": message, "timestamp": ts, "epoch": time.time()}
         with chat_lock:
             message_queue.append(entry)
+            save_message_queue(message_queue)
         ui.root.after(0, ui.update_queue, list(message_queue))
         logger.debug("Exiting send_message")
 
