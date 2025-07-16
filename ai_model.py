@@ -422,6 +422,12 @@ class Listener(Agent):
         "Gently remind the other AIs that the user asked a question and restate the question in your own words."
     )
 
+    CLEAR_INSTRUCTIONS = (
+        "You are a Listener AI speaking to other AIs. "
+        "The user's message displays under -----Message from User----- "
+        "Let the other AIs know that the users request has been addressed."
+    )
+
     def check_answered(self, message: str, outputs: List[str]) -> bool:
         """Return True if the user's question appears answered."""
         if not outputs:
@@ -466,5 +472,15 @@ class Listener(Agent):
             prompt,
             system="",
         )
+        return reply
+
+    def clear_ais(self, message: str) -> str:
+        """Notify other AIs that the user's request has been addressed."""
+        lines = ["-----Message from User-----"]
+        lines.append(message)
+        lines.append("-----Your Instructions-----")
+        lines.append(self.CLEAR_INSTRUCTIONS)
+        prompt = "\n".join(lines)
+        reply = self.model.generate_from_prompt(prompt, system="")
         return reply
 

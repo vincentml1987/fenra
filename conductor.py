@@ -382,6 +382,25 @@ def main() -> None:
                         with chat_lock:
                             message_queue.pop(0)
                         ui.root.after(0, ui.update_queue, list(message_queue))
+                        reply = listener_ai.clear_ais(msg["message"])
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        entry = {
+                            "sender": listener_ai.name,
+                            "timestamp": ts,
+                            "message": reply,
+                            "groups": all_groups,
+                            "epoch": time.time(),
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                            sent_messages.append(entry)
+                        text = f"[{ts}] {listener_ai.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in all_groups:
+                            fname = f"chat_log_{group}.txt"
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                        print(text)
+                        ui.root.after(0, ui.log, text)
                     else:
                         lines = [
                             f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in current_log
