@@ -440,7 +440,7 @@ class Listener(Agent):
                 num_ctx=wc,
                 num_predict=3,
                 temperature=0.0,
-                system="",
+                system=self.CHECK_INSTRUCTIONS,
             )
 
             logger.debug("Listener responded: %s", reply)

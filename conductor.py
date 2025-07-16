@@ -414,7 +414,11 @@ def main() -> None:
                     time.sleep(0.5)
                     continue
                 msg = current_queue[0]
-                outputs = [m["message"] for m in sent_messages if m["epoch"] >= msg["epoch"]]
+                outputs = [
+                    m["message"]
+                    for m in messages_to_humans
+                    if m["epoch"] >= msg["epoch"]
+                ]
                 if ai.check_answered(msg["message"], outputs):
                     with chat_lock:
                         message_queue.pop(0)
@@ -422,7 +426,10 @@ def main() -> None:
                     ui.root.after(0, ui.update_queue, list(message_queue))
                     reply = ai.clear_ais(msg["message"])
                 else:
-                    lines = [f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in log_snapshot]
+                    lines = [
+                        f"[{m['timestamp']}] {m['sender']}: {m['message']}"
+                        for m in messages_to_humans
+                    ]
                     ruminations = "\n".join(lines)
                     reply = ai.prompt_ais(ruminations, msg["message"])
                 entry = {
@@ -435,6 +442,7 @@ def main() -> None:
                 with chat_lock:
                     chat_log.append(entry)
                     sent_messages.append(entry)
+                    messages_to_humans.append(entry)
                 text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
                 for group in ai.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
@@ -510,6 +518,7 @@ def main() -> None:
                 }
                 chat_log.append(entry)
                 sent_messages.append(entry)
+                messages_to_humans.append(entry)
             logger.info("%s: generated response", ai.name)
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
@@ -575,6 +584,7 @@ def main() -> None:
                         }
                         chat_log.append(entry)
                         sent_messages.append(entry)
+                        messages_to_humans.append(entry)
                     msg_count = 0
 
             time.sleep(0.5)
