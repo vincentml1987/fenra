@@ -480,7 +480,18 @@ class Speaker(Agent):
         """Generate a response intended for the outside world."""
         self.logger.debug("Entering Speaker.step with context=%s", context)
         self.logger.info("Generating response")
-        reply = self.model.generate_response(context)
+        prompt = self.model.build_prompt(context)
+        parts = []
+        if self.model.system_prompt:
+            parts.append(self.model.system_prompt)
+        role_topic = " ".join(
+            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+        )
+        if role_topic:
+            parts.append(role_topic)
+        parts.append("You are speaking to humans.")
+        system_text = "\n".join(parts)
+        reply = self.model.generate_from_prompt(prompt, system=system_text)
         self.logger.debug("Response length %d", len(reply))
         self.logger.debug("Exiting Speaker.step")
         return reply

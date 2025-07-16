@@ -68,6 +68,10 @@ class FenraUI:
         tk.Label(right, text="Queued Messages:").pack(fill=tk.X)
         self.queue_list = tk.Listbox(right, height=8)
         self.queue_list.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(right, text="Sent to Humans:").pack(fill=tk.X)
+        self.sent_list = tk.Listbox(right, height=8)
+        self.sent_list.pack(fill=tk.BOTH, expand=True)
         logger.debug("Exiting FenraUI.__init__")
 
     class _InjectDialog(simpledialog.Dialog):
@@ -168,6 +172,14 @@ class FenraUI:
             text = f"[{m['timestamp']}] {m['message']}"
             self.queue_list.insert(tk.END, text)
         logger.debug("Exiting update_queue")
+
+    def update_sent(self, messages):
+        logger.debug("Entering update_sent messages=%s", messages)
+        self.sent_list.delete(0, tk.END)
+        for m in messages:
+            text = f"[{m['timestamp']}] {m['sender']}: {m['message']}"
+            self.sent_list.insert(tk.END, text)
+        logger.debug("Exiting update_sent")
 
     def _expand_all(self):
         logger.debug("Entering _expand_all")

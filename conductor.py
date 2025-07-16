@@ -349,6 +349,41 @@ def save_message_queue(queue: List[Dict[str, object]]) -> None:
         logger.error("Failed to save queued messages: %s", exc)
 
 
+def load_messages_to_humans() -> List[Dict[str, object]]:
+    """Return past messages sent to humans from disk."""
+    path = os.path.join("chatlogs", "messages_to_humans.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load messages to humans: %s", exc)
+    return []
+
+
+def save_messages_to_humans(messages: List[Dict[str, object]]) -> None:
+    """Persist messages sent to humans to disk."""
+    os.makedirs("chatlogs", exist_ok=True)
+    path = os.path.join("chatlogs", "messages_to_humans.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(messages, f)
+    except OSError as exc:
+        logger.error("Failed to save messages to humans: %s", exc)
+
+
+def append_human_log(entry: Dict[str, object]) -> None:
+    """Append a text record of the message sent to humans."""
+    os.makedirs("chatlogs", exist_ok=True)
+    path = os.path.join("chatlogs", "messages_to_humans.log")
+    text = f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n{'-'*80}\n\n"
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text)
+    except OSError as exc:
+        logger.error("Failed to write human log: %s", exc)
+
+
 def main() -> None:
     logger.debug("Entering main")
     logger.info("Starting conductor")
@@ -370,7 +405,7 @@ def main() -> None:
     inject_queue: List[Dict[str, str]] = []
     message_queue: List[Dict[str, object]] = load_message_queue()
     sent_messages: List[Dict[str, object]] = []
-    messages_to_humans: List[Dict[str, object]] = []
+    messages_to_humans: List[Dict[str, object]] = load_messages_to_humans()
     chat_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
@@ -452,8 +487,6 @@ def main() -> None:
                 with chat_lock:
                     chat_log.append(entry)
                     sent_messages.append(entry)
-                    if isinstance(ai, Speaker):
-                        messages_to_humans.append(entry)
                 text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
                 for group in ai.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
@@ -531,6 +564,8 @@ def main() -> None:
                 sent_messages.append(entry)
                 if isinstance(ai, Speaker):
                     messages_to_humans.append(entry)
+                    save_messages_to_humans(messages_to_humans)
+                    append_human_log(entry)
             logger.info("%s: generated response", ai.name)
             text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
             print(text)
@@ -540,6 +575,8 @@ def main() -> None:
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
             ui.root.after(0, ui.log, text)
+            if isinstance(ai, Speaker):
+                ui.root.after(0, ui.update_sent, list(messages_to_humans))
             msg_count += 1
 
             if msg_count >= len(active_participants) and archivist and archivist.active:
@@ -631,6 +668,7 @@ def main() -> None:
     ui.inject_callback = inject_message
     ui.send_callback = send_message
     ui.update_queue(message_queue)
+    ui.update_sent(messages_to_humans)
 
     t = threading.Thread(target=conversation_loop, daemon=True)
     t.start()
