@@ -376,18 +376,9 @@ def main() -> None:
                 for m in current_log
                 if set(m.get("groups", ["general"])) & set(ai.groups)
             ]
-            try:
-                result = ai.step(context)
-            except requests.Timeout:
-                logger.error("%s timed out", ai.name)
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Error from %s: %s", ai.name, exc)
-                continue
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if isinstance(ai, Listener):
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 if not current_queue:
                     time.sleep(0.5)
                     continue
@@ -420,6 +411,17 @@ def main() -> None:
                 print(text)
                 ui.root.after(0, ui.log, text)
                 continue
+
+            try:
+                result = ai.step(context)
+            except requests.Timeout:
+                logger.error("%s timed out", ai.name)
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error from %s: %s", ai.name, exc)
+                continue
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if isinstance(ai, Archivist):
                 summary = result
