@@ -665,7 +665,158 @@ role_prompt = You are the Archivist for the Zebras group.
 groups = Zebras
 role = archivist
 
-[ListenerOfTheWoods]
+[ArmadillosListener]
 model = llama3.2:latest
-role_prompt = You are a listener.
+role_prompt = You are the Listener for the Armadillos group.
+groups = Armadillos
+role = listener
+
+[BaboonsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Baboons group.
+groups = Baboons
+role = listener
+
+[CougarsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Cougars group.
+groups = Cougars
+role = listener
+
+[DolphinsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Dolphins group.
+groups = Dolphins
+role = listener
+
+[ElephantsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Elephants group.
+groups = Elephants
+role = listener
+
+[FalconsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Falcons group.
+groups = Falcons
+role = listener
+
+[GorillasListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Gorillas group.
+groups = Gorillas
+role = listener
+
+[HawksListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Hawks group.
+groups = Hawks
+role = listener
+
+[IguanasListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Iguanas group.
+groups = Iguanas
+role = listener
+
+[JaguarsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Jaguars group.
+groups = Jaguars
+role = listener
+
+[KoalasListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Koalas group.
+groups = Koalas
+role = listener
+
+[LemursListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Lemurs group.
+groups = Lemurs
+role = listener
+
+[MeerkatsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Meerkats group.
+groups = Meerkats
+role = listener
+
+[NewtsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Newts group.
+groups = Newts
+role = listener
+
+[OctopusesListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Octopuses group.
+groups = Octopuses
+role = listener
+
+[PenguinsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Penguins group.
+groups = Penguins
+role = listener
+
+[QuokkasListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Quokkas group.
+groups = Quokkas
+role = listener
+
+[RhinocerosListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Rhinoceros group.
+groups = Rhinoceros
+role = listener
+
+[SalamandersListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Salamanders group.
+groups = Salamanders
+role = listener
+
+[TigersListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Tigers group.
+groups = Tigers
+role = listener
+
+[UrchinsListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Urchins group.
+groups = Urchins
+role = listener
+
+[VulturesListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Vultures group.
+groups = Vultures
+role = listener
+
+[WolvesListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Wolves group.
+groups = Wolves
+role = listener
+
+[XerusListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Xerus group.
+groups = Xerus
+role = listener
+
+[YaksListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Yaks group.
+groups = Yaks
+role = listener
+
+[ZebrasListener]
+model = llama3.2:latest
+role_prompt = You are the Listener for the Zebras group.
+groups = Zebras
 role = listener
