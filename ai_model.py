@@ -98,6 +98,19 @@ class AIModel:
         self.logger.debug("Entering generate_response with chat_log=%s", chat_log)
         prompt = self.build_prompt(chat_log)
 
+        import json
+        self.logger.info(
+            "AIModel.generate_response payload about to be sent:\n%s",
+            json.dumps(
+                {
+                    "model": self.model_id,
+                    "prompt": prompt,
+                    "temperature": self.temperature,
+                },
+                indent=2,
+            ),
+        )
+
         payload = {
             "model": self.model_id,
             "prompt": prompt,
@@ -142,6 +155,23 @@ class AIModel:
             "Entering generate_from_prompt with num_ctx=%s num_predict=%s",
             num_ctx,
             num_predict,
+        )
+        import json
+        self.logger.info(
+            "AIModel.generate_from_prompt payload about to be sent:\n%s",
+            json.dumps(
+                {
+                    "model": self.model_id,
+                    "prompt": prompt,
+                    "temperature": self.temperature if temperature is None else temperature,
+                    "options": {
+                        **({"num_ctx": num_ctx} if num_ctx is not None else {}),
+                        **({"num_predict": num_predict} if num_predict is not None else {}),
+                    },
+                    **({"system": system} if system is not None else {}),
+                },
+                indent=2,
+            ),
         )
         payload = {
             "model": self.model_id,
@@ -285,6 +315,7 @@ class Ruminator(Agent):
         self.logger.debug("Entering Ruminator.step with context=%s", context)
         self.logger.info("Generating response")
         reply = self.model.generate_response(context)
+        self.logger.info("Ruminator.step: generated reply of length %d", len(reply))
         self.logger.debug("Response length %d", len(reply))
         self.logger.debug("Exiting Ruminator.step")
         return reply
@@ -385,6 +416,10 @@ class Archivist(Agent):
         prompt = "\n".join(prompt_lines)
         word_count = len(prompt.split())
 
+        self.logger.info(
+            "Archivist.step: generating summary with num_ctx=%d", word_count
+        )
+
         summary = self.model.generate_from_prompt(prompt, num_ctx=word_count)
 
         self.logger.info("Summary generated")
@@ -435,6 +470,10 @@ class Listener(Agent):
             ]
             prompt = "\n".join(lines)
             wc = len(prompt.split())
+            logger.info(
+                "Listener.check_answered: token count=%d, will call generate_from_prompt with num_predict=3",
+                wc,
+            )
             reply = self.model.generate_from_prompt(
                 prompt,
                 num_ctx=wc,
@@ -442,6 +481,7 @@ class Listener(Agent):
                 temperature=0.0,
                 system=self.CHECK_INSTRUCTIONS,
             )
+            logger.info("Listener.check_answered: got reply <%s>", reply)
 
             logger.debug("Listener responded: %s", reply)
             cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
@@ -456,10 +496,12 @@ class Listener(Agent):
         lines.append("-----Your Instructions-----")
         lines.append(self.PROMPT_INSTRUCTIONS)
         prompt = "\n".join(lines)
+        logger.info("Listener.prompt_ais: sending prompt to other AIs")
         reply = self.model.generate_from_prompt(
             prompt,
             system="",
         )
+        logger.info("Listener.prompt_ais: got reply of length %d", len(reply))
         return reply
 
     def clear_ais(self, message: str) -> str:
@@ -469,7 +511,9 @@ class Listener(Agent):
         lines.append("-----Your Instructions-----")
         lines.append(self.CLEAR_INSTRUCTIONS)
         prompt = "\n".join(lines)
+        logger.info("Listener.clear_ais: notifying other AIs request addressed")
         reply = self.model.generate_from_prompt(prompt, system="")
+        logger.info("Listener.clear_ais: got reply of length %d", len(reply))
         return reply
 
 
@@ -491,7 +535,9 @@ class Speaker(Agent):
             parts.append(role_topic)
         parts.append("You are speaking to humans.")
         system_text = "\n".join(parts)
+        self.logger.info("Speaker.step: calling generate_from_prompt")
         reply = self.model.generate_from_prompt(prompt, system=system_text)
+        self.logger.info("Speaker.step: got reply of length %d", len(reply))
         self.logger.debug("Response length %d", len(reply))
         self.logger.debug("Exiting Speaker.step")
         return reply
