@@ -50,7 +50,8 @@ def load_config(path: str):
     if global_present:
         topic_prompt_global = parser.get("global", "topic_prompt")
         temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
-        max_tokens_global = parser.getint("global", "max_tokens", fallback=300)
+        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
+        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
         chat_style_global = parser.get("global", "chat_style", fallback=None)
         watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
         debug_level_str = parser.get("global", "debug_level", fallback="INFO")
@@ -58,7 +59,7 @@ def load_config(path: str):
     else:
         topic_prompt_global = None
         temperature_global = 0.7
-        max_tokens_global = 300
+        max_tokens_global = None
         chat_style_global = None
         watchdog_global = 300
         init_global_logging(logging.INFO)
@@ -80,7 +81,11 @@ def load_config(path: str):
         groups_str = parser.get(section, "groups", fallback="general")
         groups = [g.strip() for g in groups_str.split(',') if g.strip()]
         temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
-        max_tokens = parser.getint(section, "max_tokens", fallback=max_tokens_global)
+        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
+        if max_tokens_str is not None:
+            max_tokens = int(max_tokens_str)
+        else:
+            max_tokens = max_tokens_global
         chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
         watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
         system_prompt = parser.get(section, "system_prompt", fallback=None)
@@ -158,10 +163,12 @@ def load_global_defaults(path: str) -> Dict[str, object]:
 
     if parser.has_section("global"):
         sec = parser["global"]
+        max_tok_str = sec.get("max_tokens", fallback=None)
+        max_tok_val = int(max_tok_str) if max_tok_str else None
         result = {
             "topic_prompt": sec.get("topic_prompt", ""),
             "temperature": sec.getfloat("temperature", fallback=0.7),
-            "max_tokens": sec.getint("max_tokens", fallback=300),
+            "max_tokens": max_tok_val,
             "chat_style": sec.get("chat_style", fallback=None),
             "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
             "system_prompt": sec.get("system_prompt", fallback=None),
@@ -172,7 +179,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
     result = {
         "topic_prompt": "",
         "temperature": 0.7,
-        "max_tokens": 300,
+        "max_tokens": None,
         "chat_style": None,
         "watchdog_timeout": 300,
         "system_prompt": None,

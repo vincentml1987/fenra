@@ -27,7 +27,7 @@ class AIModel:
         topic_prompt: str,
         role_prompt: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 300,
+        max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
         watchdog_timeout: int = 300,
         system_prompt: Optional[str] = None,
@@ -74,21 +74,19 @@ class AIModel:
         self.logger.debug("Entering build_prompt with chat_log=%s", chat_log)
         lines = ["=====Chat Begins====="]
         for entry in chat_log:
-            sender = entry.get("sender", "")
             message = entry.get("message", "")
-            timestamp = entry.get("timestamp", "")
-            lines.append(f"[{timestamp}] {sender}: {message}")
+            lines.append(message)
             lines.append("-" * 80)
         lines.append("=====Chat Ends=====")
         lines.append(
-            "The above message is the full chat log. Each message is separated by a series of hyphens. The names of the speakers are indicated before the message."
+            "The above message is the full chat log. Each message is separated by a series of hyphens."
         )
         if self.base_prompt:
             lines.append(self.base_prompt)
-        lines.append(f"Your name is {self.name}.")
-        lines.append(
-            f"Keep your response to less than {self.max_tokens} words. Otherwise, your response will be truncated."
-        )
+        if self.max_tokens is not None:
+            lines.append(
+                f"Keep your response to less than {self.max_tokens} words. Otherwise, your response will be truncated."
+            )
 
         prompt = "\n".join(lines)
         self.logger.debug("Built prompt of %d characters", len(prompt))
@@ -105,7 +103,7 @@ class AIModel:
             "prompt": prompt,
             "stream": False,
             "temperature": self.temperature,
-            "options": {"num_predict": self.max_tokens},
+            "options": {},
         }
         system_parts = []
         if self.system_prompt:
@@ -150,12 +148,11 @@ class AIModel:
             "prompt": prompt,
             "stream": False,
             "temperature": self.temperature if temperature is None else temperature,
-            "options": {"num_predict": self.max_tokens},
+            "options": {},
         }
-        if num_ctx is not None:
+        if num_ctx is not None and self.max_tokens is not None:
             payload["options"]["num_ctx"] = num_ctx
-        if num_predict is not None:
-            payload["options"]["num_predict"] = num_predict
+        # num_predict is accepted for compatibility but intentionally ignored
         if system is None:
             system_parts = []
             if self.system_prompt:
@@ -197,7 +194,7 @@ class AIModel:
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
-            "options": {"num_predict": self.max_tokens},
+            "options": {},
             "stream": False,
         }
         if tools:
@@ -259,13 +256,15 @@ class Agent:
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized agent %s", self.name)
 
+        max_tok_val = config.get("max_tokens")
+        max_tok = int(max_tok_val) if max_tok_val is not None else None
         self.model = AIModel(
             name=name,
             model_id=model_name,
             topic_prompt=config.get("topic_prompt", ""),
             role_prompt=role_prompt,
             temperature=float(config.get("temperature", 0.7)),
-            max_tokens=int(config.get("max_tokens", 300)),
+            max_tokens=max_tok,
             chat_style=config.get("chat_style"),
             watchdog_timeout=int(config.get("watchdog_timeout", 300)),
             system_prompt=config.get("system_prompt"),
@@ -310,10 +309,10 @@ class ToolAgent(Agent):
             parts.append(role_topic)
         if self.model.base_prompt:
             parts.append(self.model.base_prompt)
-        parts.append(f"Your name is {self.name}.")
-        parts.append(
-            f"Keep your response to less than {self.model.max_tokens} words. Otherwise, your response will be truncated."
-        )
+        if self.model.max_tokens is not None:
+            parts.append(
+                f"Keep your response to less than {self.model.max_tokens} words. Otherwise, your response will be truncated."
+            )
         system_msg = "\n".join(parts)
         messages: List[Dict[str, object]] = [
             {"role": "system", "content": system_msg}
@@ -362,11 +361,13 @@ class Archivist(Agent):
         self.logger.info("Archiving full transcript")
 
         lines = []
+        prompt_lines = []
         for entry in full_context:
             sender = entry.get("sender", "")
             message = entry.get("message", "")
             timestamp = entry.get("timestamp", "")
             lines.append(f"[{timestamp}] {sender}: {message}")
+            prompt_lines.append(message)
 
         ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         try:
@@ -378,10 +379,10 @@ class Archivist(Agent):
         except OSError as exc:
             self.logger.error("Failed to archive conversation: %s", exc)
 
-        lines.append(
-            "Your job is to summarize the above chat. Keep as much of the meaning of the conversation as you can, including the names of people in the conversation. You are not responding to anyone, so do not actually speak directly to anyone. Simply summarize the chat."
+        prompt_lines.append(
+            "Your job is to summarize the above chat. Keep as much of the meaning of the conversation as you can. You are not responding to anyone, so do not actually speak directly to anyone. Simply summarize the chat."
         )
-        prompt = "\n".join(lines)
+        prompt = "\n".join(prompt_lines)
         word_count = len(prompt.split())
 
         summary = self.model.generate_from_prompt(prompt, num_ctx=word_count)
