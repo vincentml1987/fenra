@@ -14,7 +14,8 @@ import math
 import logging
 import requests
 
-from ai_model import Ruminator, Archivist, ToolAgent, Listener, Speaker
+# Added Tracer import.
+from ai_model import Ruminator, Archivist, ToolAgent, Listener, Speaker, Tracer
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
@@ -139,6 +140,16 @@ def load_config(path: str):
         elif role == "speaker":
             agents.append(
                 Speaker(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                )
+            )
+        elif role == "tracer":
+            agents.append(
+                Tracer(
                     name=section,
                     model_name=model_id,
                     role_prompt=role_prompt,
@@ -395,11 +406,13 @@ def main() -> None:
     archivists = [a for a in agents if isinstance(a, Archivist)]
     archivist = archivists[0] if archivists else None
     listeners = [a for a in agents if isinstance(a, Listener)]
-    participants = [a for a in agents if a not in archivists + listeners]
+    tracers = [a for a in agents if isinstance(a, Tracer)]
+    tracer = tracers[0] if tracers else None
+    participants = [a for a in agents if a not in archivists + listeners + tracers]
 
-    # Build set of all groups
-    all_groups = sorted({g for a in participants + archivists + listeners for g in a.groups})
-    available_agents = participants + archivists + listeners
+    # Build set of all groups (include tracers)
+    all_groups = sorted({g for a in participants + archivists + listeners + tracers for g in a.groups})
+    available_agents = participants + archivists + listeners + tracers
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
@@ -423,6 +436,7 @@ def main() -> None:
                 active_participants = [a for a in participants if a.active]
                 active_archivists = [a for a in archivists if a.active]
                 active_listeners = [a for a in listeners if a.active]
+                # Tracer agents are not part of the speaking rotation
                 log_snapshot = list(chat_log)
                 current_queue = list(message_queue)
             for msg in pending:
@@ -442,6 +456,7 @@ def main() -> None:
             with chat_lock:
                 current_log = list(chat_log)
                 
+            # NOTE: Tracer excluded from rotation intentionally
             active_choices = active_participants + active_archivists + active_listeners
             if not active_choices:
                 time.sleep(0.5)
@@ -464,7 +479,9 @@ def main() -> None:
                     for m in messages_to_humans
                     if m["epoch"] >= msg["epoch"]
                 ]
-                if ai.check_answered(msg["message"], outputs):
+                # Delegate answered check to Tracer if available
+                answered = tracer.is_answered(msg["message"], outputs) if tracer else ai.check_answered(msg["message"], outputs)
+                if answered:
                     with chat_lock:
                         message_queue.pop(0)
                         save_message_queue(message_queue)

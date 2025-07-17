@@ -212,3 +212,11 @@ model = llama2:latest
 role_prompt = You simulate language refinement circuits in the speech production area. As a Ruminator in the ResponseGeneration group, you double-check the final wording for any mistakes or unclear phrasing, polishing the response so it is ready to be delivered.
 groups = ResponseGeneration,ReasoningCenter
 role = ruminator
+
+[Tracer]
+model = llama3.2:latest
+role_prompt = You are an internal Tracer that never speaks to humans. You only return Yes/No when judging whether a human message has already been answered by a message sent to humans.
+groups = internal
+role = tracer
+active = true
+

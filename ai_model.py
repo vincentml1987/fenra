@@ -308,6 +308,70 @@ class Agent:
         raise NotImplementedError
 
 
+class Tracer(Agent):
+    """Lightweight classifier determining if a user's message was answered."""
+
+    TRACE_INSTRUCTIONS = (
+        "You are an internal Tracer process (not speaking to a human). "
+        "You will be shown a message received from the humans and a message that "
+        "was sent *to* the humans. Decide if the sent message sufficiently "
+        "answers / responds to the received message. Reply ONLY 'Yes' or 'No'."
+    )
+
+    def step(self, context: List[Dict[str, str]]) -> str:  # pragma: no cover - defensive
+        """Tracer does not engage in conversation."""
+        self.logger.debug("Tracer.step called unexpectedly; ignoring.")
+        return ""
+
+    def _judge_pair(self, user_msg: str, sent_msg: str) -> bool:
+        """Return True if sent_msg answers user_msg."""
+        import json
+
+        lines = [
+            "Below is a message received from the humans and a message sent to the humans. Does the sent message respond to the received message? Only answer yes or no:",
+            "-----------------",
+            f"Received Message: {user_msg}",
+            "-----------------",
+            f"Sent Message: {sent_msg}",
+        ]
+        prompt = "\n".join(lines)
+        wc = len(prompt.split())
+
+        payload = {
+            "model": self.model.model_id,
+            "prompt": prompt,
+            "stream": False,
+            "temperature": 0.0,
+            "options": {
+                "num_ctx": wc,
+                "num_predict": 3,
+                "top_k": 1,
+                "top_p": 0,
+            },
+            "system": self.TRACE_INSTRUCTIONS,
+        }
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Tracer _judge_pair payload:\n%s", json.dumps(payload, indent=2))
+
+        text = generate_with_watchdog(
+            payload,
+            self.model.model_size,
+            WATCHDOG_TRACKER,
+        )
+        text = strip_think_markup(text)
+        cleaned = re.sub(r"[^a-zA-Z]", "", text).lower()
+        return "yes" in cleaned
+
+    def is_answered(self, user_message: str, outputs: List[str]) -> bool:
+        """Return True iff any sent message answers user_message."""
+        if not outputs:
+            return False
+        for out in outputs:
+            if self._judge_pair(user_message, out):
+                return True
+        return False
+
+
 class Ruminator(Agent):
     """Regular discussion participant."""
 
