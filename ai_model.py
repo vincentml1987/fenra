@@ -106,17 +106,18 @@ class AIModel:
         prompt = self.build_prompt(chat_log)
 
         import json
-        self.logger.info(
-            "AIModel.generate_response payload about to be sent:\n%s",
-            json.dumps(
-                {
-                    "model": self.model_id,
-                    "prompt": prompt,
-                    "temperature": self.temperature,
-                },
-                indent=2,
-            ),
-        )
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "AIModel.generate_response payload about to be sent:\n%s",
+                json.dumps(
+                    {
+                        "model": self.model_id,
+                        "prompt": prompt,
+                        "temperature": self.temperature,
+                    },
+                    indent=2,
+                ),
+            )
 
         payload = {
             "model": self.model_id,
@@ -129,7 +130,7 @@ class AIModel:
         if self.system_prompt:
             system_parts.append(self.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.role_prompt, self.topic_prompt] if p]
+            [p for p in [self.topic_prompt, self.role_prompt] if p]
         )
         if role_topic:
             system_parts.append(role_topic)
@@ -164,22 +165,23 @@ class AIModel:
             num_predict,
         )
         import json
-        self.logger.info(
-            "AIModel.generate_from_prompt payload about to be sent:\n%s",
-            json.dumps(
-                {
-                    "model": self.model_id,
-                    "prompt": prompt,
-                    "temperature": self.temperature if temperature is None else temperature,
-                    "options": {
-                        **({"num_ctx": num_ctx} if num_ctx is not None else {}),
-                        **({"num_predict": num_predict} if num_predict is not None else {}),
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "AIModel.generate_from_prompt payload about to be sent:\n%s",
+                json.dumps(
+                    {
+                        "model": self.model_id,
+                        "prompt": prompt,
+                        "temperature": self.temperature if temperature is None else temperature,
+                        "options": {
+                            **({"num_ctx": num_ctx} if num_ctx is not None else {}),
+                            **({"num_predict": num_predict} if num_predict is not None else {}),
+                        },
+                        **({"system": system} if system is not None else {}),
                     },
-                    **({"system": system} if system is not None else {}),
-                },
-                indent=2,
-            ),
-        )
+                    indent=2,
+                ),
+            )
         payload = {
             "model": self.model_id,
             "prompt": prompt,
@@ -195,7 +197,7 @@ class AIModel:
             if self.system_prompt:
                 system_parts.append(self.system_prompt)
             role_topic = " ".join(
-                [p for p in [self.role_prompt, self.topic_prompt] if p]
+                [p for p in [self.topic_prompt, self.role_prompt] if p]
             )
             if role_topic:
                 system_parts.append(role_topic)
@@ -240,7 +242,7 @@ class AIModel:
         if self.system_prompt:
             system_parts.append(self.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.role_prompt, self.topic_prompt] if p]
+            [p for p in [self.topic_prompt, self.role_prompt] if p]
         )
         if role_topic:
             system_parts.append(role_topic)
@@ -341,7 +343,7 @@ class ToolAgent(Agent):
         self.logger.debug("Entering ToolAgent.step with context=%s", context)
         parts = []
         role_topic = " ".join(
-            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+            [p for p in [self.model.topic_prompt, self.model.role_prompt] if p]
         )
         if role_topic:
             parts.append(role_topic)
@@ -553,7 +555,7 @@ class Speaker(Agent):
         if self.model.system_prompt:
             parts.append(self.model.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+            [p for p in [self.model.topic_prompt, self.model.role_prompt] if p]
         )
         if role_topic:
             parts.append(role_topic)
