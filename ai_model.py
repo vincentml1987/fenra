@@ -17,7 +17,7 @@ from runtime_utils import (
 CHECK_MODEL = "qwen2.5:latest"
 CHECK_MODEL_SIZE = parse_model_size(CHECK_MODEL)
 SYSTEM_CHECK_ANSWERED = (
-    "Respond with exactly Yes or No (capitalized, no punctuation). "
+    "Respond with exactly Yes or No (capitalized), with no extra words, punctuation, or whitespace. "
     "First token must be the answer."
 )
 
@@ -490,9 +490,10 @@ class Listener(Agent):
                     "temperature": 0,
                     "top_k": 1,
                     "top_p": 0,
-                    "num_predict": 2,
-                    "stop": ["\n", ".", " "],
+                    "num_predict": 1,
+                    "stop": ["\n"],
                     "num_ctx": ctx_tokens,
+                    "raw":True
                 },
             }
             try:
