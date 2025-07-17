@@ -14,6 +14,13 @@ from runtime_utils import (
     WATCHDOG_TRACKER,
 )
 
+CHECK_MODEL = "qwen2.5:7b"
+CHECK_MODEL_SIZE = parse_model_size(CHECK_MODEL)
+SYSTEM_CHECK_ANSWERED = (
+    "Respond with exactly Yes or No (capitalized, no punctuation). "
+    "First token must be the answer."
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -468,19 +475,35 @@ class Listener(Agent):
                 "-----------------",
                 f"Sent Message: {out}",
             ]
-            prompt = "\n".join(lines)
-            wc = len(prompt.split())
+            prompt_text = "\n".join(lines)
+            ctx_tokens = len(prompt_text.split())
             logger.info(
-                "Listener.check_answered: token count=%d, will call generate_from_prompt with num_predict=3",
-                wc,
+                "Listener.check_answered: token count=%d, calling judge model",
+                ctx_tokens,
             )
-            reply = self.model.generate_from_prompt(
-                prompt,
-                num_ctx=wc,
-                num_predict=3,
-                temperature=0.0,
-                system=self.CHECK_INSTRUCTIONS,
-            )
+            payload = {
+                "model": CHECK_MODEL,
+                "prompt": prompt_text,
+                "system": SYSTEM_CHECK_ANSWERED,
+                "stream": False,
+                "options": {
+                    "temperature": 0,
+                    "top_k": 1,
+                    "top_p": 0,
+                    "num_predict": 2,
+                    "stop": ["\n", ".", " "],
+                    "num_ctx": ctx_tokens,
+                },
+            }
+            try:
+                reply = generate_with_watchdog(
+                    payload,
+                    CHECK_MODEL_SIZE,
+                    WATCHDOG_TRACKER,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Listener.check_answered: judge call failed: %s", exc)
+                continue
             logger.info("Listener.check_answered: got reply <%s>", reply)
 
             logger.debug("Listener responded: %s", reply)
