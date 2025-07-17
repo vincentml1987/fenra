@@ -529,6 +529,7 @@ def main() -> None:
                             f"chat_log_{group}_{ts_file}.txt",
                         )
                         shutil.copy2(fname, dest)
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "w", encoding="utf-8") as log_file:
                         log_file.write(summary_text)
                 with chat_lock:
@@ -613,6 +614,7 @@ def main() -> None:
                                 f"chat_log_{group}_{ts_file}.txt",
                             )
                             shutil.copy2(fname, dest)
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
                         with open(fname, "w", encoding="utf-8") as log_file:
                             log_file.write(summary_text)
                     with chat_lock:
