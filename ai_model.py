@@ -360,16 +360,26 @@ class Tracer(Agent):
         )
         text = strip_think_markup(text)
         cleaned = re.sub(r"[^a-zA-Z]", "", text).lower()
+        self.logger.info(
+            "Tracer._judge_pair: raw=%r → cleaned=%r → verdict=%s",
+            text,
+            cleaned,
+            "yes" in cleaned,
+        )
         return "yes" in cleaned
 
     def is_answered(self, user_message: str, outputs: List[str]) -> bool:
         """Return True iff any sent message answers user_message."""
         if not outputs:
             return False
-        for out in outputs:
-            if self._judge_pair(user_message, out):
-                return True
-        return False
+        result = any(self._judge_pair(user_message, out) for out in outputs)
+        self.logger.info(
+            "Tracer.is_answered: user=%r, outputs=%s → %s",
+            user_message,
+            outputs,
+            result,
+        )
+        return result
 
 
 class Ruminator(Agent):
