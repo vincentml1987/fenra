@@ -220,3 +220,32 @@ groups = internal
 role = tracer
 active = true
 
+[IncomingTracer]
+model = qwen2.5:latest
+role_prompt = Internal Tracer for IncomingChatProcessing; judges if a human msg was answered.
+groups = IncomingChatProcessing
+role = tracer
+
+[UnderstandingTracer]
+model = qwen2.5:latest
+role_prompt = Internal Tracer for LanguageUnderstanding; judges if a human msg was answered.
+groups = LanguageUnderstanding
+role = tracer
+
+[MemoryTracer]
+model = qwen2.5:latest
+role_prompt = Internal Tracer for MemoryIntegration; judges if a human msg was answered.
+groups = MemoryIntegration
+role = tracer
+
+[ReasoningTracer]
+model = qwen2.5:latest
+role_prompt = Internal Tracer for ReasoningCenter; judges if a human msg was answered.
+groups = ReasoningCenter
+role = tracer
+
+[ResponseTracer]
+model = qwen2.5:latest
+role_prompt = Internal Tracer for ResponseGeneration; judges if a human msg was answered.
+groups = ResponseGeneration
+role = tracer
