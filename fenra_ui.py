@@ -3,8 +3,6 @@ import tkinter as tk
 from tkinter import scrolledtext, simpledialog
 from tkinter import ttk
 
-from ai_model import Ruminator, Archivist
-
 logger = logging.getLogger(__name__)
 
 
@@ -24,13 +22,38 @@ class FenraUI:
         self.inject_callback = inject_callback
         self.send_callback = send_callback
 
-        # Left side for console output
-        self.output = scrolledtext.ScrolledText(self.root, state="disabled", width=80, height=24)
-        self.output.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.selected_group: str | None = "All Groups"
+        self.selected_agent: str | None = None
+        self.sent_messages = []
 
-        # Right side for agent list and info
-        right = tk.Frame(self.root)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # Chat window tab
+        chat_frame = tk.Frame(self.notebook)
+        self.notebook.add(chat_frame, text="Chat Window")
+
+        self.chat_display = scrolledtext.ScrolledText(chat_frame, state="disabled", width=80, height=20)
+        self.chat_display.pack(fill=tk.BOTH, expand=True)
+
+        entry_frame = tk.Frame(chat_frame)
+        entry_frame.pack(fill=tk.X)
+        tk.Label(entry_frame, text="Message:").pack(side=tk.LEFT)
+        self.chat_entry = scrolledtext.ScrolledText(entry_frame, height=3)
+        self.chat_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        send_btn = tk.Button(entry_frame, text="Send", command=self._send_entry_message)
+        send_btn.pack(side=tk.LEFT)
+
+        # System Info tab
+        right = tk.Frame(self.notebook)
+        self.notebook.add(right, text="System Info")
+
+        # Console tab
+        console_frame = tk.Frame(self.notebook)
+        self.notebook.add(console_frame, text="Console")
+
+        self.output = scrolledtext.ScrolledText(console_frame, state="disabled", width=80, height=24, bg="black", fg="white", insertbackground="white")
+        self.output.pack(fill=tk.BOTH, expand=True)
 
         self.tree = ttk.Treeview(right, show="tree")
         self.tree.pack(fill=tk.BOTH, expand=True)
@@ -73,6 +96,9 @@ class FenraUI:
         self.sent_list = tk.Listbox(right, height=8)
         self.sent_list.pack(fill=tk.BOTH, expand=True)
         logger.debug("Exiting FenraUI.__init__")
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+
 
     class _InjectDialog(simpledialog.Dialog):
         """Dialog for entering a message to inject."""
@@ -154,6 +180,19 @@ class FenraUI:
             self.inject_callback(group_name, result)
         logger.debug("Exiting _inject_message")
 
+    def _on_tree_select(self, _event=None):
+        logger.debug("Entering _on_tree_select")
+        item = self.tree.focus() or self.all_groups_item
+        parent = self.tree.parent(item)
+        if parent:
+            self.selected_agent = self.tree.item(item, "text")
+            self.selected_group = self.tree.item(parent, "text")
+        else:
+            self.selected_group = self.tree.item(item, "text")
+            self.selected_agent = None
+        self.update_chat_display()
+        logger.debug("Exiting _on_tree_select")
+
     def _send_message(self):
         logger.debug("Entering _send_message")
         if not self.send_callback:
@@ -164,6 +203,17 @@ class FenraUI:
         if result:
             self.send_callback(result)
         logger.debug("Exiting _send_message")
+
+    def _send_entry_message(self):
+        logger.debug("Entering _send_entry_message")
+        if not self.send_callback:
+            logger.debug("Exiting _send_entry_message: no callback")
+            return
+        message = self.chat_entry.get("1.0", tk.END).rstrip()
+        if message:
+            self.send_callback(message)
+            self.chat_entry.delete("1.0", tk.END)
+        logger.debug("Exiting _send_entry_message")
 
     def update_queue(self, messages):
         logger.debug("Entering update_queue messages=%s", messages)
@@ -176,9 +226,11 @@ class FenraUI:
     def update_sent(self, messages):
         logger.debug("Entering update_sent messages=%s", messages)
         self.sent_list.delete(0, tk.END)
+        self.sent_messages = list(messages)
         for m in messages:
             text = f"[{m['timestamp']}] {m['sender']}: {m['message']}"
             self.sent_list.insert(tk.END, text)
+        self.update_chat_display()
         logger.debug("Exiting update_sent")
 
     def _expand_all(self):
@@ -192,6 +244,26 @@ class FenraUI:
         for item in self.group_items:
             self.tree.item(item, open=False)
         logger.debug("Exiting _collapse_all")
+
+    def update_chat_display(self):
+        logger.debug(
+            "Entering update_chat_display group=%s agent=%s",
+            self.selected_group,
+            self.selected_agent,
+        )
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("1.0", tk.END)
+        messages = list(self.sent_messages)
+        if self.selected_group and self.selected_group != "All Groups":
+            messages = [m for m in messages if self.selected_group in m.get("groups", [])]
+        if self.selected_agent:
+            messages = [m for m in messages if m["sender"] == self.selected_agent]
+        for m in messages:
+            text = f"[{m['timestamp']}] {m['sender']}: {m['message']}\n{'-' * 80}\n\n"
+            self.chat_display.insert(tk.END, text)
+        self.chat_display.yview(tk.END)
+        self.chat_display.configure(state="disabled")
+        logger.debug("Exiting update_chat_display")
 
 
     def log(self, text):
