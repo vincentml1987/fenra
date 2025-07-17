@@ -213,13 +213,6 @@ role_prompt = You simulate language refinement circuits in the speech production
 groups = ResponseGeneration,ReasoningCenter
 role = ruminator
 
-[Tracer]
-model = llama3.2:latest
-role_prompt = You are an internal Tracer that never speaks to humans. You only return Yes/No when judging whether a human message has already been answered by a message sent to humans.
-groups = internal
-role = tracer
-active = true
-
 [IncomingTracer]
 model = qwen2.5:latest
 role_prompt = Internal Tracer for IncomingChatProcessing; judges if a human msg was answered.
