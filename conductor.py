@@ -487,6 +487,12 @@ def main() -> None:
                 ]
                 # Delegate answered check to Tracer if available
                 answered = tracer.is_answered(msg["message"], outputs) if tracer else ai.check_answered(msg["message"], outputs)
+                logger.info(
+                    'Tracer verdict for "%s": outputs=%s → answered=%s',
+                    msg["message"],
+                    outputs,
+                    answered,
+                )
                 if answered:
                     with chat_lock:
                         message_queue.pop(0)
@@ -510,6 +516,9 @@ def main() -> None:
                 with chat_lock:
                     chat_log.append(entry)
                     sent_messages.append(entry)
+                    messages_to_humans.append(entry)
+                    save_messages_to_humans(messages_to_humans)
+                    append_human_log(entry)
                 text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
                 for group in ai.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
