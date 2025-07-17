@@ -14,7 +14,7 @@ from runtime_utils import (
     WATCHDOG_TRACKER,
 )
 
-CHECK_MODEL = "qwen2.5:7b"
+CHECK_MODEL = "qwen2.5:latest"
 CHECK_MODEL_SIZE = parse_model_size(CHECK_MODEL)
 SYSTEM_CHECK_ANSWERED = (
     "Respond with exactly Yes or No (capitalized, no punctuation). "
