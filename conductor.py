@@ -436,7 +436,8 @@ def main() -> None:
                 active_participants = [a for a in participants if a.active]
                 active_archivists = [a for a in archivists if a.active]
                 active_listeners = [a for a in listeners if a.active]
-                # Tracer agents are not part of the speaking rotation
+                active_tracers = [a for a in tracers if a.active]
+                # Tracers participate in the speaking rotation
                 log_snapshot = list(chat_log)
                 current_queue = list(message_queue)
             for msg in pending:
@@ -456,8 +457,13 @@ def main() -> None:
             with chat_lock:
                 current_log = list(chat_log)
                 
-            # NOTE: Tracer excluded from rotation intentionally
-            active_choices = active_participants + active_archivists + active_listeners
+            # Randomly select among all active agents, including Tracers
+            active_choices = (
+                active_participants
+                + active_archivists
+                + active_listeners
+                + active_tracers
+            )
             if not active_choices:
                 time.sleep(0.5)
                 continue
@@ -594,7 +600,8 @@ def main() -> None:
             ui.root.after(0, ui.log, text)
             if isinstance(ai, Speaker):
                 ui.root.after(0, ui.update_sent, list(messages_to_humans))
-            msg_count += 1
+            if not isinstance(ai, Tracer):
+                msg_count += 1
 
             if msg_count >= len(active_participants) and archivist and archivist.active:
                 with chat_lock:
