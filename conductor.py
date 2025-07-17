@@ -436,7 +436,7 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
-                ui.root.after(0, ui.log, text)
+                ui.root.after(0, ui.log, msg)
 
 
             with chat_lock:
@@ -494,7 +494,7 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
-                ui.root.after(0, ui.log, text)
+                ui.root.after(0, ui.log, entry)
                 continue
 
             try:
@@ -517,7 +517,12 @@ def main() -> None:
                     f"[{ts_display}] {ai.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                 )
                 print(text)
-                ui.root.after(0, ui.log, text)
+                ui.root.after(0, ui.log, {
+                    "sender": ai.name,
+                    "timestamp": ts_display,
+                    "message": "archived transcript and wrote summary.",
+                    "groups": ai.groups,
+                })
                 summary_text = f"[{ts_display}] {ai.name}: {summary}\n{'-' * 80}\n\n"
                 for group in ai.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
@@ -575,7 +580,7 @@ def main() -> None:
                 os.makedirs(os.path.dirname(fname), exist_ok=True)
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
-            ui.root.after(0, ui.log, text)
+            ui.root.after(0, ui.log, entry)
             if isinstance(ai, Speaker):
                 ui.root.after(0, ui.update_sent, list(messages_to_humans))
             msg_count += 1
@@ -602,7 +607,16 @@ def main() -> None:
                         f"[{ts_display}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                     )
                     print(text)
-                    ui.root.after(0, ui.log, text)
+                    ui.root.after(
+                        0,
+                        ui.log,
+                        {
+                            "sender": archivist.name,
+                            "timestamp": ts_display,
+                            "message": "archived transcript and wrote summary.",
+                            "groups": archivist.groups,
+                        },
+                    )
                     summary_text = f"[{ts_display}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
                     for group in archivist.groups:
                         fname = os.path.join("chatlogs", f"chat_log_{group}.txt")

@@ -25,6 +25,7 @@ class FenraUI:
         self.send_callback = send_callback
 
         self.sent_messages = []
+        self.log_messages = []
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -64,7 +65,10 @@ class FenraUI:
 
         self.tree = ttk.Treeview(right, show="tree")
         self.tree.pack(fill=tk.BOTH, expand=True)
-        self.tree.bind("<<TreeviewSelect>>", lambda e: self._refresh_chat_display())
+        self.tree.bind(
+            "<<TreeviewSelect>>",
+            lambda e: (self._refresh_chat_display(), self._refresh_log_display()),
+        )
 
         self.group_names = []
 
@@ -104,6 +108,7 @@ class FenraUI:
         self.sent_list = tk.Listbox(right, height=8)
         self.sent_list.pack(fill=tk.BOTH, expand=True)
         self._refresh_chat_display()
+        self._refresh_log_display()
         logger.debug("Exiting FenraUI.__init__")
 
     class _InjectDialog(simpledialog.Dialog):
@@ -240,6 +245,17 @@ class FenraUI:
 
     def _refresh_chat_display(self):
         logger.debug("Entering _refresh_chat_display")
+        self.chat_output.configure(state="normal")
+        self.chat_output.delete("1.0", tk.END)
+        for m in self.sent_messages:
+            text = f"[{m['timestamp']}] {m['sender']}: {m['message']}\n{'-'*80}\n\n"
+            self.chat_output.insert(tk.END, text)
+        self.chat_output.yview(tk.END)
+        self.chat_output.configure(state="disabled")
+        logger.debug("Exiting _refresh_chat_display")
+
+    def _refresh_log_display(self):
+        logger.debug("Entering _refresh_log_display")
         selected = self.tree.focus() or self.all_groups_item
         group_filter = None
         sender_filter = None
@@ -251,32 +267,33 @@ class FenraUI:
             if name != "All Groups":
                 group_filter = name
 
-        self.chat_output.configure(state="normal")
-        self.chat_output.delete("1.0", tk.END)
-        for m in self.sent_messages:
+        self.output.configure(state="normal")
+        self.output.delete("1.0", tk.END)
+        for m in self.log_messages:
             if sender_filter and m.get("sender") != sender_filter:
                 continue
             groups = m.get("groups", ["general"])
             if group_filter and group_filter not in groups:
                 continue
             text = f"[{m['timestamp']}] {m['sender']}: {m['message']}\n{'-'*80}\n\n"
-            self.chat_output.insert(tk.END, text)
-        self.chat_output.yview(tk.END)
-        self.chat_output.configure(state="disabled")
-        logger.debug("Exiting _refresh_chat_display")
-
-
-    def log(self, text):
-        logger.debug("Entering log text=%s", text)
-        self.output.configure(state="normal")
-        self.output.insert(tk.END, text)
+            self.output.insert(tk.END, text)
         self.output.yview(tk.END)
         self.output.configure(state="disabled")
+        logger.debug("Exiting _refresh_log_display")
 
+
+    def log(self, entry):
+        logger.debug("Entering log entry=%s", entry)
+        self.log_messages.append(entry)
+        text = (
+            f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
+            f"{'-' * 80}\n\n"
+        )
         self.console_output.configure(state="normal")
         self.console_output.insert(tk.END, text)
         self.console_output.yview(tk.END)
         self.console_output.configure(state="disabled")
+        self._refresh_log_display()
         logger.debug("Exiting log")
 
     def start(self):
