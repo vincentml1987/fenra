@@ -288,119 +288,119 @@ role = archivist
 [Listener1]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = HighMind,ChaosBloom,SteelCommand,EchoCoven,ShadowRoot
 role = listener
 
 [Listener2]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom
 role = listener
 
 [Listener3]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = TerraMechanica,NexusGrid,DreamSpindle,EchoCoven,ShadowRoot
 role = listener
 
 [Listener4]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,DreamSpindle,ChaosBloom,EchoCoven,ShadowRoot
 role = listener
 
 [Listener5]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,HighMind,ChaosBloom,Timekeepers,EchoCoven
 role = listener
 
 [Speaker1]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt = You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = RationalCore,HighMind,ChaosBloom,Bridgewake,SteelCommand
 role = speaker
 
 [Speaker2]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,RationalCore,NexusGrid,SteelCommand,EchoCoven
 role = speaker
 
 [Speaker3]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = Firebreak,HighMind,InnerSanctum,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker4]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = Firebreak,HighMind,DreamSpindle,ChaosBloom,Bridgewake
 role = speaker
 
 [Speaker5]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DreamSpindle,Bridgewake,Timekeepers,EchoCoven
 role = speaker
 
 [Listener6]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = NexusGrid,ChaosBloom,ArchiveChorus,SteelCommand,ShadowRoot
 role = listener
 
 [Listener7]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,Firebreak,InnerSanctum,NexusGrid,ChaosBloom
 role = listener
 
 [Listener8]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = RationalCore,HighMind,TerraMechanica,DreamSpindle
 role = listener
 
 [Listener9]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = Firebreak,TerraMechanica,ChaosBloom,Timekeepers,ShadowRoot
 role = listener
 
 [Listener10]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = listener
 
 [Speaker6]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt = You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker7]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,RationalCore,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker8]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,RationalCore,Firebreak,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker9]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,RationalCore,Firebreak,HighMind,ShadowRoot
 role = speaker
 
 [Speaker10]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
-groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
+groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum
 role = speaker
