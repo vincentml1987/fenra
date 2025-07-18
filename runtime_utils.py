@@ -15,6 +15,11 @@ import requests
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 GLOBAL_LOG_LEVEL = logging.INFO
 
+# Minimum allowed time (in seconds) for any watchdog operation. This
+# ensures that the Ollama API call will wait at least five minutes
+# before timing out, regardless of dynamic calculations.
+MIN_WATCHDOG_TIMEOUT = 5 * 60
+
 logger = logging.getLogger(__name__)
 
 
@@ -229,7 +234,15 @@ def generate_with_watchdog(
     avg_ai = tracker.average()
     expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
     timeout = expected_wall * timeout_cushion
-    wd_logger.debug("Timeout set to %.2fs", timeout)
+    if timeout < MIN_WATCHDOG_TIMEOUT:
+        wd_logger.debug(
+            "Calculated timeout %.2fs below minimum; using %ds",
+            timeout,
+            MIN_WATCHDOG_TIMEOUT,
+        )
+        timeout = MIN_WATCHDOG_TIMEOUT
+    else:
+        wd_logger.debug("Timeout set to %.2fs", timeout)
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
             wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
