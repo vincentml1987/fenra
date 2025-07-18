@@ -369,7 +369,7 @@ role_prompt = You are a listener. Let the rest of the agents know the user is co
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = listener
 
-[Listener5]
+[Listener10]
 model = huihui_ai/homunculus-abliterated:latest
 role_prompt = You are a listener. Let the rest of the agents know the user is communicating.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
@@ -399,7 +399,7 @@ role_prompt =You are a speaker. Let the user is know what the rest of the agents
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
-[Speaker5]
+[Speaker10]
 model = huihui_ai/qwenlong-abliterated:latest
 role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
