@@ -36,7 +36,7 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
-        watchdog_timeout: int = 300,
+        watchdog_timeout: int = 1000,
         system_prompt: Optional[str] = None,
     ) -> None:
         logger.debug(
@@ -305,7 +305,7 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=max_tok,
             chat_style=config.get("chat_style"),
-            watchdog_timeout=int(config.get("watchdog_timeout", 300)),
+            watchdog_timeout=int(config.get("watchdog_timeout", 1000)),
             system_prompt=config.get("system_prompt"),
         )
 

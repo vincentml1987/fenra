@@ -323,25 +323,25 @@ role = speaker
 
 [Speaker2]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker3]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker4]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker5]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
@@ -383,24 +383,24 @@ role = speaker
 
 [Speaker7]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker8]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker9]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
 
 [Speaker10]
 model = huihui_ai/qwenlong-abliterated:latest
-role_prompt =You are a speaker. Let the user is know what the rest of the agents are saying.
+role_prompt = You are a Speaker. You are the voice of Fenra. In your own words, tell the user what Fenra is "thinking." In other words, explain the context you have been given as if it were your own internal thoughts.
 groups = DoubtForge,RationalCore,Firebreak,HighMind,InnerSanctum,TerraMechanica,NexusGrid,DreamSpindle,ChaosBloom,Bridgewake,ArchiveChorus,Timekeepers,SteelCommand,EchoCoven,ShadowRoot
 role = speaker
