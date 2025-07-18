@@ -36,7 +36,7 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
-        watchdog_timeout: int = 1000,
+        watchdog_timeout: int = 300,
         system_prompt: Optional[str] = None,
     ) -> None:
         logger.debug(
@@ -139,11 +139,16 @@ class AIModel:
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                self.model_size,
+                WATCHDOG_TRACKER,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            self.watchdog_timeout *= 1.05
+            raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_response")
@@ -208,11 +213,16 @@ class AIModel:
         # if system is empty string, omit the system field entirely
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                self.model_size,
+                WATCHDOG_TRACKER,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            self.watchdog_timeout *= 1.05
+            raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_from_prompt")
@@ -250,11 +260,16 @@ class AIModel:
             payload["system"] = "\n".join(system_parts)
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                self.model_size,
+                WATCHDOG_TRACKER,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            self.watchdog_timeout *= 1.05
+            raise
         try:
             data = json.loads(result_text)
         except json.JSONDecodeError as exc:  # noqa: BLE001
@@ -305,7 +320,7 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=max_tok,
             chat_style=config.get("chat_style"),
-            watchdog_timeout=int(config.get("watchdog_timeout", 1000)),
+            watchdog_timeout=int(config.get("watchdog_timeout", 300)),
             system_prompt=config.get("system_prompt"),
         )
 
@@ -503,7 +518,11 @@ class Listener(Agent):
                     payload,
                     CHECK_MODEL_SIZE,
                     WATCHDOG_TRACKER,
+                    base_timeout=self.watchdog_timeout,
                 )
+            except requests.Timeout:
+                self.watchdog_timeout *= 1.05
+                continue
             except Exception as exc:  # noqa: BLE001
                 logger.error("Listener.check_answered: judge call failed: %s", exc)
                 continue
