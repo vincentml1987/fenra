@@ -5,7 +5,7 @@ import threading
 import time
 from collections import deque
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import ctypes
 
 import logging
@@ -172,6 +172,28 @@ def parse_model_size(model_id: str) -> float:
         logger.error("Unexpected error obtaining size for %s: %s", model_id, exc)
     logger.debug("Exiting parse_model_size")
     return 7.0
+
+
+def tokenize_text(model: str, text: str) -> List[int]:
+    """Return token IDs for the given text using Ollama's tokenize API."""
+    logger.debug("Entering tokenize_text model=%s text=%s", model, text)
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/tokenize",
+            json={"model": model, "prompt": text},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        tokens = data.get("tokens")
+        if isinstance(tokens, list):
+            result = [int(t) for t in tokens]
+            logger.debug("Exiting tokenize_text with %s", result)
+            return result
+    except Exception as exc:  # noqa: BLE001
+        logger.error("tokenize_text failed for %s: %s", text, exc)
+    logger.debug("Exiting tokenize_text with empty list")
+    return []
 
 
 def parse_response(resp: requests.Response) -> str:

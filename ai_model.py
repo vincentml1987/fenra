@@ -11,6 +11,7 @@ from runtime_utils import (
     generate_with_watchdog,
     parse_model_size,
     strip_think_markup,
+    tokenize_text,
     WATCHDOG_TRACKER,
 )
 
@@ -507,27 +508,53 @@ class Listener(Agent):
                     "temperature": 0,
                     "top_k": 1,
                     "top_p": 0,
-                    "num_predict": 1,
+                    "num_predict": 3,
                     "stop": ["\n"],
                     "num_ctx": ctx_tokens,
-                    "raw":True
+                    "raw": True,
                 },
             }
-            try:
-                reply = generate_with_watchdog(
-                    payload,
-                    CHECK_MODEL_SIZE,
-                    WATCHDOG_TRACKER,
-                    base_timeout=self.model.watchdog_timeout,
+
+            yes_tokens = runtime_utils.tokenize_text(CHECK_MODEL, "Yes")
+            no_tokens = runtime_utils.tokenize_text(CHECK_MODEL, "No")
+            if yes_tokens and no_tokens:
+                bias = {str(t): 100 for t in yes_tokens + no_tokens}
+                payload["options"]["logit_bias"] = bias
+
+            reply = ""
+            MAX_RETRIES = 3
+            for attempt in range(MAX_RETRIES):
+                try:
+                    reply = generate_with_watchdog(
+                        payload,
+                        CHECK_MODEL_SIZE,
+                        WATCHDOG_TRACKER,
+                        base_timeout=self.model.watchdog_timeout,
+                    )
+                except requests.Timeout as exc:
+                    self.model.watchdog_timeout *= 1.05
+                    logger.error("Listener.check_answered: timed out: %s", exc)
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Listener.check_answered: judge call failed: %s", exc
+                    )
+                    continue
+
+                reply = reply.strip()
+                if reply not in ("Yes", "No"):
+                    logger.warning(
+                        "Listener.check_answered: invalid answer %r, retrying…",
+                        reply,
+                    )
+                    continue
+                logger.info("Listener.check_answered: got reply <%s>", reply)
+                break
+            else:
+                logger.error(
+                    "Listener.check_answered: never got a clean Yes/No; defaulting to No"
                 )
-            except requests.Timeout as exc:
-                self.model.watchdog_timeout *= 1.05
-                logger.error("Listener.check_answered: timed out: %s", exc)
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Listener.check_answered: judge call failed: %s", exc)
-                continue
-            logger.info("Listener.check_answered: got reply <%s>", reply)
+                reply = "No"
 
             logger.debug("Listener responded: %s", reply)
             cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
