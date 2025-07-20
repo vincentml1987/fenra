@@ -471,10 +471,13 @@ def main() -> None:
                 prev_groups = rum.groups
 
             if active_archivists:
-                a_candidates = [a for a in active_archivists if set(a.groups) & set(prev_groups)]
+                a_candidates = [
+                    a for a in active_archivists if set(a.groups) & set(prev_groups)
+                ]
                 if not a_candidates:
                     a_candidates = active_archivists
                 archivist_ai = random.choice(a_candidates)
+                prev_groups = archivist_ai.groups
             else:
                 archivist_ai = None
 
