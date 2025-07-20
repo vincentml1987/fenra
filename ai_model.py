@@ -515,8 +515,8 @@ class Listener(Agent):
                 },
             }
 
-            yes_tokens = runtime_utils.tokenize_text(CHECK_MODEL, "Yes")
-            no_tokens = runtime_utils.tokenize_text(CHECK_MODEL, "No")
+            yes_tokens = tokenize_text(CHECK_MODEL, "Yes")
+            no_tokens = tokenize_text(CHECK_MODEL, "No")
             if yes_tokens and no_tokens:
                 bias = {str(t): 100 for t in yes_tokens + no_tokens}
                 payload["options"]["logit_bias"] = bias
