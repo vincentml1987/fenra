@@ -518,10 +518,11 @@ class Listener(Agent):
                     payload,
                     CHECK_MODEL_SIZE,
                     WATCHDOG_TRACKER,
-                    base_timeout=self.watchdog_timeout,
+                    base_timeout=self.model.watchdog_timeout,
                 )
-            except requests.Timeout:
-                self.watchdog_timeout *= 1.05
+            except requests.Timeout as exc:
+                self.model.watchdog_timeout *= 1.05
+                logger.error("Listener.check_answered: timed out: %s", exc)
                 continue
             except Exception as exc:  # noqa: BLE001
                 logger.error("Listener.check_answered: judge call failed: %s", exc)
