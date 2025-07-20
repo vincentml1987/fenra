@@ -15,13 +15,6 @@ from runtime_utils import (
     WATCHDOG_TRACKER,
 )
 
-CHECK_MODEL = "phi4-mini:latest"
-CHECK_MODEL_SIZE = parse_model_size(CHECK_MODEL)
-SYSTEM_CHECK_ANSWERED = (
-    "Respond with exactly Yes or No (capitalized), with no extra words, punctuation, or whitespace. "
-    "First token must be the answer."
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -475,92 +468,6 @@ class Listener(Agent):
         "The user's message displays under -----Message from User----- "
         "Let the other AIs know that the users request has been addressed."
     )
-
-    def check_answered(self, message: str, outputs: List[str]) -> bool:
-        """Return True if the user's question appears answered."""
-        if not outputs:
-            return False
-        for out in outputs:
-            print(out)
-            lines = [
-                (
-                    "Below is a message received from the humans and a message "
-                    "sent to the humans. Does the sent message respond to the "
-                    "received message? Only answer yes or no:"
-                ),
-                "-----------------",
-                f"Received Message: {message}",
-                "-----------------",
-                f"Sent Message: {out}",
-            ]
-            prompt_text = "\n".join(lines)
-            ctx_tokens = len(prompt_text.split())
-            logger.info(
-                "Listener.check_answered: token count=%d, calling judge model",
-                ctx_tokens,
-            )
-            payload = {
-                "model": CHECK_MODEL,
-                "prompt": prompt_text,
-                "system": SYSTEM_CHECK_ANSWERED,
-                "stream": False,
-                "options": {
-                    "temperature": 0,
-                    "top_k": 1,
-                    "top_p": 0,
-                    "num_predict": 3,
-                    "stop": ["\n"],
-                    "num_ctx": ctx_tokens,
-                    "raw": True,
-                },
-            }
-
-            yes_tokens = tokenize_text(CHECK_MODEL, "Yes")
-            no_tokens = tokenize_text(CHECK_MODEL, "No")
-            if yes_tokens and no_tokens:
-                bias = {str(t): 100 for t in yes_tokens + no_tokens}
-                payload["options"]["logit_bias"] = bias
-
-            reply = ""
-            MAX_RETRIES = 3
-            for attempt in range(MAX_RETRIES):
-                try:
-                    reply = generate_with_watchdog(
-                        payload,
-                        CHECK_MODEL_SIZE,
-                        WATCHDOG_TRACKER,
-                        base_timeout=self.model.watchdog_timeout,
-                    )
-                except requests.Timeout as exc:
-                    self.model.watchdog_timeout *= 1.05
-                    logger.error("Listener.check_answered: timed out: %s", exc)
-                    continue
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Listener.check_answered: judge call failed: %s", exc
-                    )
-                    continue
-
-                reply = reply.strip()
-                if reply not in ("Yes", "No"):
-                    logger.warning(
-                        "Listener.check_answered: invalid answer %r, retrying…",
-                        reply,
-                    )
-                    continue
-                logger.info("Listener.check_answered: got reply <%s>", reply)
-                break
-            else:
-                logger.error(
-                    "Listener.check_answered: never got a clean Yes/No; defaulting to No"
-                )
-                reply = "No"
-
-            logger.debug("Listener responded: %s", reply)
-            cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
-            if "yes" in cleaned:
-                return True
-        return False
 
     def prompt_ais(self, transcript: str, message: str) -> str:
         """Ask other AIs to answer the user's question."""
