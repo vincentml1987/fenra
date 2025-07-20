@@ -412,6 +412,11 @@ def main() -> None:
     def conversation_loop() -> None:
         logger.debug("Entering conversation_loop")
         msg_count = 0
+        type_points = {
+            "participant": 0,
+            "archivist": 0,
+            "listener": 0,
+        }
         while True:
             
             pending: List[Dict[str, str]] = []
@@ -442,11 +447,44 @@ def main() -> None:
             with chat_lock:
                 current_log = list(chat_log)
                 
-            active_choices = active_participants + active_archivists + active_listeners
-            if not active_choices:
+            subtype_map = {
+                "participant": active_participants,
+                "archivist": active_archivists,
+                "listener": active_listeners,
+            }
+            subtype_map = {k: v for k, v in subtype_map.items() if v}
+            if not subtype_map:
                 time.sleep(0.5)
                 continue
-            ai = random.choice(active_choices)
+
+            num_types = len(subtype_map)
+            base_prob = 1 / num_types
+            total_points = sum(type_points[t] for t in subtype_map)
+
+            probs = {}
+            for t in subtype_map:
+                reduction = (type_points[t] / total_points) if total_points else 0
+                probs[t] = base_prob * (1 - reduction)
+
+            total_prob = sum(probs.values())
+            if total_prob == 0:
+                for t in probs:
+                    probs[t] = 1 / len(probs)
+            else:
+                for t in probs:
+                    probs[t] /= total_prob
+
+            r = random.random()
+            cumulative = 0.0
+            chosen_type = list(probs.keys())[-1]
+            for t, p in probs.items():
+                cumulative += p
+                if r < cumulative:
+                    chosen_type = t
+                    break
+
+            ai = random.choice(subtype_map[chosen_type])
+            type_points[chosen_type] += 1
             context = [
                 m
                 for m in current_log
