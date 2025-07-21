@@ -410,6 +410,7 @@ def main() -> None:
     def conversation_loop() -> None:
         logger.debug("Entering conversation_loop")
         last_speaker_msg = ""
+        first_iteration = True
         while True:
             with chat_lock:
                 if inject_queue:
@@ -452,10 +453,12 @@ def main() -> None:
                     save_message_queue(message_queue)
                 ui.root.after(0, ui.update_queue, list(message_queue))
                 user_message = msg["message"]
-            else:
+            elif last_speaker_msg:
                 user_message = last_speaker_msg
-
-            if not user_message:
+            elif first_iteration:
+                user_message = ""
+                first_iteration = False
+            else:
                 time.sleep(0.5)
                 continue
 
