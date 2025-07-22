@@ -461,25 +461,10 @@ class Archivist(Agent):
 class Listener(Agent):
     """Agent that monitors user questions and notifies other AIs."""
 
-    CHECK_INSTRUCTIONS = (
-        "You are a Listener AI. You are not speaking to a human. "
-        "Determine if the user's question has been answered in the output to the world. "
-        "The user's message displays under -----Message from User----- "
-        "Messages sent to the user appear under -----Output to World----- "
-        "Reply with 'Yes' if the output contains the answer to he message from the user. Reply with 'No' if it has not. "
-        "Do not respond with anything but 'Yes' or 'No'."
-    )
-
     PROMPT_INSTRUCTIONS = (
         "You are a Listener AI speaking to other AIs. "
         "The user's message displays under -----Message from User----- "
-        "Gently remind the other AIs that the user asked a question and restate the question in your own words."
-    )
-
-    CLEAR_INSTRUCTIONS = (
-        "You are a Listener AI speaking to other AIs. "
-        "The user's message displays under -----Message from User----- "
-        "Let the other AIs know that the users request has been addressed."
+        "Gently remind the other AIs that the user sent a message and restate the message in your own words."
     )
 
     def prompt_ais(self, transcript: str, message: str) -> str:
@@ -495,18 +480,6 @@ class Listener(Agent):
             system="",
         )
         logger.info("Listener.prompt_ais: got reply of length %d", len(reply))
-        return reply
-
-    def clear_ais(self, message: str) -> str:
-        """Notify other AIs that the user's request has been addressed."""
-        lines = ["-----Message from User-----"]
-        lines.append(message)
-        lines.append("-----Your Instructions-----")
-        lines.append(self.CLEAR_INSTRUCTIONS)
-        prompt = "\n".join(lines)
-        logger.info("Listener.clear_ais: notifying other AIs request addressed")
-        reply = self.model.generate_from_prompt(prompt, system="")
-        logger.info("Listener.clear_ais: got reply of length %d", len(reply))
         return reply
 
 
