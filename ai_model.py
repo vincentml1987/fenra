@@ -129,7 +129,9 @@ class AIModel:
         if role_topic:
             system_parts.append(role_topic)
         if system_parts:
-            payload["system"] = "\n".join(system_parts)
+            system_text = "\n".join(system_parts)
+            payload["system"] = system_text
+            payload["prompt"] = f"{prompt}\n{system_text}"
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
@@ -191,6 +193,7 @@ class AIModel:
         if num_ctx is not None and self.max_tokens is not None:
             payload["options"]["num_ctx"] = num_ctx
         # num_predict is accepted for compatibility but intentionally ignored
+        system_text = None
         if system is None:
             system_parts = []
             if self.system_prompt:
@@ -201,9 +204,12 @@ class AIModel:
             if role_topic:
                 system_parts.append(role_topic)
             if system_parts:
-                payload["system"] = "\n".join(system_parts)
+                system_text = "\n".join(system_parts)
         elif system:
-            payload["system"] = system
+            system_text = system
+        if system_text:
+            payload["system"] = system_text
+            payload["prompt"] = f"{prompt}\n{system_text}"
         # if system is empty string, omit the system field entirely
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
@@ -233,9 +239,10 @@ class AIModel:
             messages,
             tools,
         )
+        payload_messages = [m.copy() for m in messages]
         payload = {
             "model": self.model_id,
-            "messages": messages,
+            "messages": payload_messages,
             "temperature": self.temperature,
             "options": {},
             "stream": False,
@@ -251,7 +258,13 @@ class AIModel:
         if role_topic:
             system_parts.append(role_topic)
         if system_parts:
-            payload["system"] = "\n".join(system_parts)
+            system_text = "\n".join(system_parts)
+            payload["system"] = system_text
+            if payload_messages:
+                last = payload_messages[-1]
+                content = last.get("content", "")
+                if isinstance(content, str):
+                    last["content"] = f"{content}\n{system_text}"
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
         try:
