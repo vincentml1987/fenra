@@ -250,6 +250,147 @@ def ensure_models_available(model_ids: List[str]) -> None:
     logger.debug("Exiting ensure_models_available")
 
 
+def parse_model_ids(path: str) -> List[str]:
+    """Return a list of model IDs for all active agents in the config."""
+    logger.debug("Entering parse_model_ids path=%s", path)
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    ids: List[str] = []
+    for section in parser.sections():
+        if section == "global":
+            continue
+        if not parser.has_option(section, "model"):
+            raise RuntimeError(f"Config error: model missing for AI '{section}'")
+        active = parser.getboolean(section, "active", fallback=True)
+        if not active:
+            continue
+        ids.append(parser.get(section, "model"))
+    logger.debug("Exiting parse_model_ids with %s", ids)
+    return ids
+
+
+def iter_load_config(path: str):
+    """Yield Agent objects from the configuration file one by one."""
+    logger.debug("Entering iter_load_config path=%s", path)
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    sections = parser.sections()
+    global_present = parser.has_section("global")
+    topic_in_models = any(
+        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
+    )
+    if not global_present and not topic_in_models:
+        raise RuntimeError(
+            "Config error: topic_prompt not found in global or model sections."
+        )
+
+    if global_present:
+        topic_prompt_global = parser.get("global", "topic_prompt")
+        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
+        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
+        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
+        chat_style_global = parser.get("global", "chat_style", fallback=None)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
+        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
+        init_global_logging(parse_log_level(debug_level_str))
+    else:
+        topic_prompt_global = None
+        temperature_global = 0.7
+        max_tokens_global = None
+        chat_style_global = None
+        watchdog_global = 300
+        init_global_logging(logging.INFO)
+
+    for section in sections:
+        if section == "global":
+            continue
+
+        if not parser.has_option(section, "model"):
+            raise RuntimeError(f"Config error: model missing for AI '{section}'")
+
+        active = parser.getboolean(section, "active", fallback=True)
+        if not active:
+            continue
+
+        model_id = parser.get(section, "model")
+        role_prompt = parser.get(section, "role_prompt", fallback="")
+        groups_str = parser.get(section, "groups", fallback="general")
+        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
+        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
+        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
+        if max_tokens_str is not None:
+            max_tokens = int(max_tokens_str)
+        else:
+            max_tokens = max_tokens_global
+        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
+        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
+        system_prompt = parser.get(section, "system_prompt", fallback=None)
+
+        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
+        if topic_prompt is None:
+            raise RuntimeError(
+                f"Config error: topic_prompt missing for AI '{section}' and no global default."
+            )
+
+        role = parser.get(section, "role", fallback="ruminator").lower()
+
+        cfg = {
+            "topic_prompt": topic_prompt,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "chat_style": chat_style,
+            "watchdog_timeout": watchdog,
+            "system_prompt": system_prompt,
+        }
+
+        if role == "archivist":
+            yield Archivist(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role in ("tool", "toolagent", "tools"):
+            yield ToolAgent(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role == "listener":
+            yield Listener(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role == "speaker":
+            yield Speaker(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        else:
+            yield Ruminator(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+
+    logger.debug("Exiting iter_load_config")
+
+
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
     """Return chat history parsed from a single group log."""
     logger.debug(
@@ -388,18 +529,43 @@ def main() -> None:
     logger.debug("Entering main")
     logger.info("Starting conductor")
     config_path = "fenra_config.txt"
-    agents = load_config(config_path)
     load_global_defaults(config_path)
-    ensure_models_available([a.model_name for a in agents])
+    model_ids = parse_model_ids(config_path)
+    ensure_models_available(model_ids)
 
-    archivists = [a for a in agents if isinstance(a, Archivist)]
-    listeners = [a for a in agents if isinstance(a, Listener)]
-    speakers = [a for a in agents if isinstance(a, Speaker)]
-    others = set(archivists + listeners + speakers)
-    ruminators = [a for a in agents if a not in others]
+    agents: List[Agent] = []
+    archivists: List[Archivist] = []
+    listeners: List[Listener] = []
+    speakers: List[Speaker] = []
+    ruminators: List[Agent] = []
+    all_groups: List[str] = []
 
-    # Build set of all groups
-    all_groups = sorted({g for a in ruminators + archivists + listeners + speakers for g in a.groups})
+    agent_lock = threading.Lock()
+    ready_event = threading.Event()
+
+    def loader() -> None:
+        nonlocal all_groups
+        for agent in iter_load_config(config_path):
+            with agent_lock:
+                agents.append(agent)
+                if isinstance(agent, Archivist):
+                    archivists.append(agent)
+                elif isinstance(agent, Listener):
+                    listeners.append(agent)
+                elif isinstance(agent, Speaker):
+                    speakers.append(agent)
+                else:
+                    ruminators.append(agent)
+                all_groups = sorted({g for a in agents for g in a.groups})
+                if archivists and listeners and speakers and ruminators:
+                    ready_event.set()
+
+    threading.Thread(target=loader, daemon=True).start()
+    logger.info("Loading agents in background...")
+
+    ready_event.wait()
+
+    # At least one of each agent type loaded
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
@@ -417,10 +583,11 @@ def main() -> None:
                     chat_log.extend(pending)
                 else:
                     pending = []
-                active_listeners = [a for a in listeners if a.active]
-                active_ruminators = [a for a in ruminators if a.active]
-                active_archivists = [a for a in archivists if a.active]
-                active_speakers = [a for a in speakers if a.active]
+                with agent_lock:
+                    active_listeners = [a for a in listeners if a.active]
+                    active_ruminators = [a for a in ruminators if a.active]
+                    active_archivists = [a for a in archivists if a.active]
+                    active_speakers = [a for a in speakers if a.active]
                 queue_empty = not message_queue
 
             for msg in pending:
