@@ -446,21 +446,27 @@ def main() -> None:
                 continue
 
             listener = random.choice(active_listeners)
+            payload_message = ""
+            if last_speaker_msg:
+                payload_message = last_speaker_msg
+
             if current_queue:
                 msg = current_queue.pop(0)
                 with chat_lock:
                     message_queue.pop(0)
                     save_message_queue(message_queue)
                 ui.root.after(0, ui.update_queue, list(message_queue))
-                user_message = msg["message"]
-            elif last_speaker_msg:
-                user_message = last_speaker_msg
-            elif first_iteration:
-                user_message = ""
-                first_iteration = False
-            else:
-                time.sleep(0.5)
-                continue
+                if payload_message:
+                    payload_message += "\n" + msg["message"]
+                else:
+                    payload_message = msg["message"]
+            elif not payload_message:
+                if first_iteration:
+                    payload_message = ""
+                    first_iteration = False
+                else:
+                    time.sleep(0.5)
+                    continue
 
             prev_groups = listener.groups
             num_rums = random.randint(5, 10)
@@ -501,7 +507,7 @@ def main() -> None:
             ruminations = "\n".join(lines)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
-                reply = listener.prompt_ais(ruminations, user_message)
+                reply = listener.prompt_ais(ruminations, payload_message)
             except requests.Timeout:
                 logger.error("%s timed out", listener.name)
                 time.sleep(0.5)
