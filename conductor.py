@@ -469,7 +469,7 @@ def main() -> None:
                     continue
 
             prev_groups = listener.groups
-            num_rums = random.randint(5, 10)
+            num_rums = random.randint(2, 4)
             selected_rums = []
             for _ in range(num_rums):
                 candidates = [r for r in active_ruminators if set(r.groups) & set(prev_groups)]
