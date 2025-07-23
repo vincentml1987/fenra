@@ -143,7 +143,6 @@ class AIModel:
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
-            self.watchdog_timeout *= 1.05
             raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
@@ -221,7 +220,6 @@ class AIModel:
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
-            self.watchdog_timeout *= 1.05
             raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
@@ -275,7 +273,6 @@ class AIModel:
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
-            self.watchdog_timeout *= 1.05
             raise
         try:
             data = json.loads(result_text)
