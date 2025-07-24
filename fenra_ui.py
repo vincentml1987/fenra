@@ -53,6 +53,11 @@ class FenraUI:
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.output = scrolledtext.ScrolledText(left, state="disabled", width=80, height=24)
         self.output.pack(fill=tk.BOTH, expand=True)
+        self.base_timeout = (
+            agents[0].watchdog_timeout if agents and hasattr(agents[0], "watchdog_timeout") else 300
+        )
+        self.timeout_label = tk.Label(left, text=f"Base Timeout: {self.base_timeout}s")
+        self.timeout_label.pack(anchor="w")
 
         right = tk.Frame(sys_tab)
         right.pack(side=tk.RIGHT, fill=tk.Y)
@@ -76,12 +81,15 @@ class FenraUI:
         for a in agents:
             for g in a.groups:
                 group_map.setdefault(g, []).append(a.name)
+        self.group_map = {g: list(names) for g, names in group_map.items()}
+        self.group_nodes = {}
 
         self.all_groups_item = self.tree.insert("", tk.END, text="All Groups", open=False)
         self.group_names.append("All Groups")
 
         for group in sorted(group_map):
             parent = self.tree.insert("", tk.END, text=group, open=False)
+            self.group_nodes[group] = parent
             for name in sorted(group_map[group]):
                 self.tree.insert(parent, tk.END, text=name)
             self.group_names.append(group)
@@ -110,6 +118,23 @@ class FenraUI:
         self._refresh_chat_display()
         self._refresh_log_display()
         logger.debug("Exiting FenraUI.__init__")
+
+    def _ensure_agent_in_tree(self, sender: str, groups) -> None:
+        """Add missing groups or agents to the tree view."""
+        if not sender:
+            return
+        for group in groups or ["general"]:
+            if group not in self.group_nodes:
+                parent = self.tree.insert("", tk.END, text=group, open=False)
+                self.group_nodes[group] = parent
+                self.group_map[group] = []
+                self.group_names.append(group)
+                self.group_items.append(parent)
+            else:
+                parent = self.group_nodes[group]
+            if sender not in self.group_map[group]:
+                self.tree.insert(parent, tk.END, text=sender)
+                self.group_map[group].append(sender)
 
     class _InjectDialog(simpledialog.Dialog):
         """Dialog for entering a message to inject."""
@@ -285,6 +310,7 @@ class FenraUI:
     def log(self, entry):
         logger.debug("Entering log entry=%s", entry)
         self.log_messages.append(entry)
+        self._ensure_agent_in_tree(entry.get("sender"), entry.get("groups"))
         text = (
             f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
             f"{'-' * 80}\n\n"

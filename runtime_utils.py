@@ -156,39 +156,76 @@ class ThreadTimeTracker:
 WATCHDOG_TRACKER = ThreadTimeTracker()
 
 
-def parse_model_size(model_id: str) -> float:
-    """Return the disk size of the model in gigabytes."""
+def parse_model_size(model_id: str, max_retries: int = 3) -> float:
+    """Return the disk size of the model in gigabytes.
+
+    If the ``ollama list`` command fails, retry up to ``max_retries`` times
+    before falling back to a default size of ``7.0`` gigabytes.
+    """
     logger = logging.getLogger("ModelSize")
     logger.debug("Entering parse_model_size model_id=%s", model_id)
-    try:
-        import subprocess
+    import subprocess
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = subprocess.run(
+                ["ollama", "list", model_id],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            lines = result.stdout.splitlines()
+            for line in lines:
+                if model_id in line:
+                    match = re.search(r"(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)", line, re.IGNORECASE)
+                    if not match:
+                        break
+                    value = float(match.group(1))
+                    unit = match.group(2).upper()
+                    if unit == "KB":
+                        return value / (1024 * 1024)
+                    if unit == "MB":
+                        return value / 1024
+                    if unit == "GB":
+                        return value
+                    if unit == "TB":
+                        return value * 1024
+            logger.error(
+                "Failed to parse model size from ollama output for %s", model_id
+            )
+        except FileNotFoundError:
+            logger.error("ollama executable not found")
+            break
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "Error running ollama list for %s (attempt %d/%d): %s",
+                model_id,
+                attempt,
+                max_retries,
+                exc,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Unexpected error obtaining size for %s (attempt %d/%d): %s",
+                model_id,
+                attempt,
+                max_retries,
+                exc,
+            )
 
-        result = subprocess.run(
-            ["ollama", "list", model_id], capture_output=True, text=True, check=True
-        )
-        lines = result.stdout.splitlines()
-        for line in lines:
-            if model_id in line:
-                match = re.search(r"(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)", line, re.IGNORECASE)
-                if not match:
-                    break
-                value = float(match.group(1))
-                unit = match.group(2).upper()
-                if unit == "KB":
-                    return value / (1024 * 1024)
-                if unit == "MB":
-                    return value / 1024
-                if unit == "GB":
-                    return value
-                if unit == "TB":
-                    return value * 1024
-        logger.error("Failed to parse model size from ollama output for %s", model_id)
-    except FileNotFoundError:
-        logger.error("ollama executable not found")
-    except subprocess.CalledProcessError as exc:
-        logger.error("Error running ollama list for %s: %s", model_id, exc)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Unexpected error obtaining size for %s: %s", model_id, exc)
+        if attempt < max_retries:
+            logger.info(
+                "Retrying model size retrieval for %s (%d/%d)",
+                model_id,
+                attempt + 1,
+                max_retries,
+            )
+            time.sleep(2)
+
+    logger.error(
+        "Failed to obtain model size for %s after %d attempts; defaulting to 7.0GB",
+        model_id,
+        max_retries,
+    )
     logger.debug("Exiting parse_model_size")
     return 7.0
 
