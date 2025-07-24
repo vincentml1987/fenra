@@ -2,7 +2,7 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Callable
 import configparser
 import threading
 import os
@@ -525,6 +525,21 @@ def append_human_log(entry: Dict[str, object]) -> None:
         logger.error("Failed to write human log: %s", exc)
 
 
+def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
+    """Call an agent function, retrying indefinitely on timeout."""
+    base_timeout = agent.model.watchdog_timeout
+    timeout = base_timeout
+    while True:
+        agent.model.watchdog_timeout = timeout
+        try:
+            return func()
+        except requests.Timeout:
+            logger.error("%s timed out", agent.name)
+            timeout *= 1.5
+        finally:
+            agent.model.watchdog_timeout = base_timeout
+
+
 def main() -> None:
     logger.debug("Entering main")
     logger.info("Starting conductor")
@@ -627,11 +642,7 @@ def main() -> None:
                     ]
                 if role == "ruminator":
                     try:
-                        r_reply = agent.step(context)
-                    except requests.Timeout:
-                        logger.error("%s timed out", agent.name)
-                        time.sleep(0.5)
-                        continue
+                        r_reply = step_with_retry(agent, lambda: agent.step(context))
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Error from %s: %s", agent.name, exc)
                         time.sleep(0.5)
@@ -659,11 +670,7 @@ def main() -> None:
 
                 if role == "archivist":
                     try:
-                        summary = agent.step(context)
-                    except requests.Timeout:
-                        logger.error("%s timed out", agent.name)
-                        time.sleep(0.5)
-                        continue
+                        summary = step_with_retry(agent, lambda: agent.step(context))
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Error from %s: %s", agent.name, exc)
                         time.sleep(0.5)
@@ -721,11 +728,7 @@ def main() -> None:
 
                 if role == "speaker":
                     try:
-                        s_reply = agent.step(context)
-                    except requests.Timeout:
-                        logger.error("%s timed out", agent.name)
-                        time.sleep(0.5)
-                        continue
+                        s_reply = step_with_retry(agent, lambda: agent.step(context))
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Error from %s: %s", agent.name, exc)
                         time.sleep(0.5)
@@ -801,9 +804,12 @@ def main() -> None:
             ruminations = "\n".join(lines)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
-                reply = listener.prompt_ais(ruminations, payload_message)
-            except requests.Timeout:
-                logger.error("%s timed out", listener.name)
+                reply = step_with_retry(
+                    listener,
+                    lambda: listener.prompt_ais(ruminations, payload_message),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error from %s: %s", listener.name, exc)
                 time.sleep(0.5)
                 continue
             entry = {
@@ -832,10 +838,7 @@ def main() -> None:
                         if set(m.get("groups", ["general"])) & set(rum.groups)
                     ]
                 try:
-                    r_reply = rum.step(context)
-                except requests.Timeout:
-                    logger.error("%s timed out", rum.name)
-                    continue
+                    r_reply = step_with_retry(rum, lambda: rum.step(context))
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error from %s: %s", rum.name, exc)
                     continue
@@ -866,10 +869,9 @@ def main() -> None:
                         if set(m.get("groups", ["general"])) & set(archivist_ai.groups)
                     ]
                 try:
-                    summary = archivist_ai.step(context)
-                except requests.Timeout:
-                    logger.error("%s timed out", archivist_ai.name)
-                    summary = ""
+                    summary = step_with_retry(
+                        archivist_ai, lambda: archivist_ai.step(context)
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error from %s: %s", archivist_ai.name, exc)
                     summary = ""
@@ -929,11 +931,7 @@ def main() -> None:
                     if set(m.get("groups", ["general"])) & set(speaker_ai.groups)
                 ]
             try:
-                s_reply = speaker_ai.step(context)
-            except requests.Timeout:
-                logger.error("%s timed out", speaker_ai.name)
-                time.sleep(0.5)
-                continue
+                s_reply = step_with_retry(speaker_ai, lambda: speaker_ai.step(context))
             except Exception as exc:  # noqa: BLE001
                 logger.error("Error from %s: %s", speaker_ai.name, exc)
                 time.sleep(0.5)
