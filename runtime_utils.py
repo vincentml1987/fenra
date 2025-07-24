@@ -5,7 +5,7 @@ import threading
 import time
 from collections import deque
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import ctypes
 
 import logging
@@ -96,9 +96,12 @@ class ThreadTimeTracker:
     """Manage per-thread time trackers and compute a global average."""
 
     def __init__(self, rolling_window: int = 10) -> None:
-        logger.debug("Entering ThreadTimeTracker.__init__ rolling_window=%s", rolling_window)
+        logger.debug(
+            "Entering ThreadTimeTracker.__init__ rolling_window=%s", rolling_window
+        )
         self.trackers: Dict[int, AITimeTracker] = {}
         self.rolling_window = rolling_window
+        self.timeout_extra = 0.0
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized ThreadTimeTracker")
         logger.debug("Exiting ThreadTimeTracker.__init__")
@@ -121,17 +124,33 @@ class ThreadTimeTracker:
         self._tracker_for(tid).record(wall_time, model_size_gb)
         self.logger.debug("Exiting ThreadTimeTracker.record")
 
-    def average(self) -> float:
-        self.logger.debug("Entering ThreadTimeTracker.average")
-        total = 300
+    def _total_and_count(self) -> Tuple[float, int]:
+        """Return the aggregated total time and count across trackers."""
+        total = 300 + self.timeout_extra
         count = 1
         for tracker in self.trackers.values():
             total += sum(tracker.data)
             count += len(tracker.data)
+        return total, count
+
+    def average(self) -> float:
+        self.logger.debug("Entering ThreadTimeTracker.average")
+        total, count = self._total_and_count()
         avg = total / count
         self.logger.debug("Global average AI seconds: %.2f", avg)
         self.logger.debug("Exiting ThreadTimeTracker.average")
         return avg
+
+    def record_timeout(self) -> None:
+        """Increase total time so the average grows by 5%."""
+        self.logger.debug("Entering ThreadTimeTracker.record_timeout")
+        total, _ = self._total_and_count()
+        extra = total * 0.05
+        self.timeout_extra += extra
+        self.logger.debug(
+            "Added %.2f seconds due to timeout. New extra total %.2f", extra, self.timeout_extra
+        )
+        self.logger.debug("Exiting ThreadTimeTracker.record_timeout")
 
 
 WATCHDOG_TRACKER = ThreadTimeTracker()
@@ -272,6 +291,7 @@ def generate_with_watchdog(
         return str(text)
     except requests.Timeout as exc:
         wd_logger.error("Timeout exceeded")
+        tracker.record_timeout()
         raise exc
     except Exception as exc:  # noqa: BLE001
         wd_logger.error("Exception during generation: %s", exc)
