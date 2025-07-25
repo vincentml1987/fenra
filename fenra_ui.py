@@ -54,7 +54,7 @@ class FenraUI:
         self.output = scrolledtext.ScrolledText(left, state="disabled", width=80, height=24)
         self.output.pack(fill=tk.BOTH, expand=True)
         self.base_timeout = (
-            agents[0].watchdog_timeout if agents and hasattr(agents[0], "watchdog_timeout") else 300
+            agents[0].watchdog_timeout if agents and hasattr(agents[0], "watchdog_timeout") else 900
         )
         self.timeout_label = tk.Label(left, text=f"Base Timeout: {self.base_timeout}s")
         self.timeout_label.pack(anchor="w")

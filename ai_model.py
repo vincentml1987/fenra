@@ -9,10 +9,8 @@ from tools import tool_schema, tool_descriptions, call_tool
 from runtime_utils import (
     create_object_logger,
     generate_with_watchdog,
-    parse_model_size,
     strip_think_markup,
     tokenize_text,
-    WATCHDOG_TRACKER,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +28,7 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
-        watchdog_timeout: int = 300,
+        watchdog_timeout: int = 900,
         system_prompt: Optional[str] = None,
     ) -> None:
         logger.debug(
@@ -47,7 +45,6 @@ class AIModel:
         )
         self.name = name
         self.model_id = model_id
-        self.model_size = parse_model_size(model_id)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
@@ -138,8 +135,6 @@ class AIModel:
         try:
             result_text = generate_with_watchdog(
                 payload,
-                self.model_size,
-                WATCHDOG_TRACKER,
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
@@ -215,8 +210,6 @@ class AIModel:
         try:
             result_text = generate_with_watchdog(
                 payload,
-                self.model_size,
-                WATCHDOG_TRACKER,
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
@@ -268,8 +261,6 @@ class AIModel:
         try:
             result_text = generate_with_watchdog(
                 payload,
-                self.model_size,
-                WATCHDOG_TRACKER,
                 base_timeout=self.watchdog_timeout,
             )
         except requests.Timeout:
@@ -324,7 +315,7 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=max_tok,
             chat_style=config.get("chat_style"),
-            watchdog_timeout=int(config.get("watchdog_timeout", 300)),
+            watchdog_timeout=int(config.get("watchdog_timeout", 900)),
             system_prompt=config.get("system_prompt"),
         )
 

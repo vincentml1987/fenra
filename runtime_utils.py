@@ -289,26 +289,18 @@ def kill_thread(thread: threading.Thread) -> None:
 
 def generate_with_watchdog(
     payload: Dict,
-    model_size_gb: float,
-    tracker: ThreadTimeTracker,
-    timeout_cushion: float = 2.0,
-    base_timeout: float = 300,
+    *,
+    base_timeout: float = 900,
 ) -> str:
-    """Call Ollama with a watchdog timeout based on normalized averages."""
-    logger.debug(
-        "Entering generate_with_watchdog model_size_gb=%s timeout_cushion=%s",
-        model_size_gb,
-        timeout_cushion,
-    )
+    """Call Ollama with a fixed watchdog timeout."""
+    logger.debug("Entering generate_with_watchdog base_timeout=%s", base_timeout)
 
     model_id = payload.get("model", "unknown")
     wd_logger = create_object_logger(f"Watchdog-{model_id}")
     wd_logger.info("Starting generation with watchdog")
 
     start = time.time()
-    avg_ai = tracker.average()
-    expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
-    timeout = max(expected_wall * timeout_cushion, base_timeout)
+    timeout = base_timeout
     wd_logger.debug("Timeout set to %.2fs", timeout)
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
@@ -321,14 +313,12 @@ def generate_with_watchdog(
         if resp.status_code != 200:
             raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
         text = parse_response(resp)
-        wall = time.time() - start
-        tracker.record(threading.get_ident(), wall, model_size_gb)
         wd_logger.info("Generation complete")
         logger.debug("Exiting generate_with_watchdog")
         return str(text)
     except requests.Timeout as exc:
         wd_logger.error("Timeout exceeded")
-        tracker.record_timeout()
+        # Increase the global timeout tracking if applicable
         try:
             import subprocess
 
