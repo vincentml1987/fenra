@@ -53,7 +53,7 @@ def load_config(path: str):
         max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
         max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
         chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
         debug_level_str = parser.get("global", "debug_level", fallback="INFO")
         init_global_logging(parse_log_level(debug_level_str))
     else:
@@ -61,7 +61,7 @@ def load_config(path: str):
         temperature_global = 0.7
         max_tokens_global = None
         chat_style_global = None
-        watchdog_global = 300
+        watchdog_global = 900
         init_global_logging(logging.INFO)
 
     agents = []
@@ -180,7 +180,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
             "temperature": sec.getfloat("temperature", fallback=0.7),
             "max_tokens": max_tok_val,
             "chat_style": sec.get("chat_style", fallback=None),
-            "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
+            "watchdog_timeout": sec.getint("watchdog_timeout", fallback=900),
             "system_prompt": sec.get("system_prompt", fallback=None),
         }
         logger.debug("Exiting load_global_defaults")
@@ -191,7 +191,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
         "temperature": 0.7,
         "max_tokens": None,
         "chat_style": None,
-        "watchdog_timeout": 300,
+        "watchdog_timeout": 900,
         "system_prompt": None,
     }
     logger.debug("Exiting load_global_defaults")
@@ -294,7 +294,7 @@ def iter_load_config(path: str):
         max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
         max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
         chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
         debug_level_str = parser.get("global", "debug_level", fallback="INFO")
         init_global_logging(parse_log_level(debug_level_str))
     else:
@@ -302,7 +302,7 @@ def iter_load_config(path: str):
         temperature_global = 0.7
         max_tokens_global = None
         chat_style_global = None
-        watchdog_global = 300
+        watchdog_global = 900
         init_global_logging(logging.INFO)
 
     for section in sections:
@@ -764,6 +764,24 @@ def main() -> None:
                 save_message_queue(message_queue)
                 ui.root.after(0, ui.update_queue, list(message_queue))
             payload_message = msg["message"]
+
+            human_entry = {
+                "sender": "Human",
+                "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                "message": payload_message,
+                "groups": listener.groups,
+                "epoch": time.time(),
+            }
+            with chat_lock:
+                chat_log.append(human_entry)
+            text = f"[{human_entry['timestamp']}] Human: {payload_message}\n{'-' * 80}\n\n"
+            for group in listener.groups:
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
+            print(text)
+            ui.root.after(0, ui.log, human_entry)
 
             prev_groups = listener.groups
             num_rums = random.randint(2, 4)
