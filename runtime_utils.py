@@ -214,7 +214,11 @@ def generate_with_watchdog(
     tracker: ThreadTimeTracker,
     timeout_cushion: float = 2.0,
 ) -> str:
-    """Call Ollama with a watchdog timeout based on normalized averages."""
+    """Call Ollama with a watchdog timeout based on normalized averages.
+
+    If a timeout occurs, retry indefinitely while gradually increasing the
+    timeout cushion.
+    """
     logger.debug(
         "Entering generate_with_watchdog model_size_gb=%s timeout_cushion=%s",
         model_size_gb,
@@ -223,32 +227,43 @@ def generate_with_watchdog(
 
     model_id = payload.get("model", "unknown")
     wd_logger = create_object_logger(f"Watchdog-{model_id}")
-    wd_logger.info("Starting generation with watchdog")
+    attempt = 1
 
-    start = time.time()
-    avg_ai = tracker.average()
-    expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
-    timeout = expected_wall * timeout_cushion
-    wd_logger.debug("Timeout set to %.2fs", timeout)
-    try:
-        if wd_logger.isEnabledFor(logging.DEBUG):
-            wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        resp = requests.post(
-            "http://localhost:11434/api/generate",
-            json=payload,
-            timeout=timeout,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
-        text = parse_response(resp)
-        wall = time.time() - start
-        tracker.record(threading.get_ident(), wall, model_size_gb)
-        wd_logger.info("Generation complete")
-        logger.debug("Exiting generate_with_watchdog")
-        return str(text)
-    except requests.Timeout as exc:
-        wd_logger.error("Timeout exceeded")
-        raise exc
-    except Exception as exc:  # noqa: BLE001
-        wd_logger.error("Exception during generation: %s", exc)
-        raise
+    while True:
+        wd_logger.info("Starting generation with watchdog (attempt %d)", attempt)
+
+        start = time.time()
+        avg_ai = tracker.average()
+        expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
+        timeout = expected_wall * timeout_cushion
+        wd_logger.debug("Timeout set to %.2fs", timeout)
+        try:
+            if wd_logger.isEnabledFor(logging.DEBUG):
+                wd_logger.debug(
+                    "Payload to Ollama:\n%s", json.dumps(payload, indent=2)
+                )
+            resp = requests.post(
+                "http://localhost:11434/api/generate",
+                json=payload,
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Ollama API error: {resp.status_code} {resp.text}"
+                )
+            text = parse_response(resp)
+            wall = time.time() - start
+            tracker.record(threading.get_ident(), wall, model_size_gb)
+            wd_logger.info("Generation complete")
+            logger.debug("Exiting generate_with_watchdog")
+            return str(text)
+        except requests.Timeout:
+            wd_logger.error(
+                "Timeout exceeded on attempt %d; increasing cushion", attempt
+            )
+            timeout_cushion *= 1.5
+            attempt += 1
+            continue
+        except Exception as exc:  # noqa: BLE001
+            wd_logger.error("Exception during generation: %s", exc)
+            raise
