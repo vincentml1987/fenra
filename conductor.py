@@ -267,13 +267,14 @@ def ensure_models_available(model_ids: List[str]) -> None:
 
 
 def parse_model_ids(path: str) -> List[str]:
-    """Return a list of model IDs for all active agents in the config."""
+    """Return a list of **unique** model IDs for all active agents."""
     logger.debug("Entering parse_model_ids path=%s", path)
     parser = configparser.ConfigParser()
     with open(path, "r", encoding="utf-8") as f:
         parser.read_file(f)
 
     ids: List[str] = []
+    seen = set()
     for section in parser.sections():
         if section == "global":
             continue
@@ -282,7 +283,10 @@ def parse_model_ids(path: str) -> List[str]:
         active = parser.getboolean(section, "active", fallback=True)
         if not active:
             continue
-        ids.append(parser.get(section, "model"))
+        model = parser.get(section, "model")
+        if model not in seen:
+            ids.append(model)
+            seen.add(model)
     logger.debug("Exiting parse_model_ids with %s", ids)
     return ids
 
