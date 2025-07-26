@@ -584,14 +584,7 @@ def main() -> None:
 
     def loader() -> None:
         nonlocal all_groups
-        early: List[Agent] = []
-        late: List[Agent] = []
         for agent in iter_load_config(config_path):
-            if isinstance(agent, Ruminator):
-                late.append(agent)
-            else:
-                early.append(agent)
-        for agent in early + late:
             with agent_lock:
                 agents.append(agent)
                 if isinstance(agent, Archivist):
