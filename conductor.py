@@ -972,8 +972,34 @@ def main() -> None:
                     for m in chat_log
                     if set(m.get("groups", ["general"])) & set(speaker_ai.groups)
                 ]
+            thinking_payload = speaker_ai.model.build_prompt(context)
+            speaker_prompt = "\n".join(
+                [
+                    "-----You Are Thinking the Following-----",
+                    thinking_payload,
+                    "-----The User Said the Following-----",
+                    payload_message,
+                    "----Instructions-----Respond to what the user said using what you are thinking as context.",
+                ]
+            )
+            parts = []
+            if speaker_ai.model.system_prompt:
+                parts.append(speaker_ai.model.system_prompt)
+            role_topic = " ".join(
+                [p for p in [speaker_ai.model.topic_prompt, speaker_ai.model.role_prompt] if p]
+            )
+            if role_topic:
+                parts.append(role_topic)
+            parts.append("You are speaking to humans.")
+            system_text = "\n".join(parts)
             try:
-                s_reply = step_with_retry(speaker_ai, lambda: speaker_ai.step(context))
+                s_reply = step_with_retry(
+                    speaker_ai,
+                    lambda: speaker_ai.model.generate_from_prompt(
+                        speaker_prompt,
+                        system=system_text,
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Error from %s: %s", speaker_ai.name, exc)
                 time.sleep(0.5)
