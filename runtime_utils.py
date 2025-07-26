@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -34,10 +35,10 @@ def init_global_logging(level: int) -> None:
     GLOBAL_LOG_LEVEL = level
     os.makedirs("logs", exist_ok=True)
     handlers = [
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
         logging.FileHandler(os.path.join("logs", "fenra.log"), mode="a", encoding="utf-8"),
     ]
-    logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers)
+    logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers, force=True)
     logger.debug("Exiting init_global_logging")
 
 
