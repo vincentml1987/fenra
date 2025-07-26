@@ -205,15 +205,18 @@ def ensure_models_available(model_ids: List[str]) -> None:
         resp = requests.get(TAGS_URL)
     except requests.RequestException as exc:
         logger.error("Error contacting Ollama server: %s", exc)
+        logging.shutdown()
         sys.exit(1)
     if resp.status_code != 200:
         logger.error("Failed to list models: %s %s", resp.status_code, resp.text)
+        logging.shutdown()
         sys.exit(1)
 
     try:
         tags_info = resp.json()
     except json.JSONDecodeError:
         logger.error("Invalid response from tags endpoint.")
+        logging.shutdown()
         sys.exit(1)
 
     local_models = {m.get("name") for m in tags_info.get("models", [])}
@@ -232,20 +235,24 @@ def ensure_models_available(model_ids: List[str]) -> None:
             )
         except requests.RequestException as exc:
             logger.error("Failed to pull model %s: %s", mid, exc)
+            logging.shutdown()
             sys.exit(1)
         if pull_resp.status_code != 200:
             logger.error(
                 "Error pulling model %s: %s %s", mid, pull_resp.status_code, pull_resp.text
             )
+            logging.shutdown()
             sys.exit(1)
         try:
             result = pull_resp.json()
         except json.JSONDecodeError:
             logger.error("Unexpected response pulling model %s: %s", mid, pull_resp.text)
+            logging.shutdown()
             sys.exit(1)
         status = result.get("status")
         if status != "success":
             logger.error("Model pull failed for %s: %s", mid, result)
+            logging.shutdown()
             sys.exit(1)
     logger.debug("Exiting ensure_models_available")
 
@@ -541,6 +548,7 @@ def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
 
 
 def main() -> None:
+    init_global_logging(logging.INFO)
     logger.debug("Entering main")
     logger.info("Starting conductor")
     config_path = "fenra_config.txt"
