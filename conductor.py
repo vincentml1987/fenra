@@ -74,16 +74,14 @@ def load_config(path: str):
         init_global_logging(logging.INFO)
 
     agents = []
-    for section in sections:
-        if section == "global":
-            continue
 
+    def create_agent(section: str):
         if not parser.has_option(section, "model"):
             raise RuntimeError(f"Config error: model missing for AI '{section}'")
 
         active = parser.getboolean(section, "active", fallback=True)
         if not active:
-            continue
+            return None
 
         model_id = parser.get(section, "model")
         role_prompt = parser.get(section, "role_prompt", fallback="")
@@ -117,54 +115,62 @@ def load_config(path: str):
         }
 
         if role == "archivist":
-            agents.append(
-                Archivist(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                )
-            )
-        elif role in ("tool", "toolagent", "tools"):
-            agent = ToolAgent(
+            return Archivist(
                 name=section,
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
                 groups=groups,
             )
-            agents.append(agent)
-        elif role == "listener":
-            agents.append(
-                Listener(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                )
+        if role in ("tool", "toolagent", "tools"):
+            return ToolAgent(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
             )
-        elif role == "speaker":
-            agents.append(
-                Speaker(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                )
+        if role == "listener":
+            return Listener(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
             )
+        if role == "speaker":
+            return Speaker(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        return Ruminator(
+            name=section,
+            model_name=model_id,
+            role_prompt=role_prompt,
+            config=cfg,
+            groups=groups,
+        )
+
+    non_rum_sections = []
+    rum_sections = []
+
+    for section in sections:
+        if section == "global":
+            continue
+
+        role = parser.get(section, "role", fallback="ruminator").lower()
+        if role == "ruminator":
+            rum_sections.append(section)
         else:
-            agents.append(
-                Ruminator(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                )
-            )
+            non_rum_sections.append(section)
+
+    for sec in non_rum_sections + rum_sections:
+        agent = create_agent(sec)
+        if agent is not None:
+            agents.append(agent)
 
     if not agents:
         raise RuntimeError("No active AI models found in config.")
@@ -325,16 +331,14 @@ def iter_load_config(path: str):
         watchdog_global = 900
         init_global_logging(logging.INFO)
 
-    for section in sections:
-        if section == "global":
-            continue
-
+    def create_agent(section: str):
+        """Instantiate an agent object from a config section."""
         if not parser.has_option(section, "model"):
             raise RuntimeError(f"Config error: model missing for AI '{section}'")
 
         active = parser.getboolean(section, "active", fallback=True)
         if not active:
-            continue
+            return None
 
         model_id = parser.get(section, "model")
         role_prompt = parser.get(section, "role_prompt", fallback="")
@@ -368,45 +372,63 @@ def iter_load_config(path: str):
         }
 
         if role == "archivist":
-            yield Archivist(
+            return Archivist(
                 name=section,
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
                 groups=groups,
             )
-        elif role in ("tool", "toolagent", "tools"):
-            yield ToolAgent(
+        if role in ("tool", "toolagent", "tools"):
+            return ToolAgent(
                 name=section,
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
                 groups=groups,
             )
-        elif role == "listener":
-            yield Listener(
+        if role == "listener":
+            return Listener(
                 name=section,
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
                 groups=groups,
             )
-        elif role == "speaker":
-            yield Speaker(
+        if role == "speaker":
+            return Speaker(
                 name=section,
                 model_name=model_id,
                 role_prompt=role_prompt,
                 config=cfg,
                 groups=groups,
             )
+        return Ruminator(
+            name=section,
+            model_name=model_id,
+            role_prompt=role_prompt,
+            config=cfg,
+            groups=groups,
+        )
+
+    # Separate sections so non-ruminators are yielded first
+    non_rum_sections = []
+    rum_sections = []
+
+    for section in sections:
+        if section == "global":
+            continue
+
+        role = parser.get(section, "role", fallback="ruminator").lower()
+        if role == "ruminator":
+            rum_sections.append(section)
         else:
-            yield Ruminator(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-            )
+            non_rum_sections.append(section)
+
+    for sec in non_rum_sections + rum_sections:
+        agent = create_agent(sec)
+        if agent is not None:
+            yield agent
 
     logger.debug("Exiting iter_load_config")
 
