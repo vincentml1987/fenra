@@ -33,6 +33,15 @@ logger = create_object_logger("Conductor")
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
 
+# Discord integration (outbound only)
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID")
+DISCORD_BOT_TOKEN = (
+    os.getenv("DISCORD_BOT_TOKEN")
+    or os.getenv("FENRA_DISCORD_TOKEN")
+    or os.getenv("fenra_token")
+)
+
 
 def load_config(path: str):
     """Parse fenra_config.txt and return instantiated agent objects."""
@@ -545,6 +554,66 @@ def append_human_log(entry: Dict[str, object]) -> None:
         logger.error("Failed to write human log: %s", exc)
 
 
+def _discord_chunks(text: str, limit: int = 1900):
+    """Yield message chunks within Discord's ~2000 char cap."""
+    text = text or ""
+    while text:
+        cut = text.rfind("\n", 0, limit)
+        if cut == -1:
+            cut = min(len(text), limit)
+        yield text[:cut]
+        text = text[cut:].lstrip("\n")
+
+
+def _post_to_discord_via_webhook(content: str) -> None:
+    if not DISCORD_WEBHOOK_URL:
+        return
+    for part in _discord_chunks(content):
+        try:
+            resp = requests.post(
+                DISCORD_WEBHOOK_URL,
+                json={"content": part},
+                timeout=10,
+            )
+            if resp.status_code == 429:
+                data = resp.json()
+                time.sleep(float(data.get("retry_after", 1.0)))
+                requests.post(DISCORD_WEBHOOK_URL, json={"content": part}, timeout=10)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Discord webhook failed: %s", exc)
+
+
+def _post_to_discord_via_bot(content: str) -> None:
+    if not (DISCORD_CHANNEL_ID and DISCORD_BOT_TOKEN):
+        return
+    url = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    for part in _discord_chunks(content):
+        try:
+            resp = requests.post(url, headers=headers, json={"content": part}, timeout=10)
+            if resp.status_code == 429:
+                data = resp.json()
+                time.sleep(float(data.get("retry_after", 1.0)))
+                requests.post(url, headers=headers, json={"content": part}, timeout=10)
+            elif resp.status_code >= 400:
+                logger.error("Discord bot post failed: %s %s", resp.status_code, resp.text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Discord bot post exception: %s", exc)
+
+
+def post_to_discord(content: str) -> None:
+    """Send a message to Discord using webhook if available, else bot token."""
+    if not content:
+        return
+    if DISCORD_WEBHOOK_URL:
+        _post_to_discord_via_webhook(content)
+    else:
+        _post_to_discord_via_bot(content)
+
+
 def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
     """Call an agent function, retrying indefinitely on timeout."""
     base_timeout = agent.model.watchdog_timeout
@@ -1017,6 +1086,12 @@ def main() -> None:
                 messages_to_humans.append(entry)
                 save_messages_to_humans(messages_to_humans)
                 append_human_log(entry)
+                # ALSO send to Discord
+                try:
+                    discord_text = f"**{entry['sender']}** — {entry['timestamp']}\n{entry['message']}"
+                    post_to_discord(discord_text)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Failed to post Speaker message to Discord: %s", exc)
             text = f"[{timestamp}] {speaker_ai.name}: {s_reply}\n{'-' * 80}\n\n"
             print(text)
             for group in speaker_ai.groups:
