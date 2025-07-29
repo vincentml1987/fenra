@@ -2,7 +2,7 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple, Callable
 import configparser
 import threading
 import os
@@ -14,10 +14,18 @@ import math
 import logging
 import requests
 
-# Added Tracer import.
-from ai_model import Ruminator, Archivist, ToolAgent, Listener, Speaker, Tracer
+from ai_model import Agent, Ruminator, Archivist, ToolAgent, Listener, Speaker
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
+
+
+def _parse_debug_level(path: str) -> int:
+    """Return a logging level parsed from the config without logging."""
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+    level_name = parser.get("global", "debug_level", fallback="INFO")
+    return parse_log_level(level_name)
 
 
 logger = create_object_logger("Conductor")
@@ -54,7 +62,7 @@ def load_config(path: str):
         max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
         max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
         chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=300)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
         debug_level_str = parser.get("global", "debug_level", fallback="INFO")
         init_global_logging(parse_log_level(debug_level_str))
     else:
@@ -62,7 +70,7 @@ def load_config(path: str):
         temperature_global = 0.7
         max_tokens_global = None
         chat_style_global = None
-        watchdog_global = 300
+        watchdog_global = 900
         init_global_logging(logging.INFO)
 
     agents = []
@@ -147,16 +155,6 @@ def load_config(path: str):
                     groups=groups,
                 )
             )
-        elif role == "tracer":
-            agents.append(
-                Tracer(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                )
-            )
         else:
             agents.append(
                 Ruminator(
@@ -191,7 +189,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
             "temperature": sec.getfloat("temperature", fallback=0.7),
             "max_tokens": max_tok_val,
             "chat_style": sec.get("chat_style", fallback=None),
-            "watchdog_timeout": sec.getint("watchdog_timeout", fallback=300),
+            "watchdog_timeout": sec.getint("watchdog_timeout", fallback=900),
             "system_prompt": sec.get("system_prompt", fallback=None),
         }
         logger.debug("Exiting load_global_defaults")
@@ -202,7 +200,7 @@ def load_global_defaults(path: str) -> Dict[str, object]:
         "temperature": 0.7,
         "max_tokens": None,
         "chat_style": None,
-        "watchdog_timeout": 300,
+        "watchdog_timeout": 900,
         "system_prompt": None,
     }
     logger.debug("Exiting load_global_defaults")
@@ -216,15 +214,18 @@ def ensure_models_available(model_ids: List[str]) -> None:
         resp = requests.get(TAGS_URL)
     except requests.RequestException as exc:
         logger.error("Error contacting Ollama server: %s", exc)
+        logging.shutdown()
         sys.exit(1)
     if resp.status_code != 200:
         logger.error("Failed to list models: %s %s", resp.status_code, resp.text)
+        logging.shutdown()
         sys.exit(1)
 
     try:
         tags_info = resp.json()
     except json.JSONDecodeError:
         logger.error("Invalid response from tags endpoint.")
+        logging.shutdown()
         sys.exit(1)
 
     local_models = {m.get("name") for m in tags_info.get("models", [])}
@@ -243,22 +244,171 @@ def ensure_models_available(model_ids: List[str]) -> None:
             )
         except requests.RequestException as exc:
             logger.error("Failed to pull model %s: %s", mid, exc)
+            logging.shutdown()
             sys.exit(1)
         if pull_resp.status_code != 200:
             logger.error(
                 "Error pulling model %s: %s %s", mid, pull_resp.status_code, pull_resp.text
             )
+            logging.shutdown()
             sys.exit(1)
         try:
             result = pull_resp.json()
         except json.JSONDecodeError:
             logger.error("Unexpected response pulling model %s: %s", mid, pull_resp.text)
+            logging.shutdown()
             sys.exit(1)
         status = result.get("status")
         if status != "success":
             logger.error("Model pull failed for %s: %s", mid, result)
+            logging.shutdown()
             sys.exit(1)
     logger.debug("Exiting ensure_models_available")
+
+
+def parse_model_ids(path: str) -> List[str]:
+    """Return a list of **unique** model IDs for all active agents."""
+    logger.debug("Entering parse_model_ids path=%s", path)
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    ids: List[str] = []
+    seen = set()
+    for section in parser.sections():
+        if section == "global":
+            continue
+        if not parser.has_option(section, "model"):
+            raise RuntimeError(f"Config error: model missing for AI '{section}'")
+        active = parser.getboolean(section, "active", fallback=True)
+        if not active:
+            continue
+        model = parser.get(section, "model")
+        if model not in seen:
+            ids.append(model)
+            seen.add(model)
+    logger.debug("Exiting parse_model_ids with %s", ids)
+    return ids
+
+
+def iter_load_config(path: str):
+    """Yield Agent objects from the configuration file one by one."""
+    logger.debug("Entering iter_load_config path=%s", path)
+    parser = configparser.ConfigParser()
+    with open(path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    sections = parser.sections()
+    global_present = parser.has_section("global")
+    topic_in_models = any(
+        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
+    )
+    if not global_present and not topic_in_models:
+        raise RuntimeError(
+            "Config error: topic_prompt not found in global or model sections."
+        )
+
+    if global_present:
+        topic_prompt_global = parser.get("global", "topic_prompt")
+        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
+        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
+        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
+        chat_style_global = parser.get("global", "chat_style", fallback=None)
+        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
+        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
+        init_global_logging(parse_log_level(debug_level_str))
+    else:
+        topic_prompt_global = None
+        temperature_global = 0.7
+        max_tokens_global = None
+        chat_style_global = None
+        watchdog_global = 900
+        init_global_logging(logging.INFO)
+
+    for section in sections:
+        if section == "global":
+            continue
+
+        if not parser.has_option(section, "model"):
+            raise RuntimeError(f"Config error: model missing for AI '{section}'")
+
+        active = parser.getboolean(section, "active", fallback=True)
+        if not active:
+            continue
+
+        model_id = parser.get(section, "model")
+        role_prompt = parser.get(section, "role_prompt", fallback="")
+        groups_str = parser.get(section, "groups", fallback="general")
+        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
+        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
+        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
+        if max_tokens_str is not None:
+            max_tokens = int(max_tokens_str)
+        else:
+            max_tokens = max_tokens_global
+        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
+        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
+        system_prompt = parser.get(section, "system_prompt", fallback=None)
+
+        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
+        if topic_prompt is None:
+            raise RuntimeError(
+                f"Config error: topic_prompt missing for AI '{section}' and no global default."
+            )
+
+        role = parser.get(section, "role", fallback="ruminator").lower()
+
+        cfg = {
+            "topic_prompt": topic_prompt,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "chat_style": chat_style,
+            "watchdog_timeout": watchdog,
+            "system_prompt": system_prompt,
+        }
+
+        if role == "archivist":
+            yield Archivist(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role in ("tool", "toolagent", "tools"):
+            yield ToolAgent(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role == "listener":
+            yield Listener(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        elif role == "speaker":
+            yield Speaker(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+        else:
+            yield Ruminator(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+            )
+
+    logger.debug("Exiting iter_load_config")
 
 
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
@@ -395,51 +545,90 @@ def append_human_log(entry: Dict[str, object]) -> None:
         logger.error("Failed to write human log: %s", exc)
 
 
+def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
+    """Call an agent function, retrying indefinitely on timeout."""
+    base_timeout = agent.model.watchdog_timeout
+    timeout = base_timeout
+    while True:
+        agent.model.watchdog_timeout = timeout
+        try:
+            return func()
+        except requests.Timeout:
+            logger.error("%s timed out", agent.name)
+            timeout *= 1.5
+        finally:
+            agent.model.watchdog_timeout = base_timeout
+
+
 def main() -> None:
+    config_path = "fenra_config.txt"
+    level = _parse_debug_level(config_path)
+    init_global_logging(level)
+    global logger
+    logger = create_object_logger("Conductor")
     logger.debug("Entering main")
     logger.info("Starting conductor")
-    config_path = "fenra_config.txt"
-    agents = load_config(config_path)
-    defaults = load_global_defaults(config_path)
-    ensure_models_available([a.model_name for a in agents])
+    load_global_defaults(config_path)
+    model_ids = parse_model_ids(config_path)
+    ensure_models_available(model_ids)
 
-    archivists = [a for a in agents if isinstance(a, Archivist)]
-    archivist = archivists[0] if archivists else None
-    listeners = [a for a in agents if isinstance(a, Listener)]
-    tracers = [a for a in agents if isinstance(a, Tracer)]
-    tracer = tracers[0] if tracers else None
-    participants = [a for a in agents if a not in archivists + listeners + tracers]
+    agents: List[Agent] = []
+    archivists: List[Archivist] = []
+    listeners: List[Listener] = []
+    speakers: List[Speaker] = []
+    ruminators: List[Agent] = []
+    all_groups: List[str] = []
 
-    # Build set of all groups (include tracers)
-    all_groups = sorted({g for a in participants + archivists + listeners + tracers for g in a.groups})
-    available_agents = participants + archivists + listeners + tracers
+    agent_lock = threading.Lock()
+    ready_event = threading.Event()
+
+    def loader() -> None:
+        nonlocal all_groups
+        for agent in iter_load_config(config_path):
+            with agent_lock:
+                agents.append(agent)
+                if isinstance(agent, Archivist):
+                    archivists.append(agent)
+                elif isinstance(agent, Listener):
+                    listeners.append(agent)
+                elif isinstance(agent, Speaker):
+                    speakers.append(agent)
+                else:
+                    ruminators.append(agent)
+                all_groups = sorted({g for a in agents for g in a.groups})
+                if archivists and listeners and speakers and ruminators:
+                    ready_event.set()
+
+    threading.Thread(target=loader, daemon=True).start()
+    logger.info("Loading agents in background...")
+
+    ready_event.wait()
+
+    # At least one of each agent type loaded
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
     inject_queue: List[Dict[str, str]] = []
     message_queue: List[Dict[str, object]] = load_message_queue()
-    sent_messages: List[Dict[str, object]] = []
     messages_to_humans: List[Dict[str, object]] = load_messages_to_humans()
     chat_lock = threading.Lock()
-    threads: List[threading.Thread] = []
 
     def conversation_loop() -> None:
         logger.debug("Entering conversation_loop")
-        msg_count = 0
         while True:
-            
-            pending: List[Dict[str, str]] = []
             with chat_lock:
                 if inject_queue:
                     pending = list(inject_queue)
                     inject_queue.clear()
                     chat_log.extend(pending)
-                active_participants = [a for a in participants if a.active]
-                active_archivists = [a for a in archivists if a.active]
-                active_listeners = [a for a in listeners if a.active]
-                active_tracers = [a for a in tracers if a.active]
-                # Tracers participate in the speaking rotation
-                log_snapshot = list(chat_log)
-                current_queue = list(message_queue)
+                else:
+                    pending = []
+                with agent_lock:
+                    active_listeners = [a for a in listeners if a.active]
+                    active_ruminators = [a for a in ruminators if a.active]
+                    active_archivists = [a for a in archivists if a.active]
+                    active_speakers = [a for a in speakers if a.active]
+                queue_empty = not message_queue
+
             for msg in pending:
                 text = (
                     f"[{msg['timestamp']}] {msg['sender']}: {msg['message']}\n"
@@ -451,192 +640,303 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
-                ui.root.after(0, ui.log, text)
+                ui.root.after(0, ui.log, msg)
 
-
-            with chat_lock:
-                current_log = list(chat_log)
-                
-            # Randomly select among all active agents, including Tracers
-            active_choices = (
-                active_participants
-                + active_archivists
-                + active_listeners
-                + active_tracers
-            )
-            if not active_choices:
+            if not (active_listeners and active_ruminators and active_speakers):
                 time.sleep(0.5)
                 continue
-            ai = random.choice(active_choices)
-            context = [
-                m
-                for m in current_log
-                if set(m.get("groups", ["general"])) & set(ai.groups)
-            ]
 
-            if isinstance(ai, Listener):
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                if not current_queue:
+            if queue_empty:
+                available: List[Tuple[str, Agent]] = []
+                for r in active_ruminators:
+                    available.append(("ruminator", r))
+                for a in active_archivists:
+                    available.append(("archivist", a))
+                for s in active_speakers:
+                    available.append(("speaker", s))
+                if not available:
                     time.sleep(0.5)
                     continue
-                msg = current_queue[0]
-                outputs = [
-                    m["message"]
-                    for m in messages_to_humans
-                    if m["epoch"] >= msg["epoch"]
-                ]
-                # Delegate answered check to Tracer if available
-                answered = tracer.is_answered(msg["message"], outputs) if tracer else ai.check_answered(msg["message"], outputs)
-                logger.info(
-                    'Tracer verdict for "%s": outputs=%s → answered=%s',
-                    msg["message"],
-                    outputs,
-                    answered,
-                )
-                if answered:
-                    with chat_lock:
-                        message_queue.pop(0)
-                        save_message_queue(message_queue)
-                    ui.root.after(0, ui.update_queue, list(message_queue))
-                    reply = ai.clear_ais(msg["message"])
-                else:
-                    lines = [
-                        f"[{m['timestamp']}] {m['sender']}: {m['message']}"
-                        for m in messages_to_humans
-                    ]
-                    ruminations = "\n".join(lines)
-                    reply = ai.prompt_ais(ruminations, msg["message"])
-                entry = {
-                    "sender": ai.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": ai.groups,
-                    "epoch": time.time(),
-                }
+                role, agent = random.choice(available)
                 with chat_lock:
+                    context = [
+                        m
+                        for m in chat_log
+                        if set(m.get("groups", ["general"])) & set(agent.groups)
+                    ]
+                if role == "ruminator":
+                    try:
+                        r_reply = step_with_retry(agent, lambda: agent.step(context))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Error from %s: %s", agent.name, exc)
+                        time.sleep(0.5)
+                        continue
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    with chat_lock:
+                        entry = {
+                            "sender": agent.name,
+                            "timestamp": timestamp,
+                            "message": r_reply,
+                            "groups": agent.groups,
+                            "epoch": time.time(),
+                        }
+                        chat_log.append(entry)
+                    text = f"[{timestamp}] {agent.name}: {r_reply}\n{'-' * 80}\n\n"
+                    for group in agent.groups:
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    print(text)
+                    ui.root.after(0, ui.log, entry)
+                    time.sleep(0.5)
+                    continue
+
+                if role == "archivist":
+                    try:
+                        summary = step_with_retry(agent, lambda: agent.step(context))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Error from %s: %s", agent.name, exc)
+                        time.sleep(0.5)
+                        continue
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if summary:
+                        ts_display = timestamp
+                        ts_file = datetime.now().strftime("%Y%m%d%H%M%S")
+                        text = (
+                            f"[{ts_display}] {agent.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                        )
+                        print(text)
+                        ui.root.after(
+                            0,
+                            ui.log,
+                            {
+                                "sender": agent.name,
+                                "timestamp": ts_display,
+                                "message": "archived transcript and wrote summary.",
+                                "groups": agent.groups,
+                            },
+                        )
+                        summary_text = f"[{ts_display}] {agent.name}: {summary}\n{'-' * 80}\n\n"
+                        for group in agent.groups:
+                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            if os.path.exists(fname):
+                                os.makedirs(os.path.join("chatlogs", "summarized"), exist_ok=True)
+                                dest = os.path.join(
+                                    "chatlogs",
+                                    "summarized",
+                                    f"chat_log_{group}_{ts_file}.txt",
+                                )
+                                shutil.copy2(fname, dest)
+                            os.makedirs(os.path.dirname(fname), exist_ok=True)
+                            with open(fname, "w", encoding="utf-8") as log_file:
+                                log_file.write(summary_text)
+                        with chat_lock:
+                            chat_log[:] = [
+                                m
+                                for m in chat_log
+                                if not (
+                                    set(m.get("groups", ["general"])) & set(agent.groups)
+                                )
+                            ]
+                            entry = {
+                                "sender": agent.name,
+                                "timestamp": ts_display,
+                                "message": summary,
+                                "groups": agent.groups,
+                                "epoch": time.time(),
+                            }
+                            chat_log.append(entry)
+                    time.sleep(0.5)
+                    continue
+
+                if role == "speaker":
+                    try:
+                        s_reply = step_with_retry(agent, lambda: agent.step(context))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Error from %s: %s", agent.name, exc)
+                        time.sleep(0.5)
+                        continue
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    with chat_lock:
+                        entry = {
+                            "sender": agent.name,
+                            "timestamp": timestamp,
+                            "message": s_reply,
+                            "groups": agent.groups,
+                            "epoch": time.time(),
+                        }
+                        chat_log.append(entry)
+                        messages_to_humans.append(entry)
+                        save_messages_to_humans(messages_to_humans)
+                        append_human_log(entry)
+                    text = f"[{timestamp}] {agent.name}: {s_reply}\n{'-' * 80}\n\n"
+                    print(text)
+                    for group in agent.groups:
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    ui.root.after(0, ui.log, entry)
+                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
+                    time.sleep(0.5)
+                    continue
+
+            listener = random.choice(active_listeners)
+            with chat_lock:
+                msg = message_queue.pop(0)
+                save_message_queue(message_queue)
+                ui.root.after(0, ui.update_queue, list(message_queue))
+            payload_message = msg["message"]
+
+            human_entry = {
+                "sender": "Human",
+                "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                "message": payload_message,
+                "groups": listener.groups,
+                "epoch": time.time(),
+            }
+            with chat_lock:
+                chat_log.append(human_entry)
+            text = f"[{human_entry['timestamp']}] Human: {payload_message}\n{'-' * 80}\n\n"
+            for group in listener.groups:
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
+            print(text)
+            ui.root.after(0, ui.log, human_entry)
+
+            prev_groups = listener.groups
+            num_rums = random.randint(2, 4)
+            selected_rums = []
+            for _ in range(num_rums):
+                candidates = [r for r in active_ruminators if set(r.groups) & set(prev_groups)]
+                if not candidates:
+                    candidates = active_ruminators
+                rum = random.choice(candidates)
+                selected_rums.append(rum)
+                prev_groups = rum.groups
+
+            if active_archivists:
+                a_candidates = [
+                    a for a in active_archivists if set(a.groups) & set(prev_groups)
+                ]
+                if not a_candidates:
+                    a_candidates = active_archivists
+                archivist_ai = random.choice(a_candidates)
+                prev_groups = archivist_ai.groups
+            else:
+                archivist_ai = None
+
+            candidates = [s for s in active_speakers if set(s.groups) & set(prev_groups)]
+            if not candidates:
+                candidates = active_speakers
+            speaker_ai = random.choice(candidates)
+
+            chain_names = [listener.name] + [r.name for r in selected_rums]
+            if archivist_ai:
+                chain_names.append(archivist_ai.name)
+            chain_names.append(speaker_ai.name)
+            logger.info("Agent chain: %s", " > ".join(chain_names))
+
+            lines = [
+                f"[{m['timestamp']}] {m['sender']}: {m['message']}" for m in messages_to_humans
+            ]
+            ruminations = "\n".join(lines)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                reply = step_with_retry(
+                    listener,
+                    lambda: listener.prompt_ais(ruminations, payload_message),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error from %s: %s", listener.name, exc)
+                time.sleep(0.5)
+                continue
+            entry = {
+                "sender": listener.name,
+                "timestamp": timestamp,
+                "message": reply,
+                "groups": listener.groups,
+                "epoch": time.time(),
+            }
+            with chat_lock:
+                chat_log.append(entry)
+            text = f"[{timestamp}] {listener.name}: {reply}\n{'-' * 80}\n\n"
+            for group in listener.groups:
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
+            print(text)
+            ui.root.after(0, ui.log, entry)
+
+            for rum in selected_rums:
+                with chat_lock:
+                    context = [
+                        m
+                        for m in chat_log
+                        if set(m.get("groups", ["general"])) & set(rum.groups)
+                    ]
+                try:
+                    r_reply = step_with_retry(rum, lambda: rum.step(context))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error from %s: %s", rum.name, exc)
+                    continue
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with chat_lock:
+                    entry = {
+                        "sender": rum.name,
+                        "timestamp": timestamp,
+                        "message": r_reply,
+                        "groups": rum.groups,
+                        "epoch": time.time(),
+                    }
                     chat_log.append(entry)
-                    sent_messages.append(entry)
-                    messages_to_humans.append(entry)
-                    save_messages_to_humans(messages_to_humans)
-                    append_human_log(entry)
-                text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
-                for group in ai.groups:
+                text = f"[{timestamp}] {rum.name}: {r_reply}\n{'-' * 80}\n\n"
+                for group in rum.groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                     os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 print(text)
-                ui.root.after(0, ui.log, text)
-                continue
+                ui.root.after(0, ui.log, entry)
 
-            try:
-                result = ai.step(context)
-            except requests.Timeout:
-                logger.error("%s timed out", ai.name)
-                continue
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Error from %s: %s", ai.name, exc)
-                continue
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if isinstance(ai, Archivist):
-                summary = result
-                logger.info("%s archived transcript", ai.name)
-                ts_display = timestamp
-                ts_file = datetime.now().strftime("%Y%m%d%H%M%S")
-                text = (
-                    f"[{ts_display}] {ai.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
-                )
-                print(text)
-                ui.root.after(0, ui.log, text)
-                summary_text = f"[{ts_display}] {ai.name}: {summary}\n{'-' * 80}\n\n"
-                for group in ai.groups:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    if os.path.exists(fname):
-                        os.makedirs(os.path.join("chatlogs", "summarized"), exist_ok=True)
-                        dest = os.path.join(
-                            "chatlogs",
-                            "summarized",
-                            f"chat_log_{group}_{ts_file}.txt",
-                        )
-                        shutil.copy2(fname, dest)
-                    with open(fname, "w", encoding="utf-8") as log_file:
-                        log_file.write(summary_text)
+            if archivist_ai:
                 with chat_lock:
-                    chat_log[:] = [
+                    context = [
                         m
                         for m in chat_log
-                        if not (
-                            set(m.get("groups", ["general"])) & set(ai.groups)
-                        )
+                        if set(m.get("groups", ["general"])) & set(archivist_ai.groups)
                     ]
-                    entry = {
-                        "sender": ai.name,
-                        "timestamp": ts_display,
-                        "message": summary,
-                        "groups": ai.groups,
-                        "epoch": time.time(),
-                    }
-                    chat_log.append(entry)
-                    sent_messages.append(entry)
-                msg_count = 0
-                continue
-
-            reply = result
-            with chat_lock:
-                entry = {
-                    "sender": ai.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": ai.groups,
-                    "epoch": time.time(),
-                }
-                chat_log.append(entry)
-                sent_messages.append(entry)
-                if isinstance(ai, Speaker):
-                    messages_to_humans.append(entry)
-                    save_messages_to_humans(messages_to_humans)
-                    append_human_log(entry)
-            logger.info("%s: generated response", ai.name)
-            text = f"[{timestamp}] {ai.name}: {reply}\n{'-' * 80}\n\n"
-            print(text)
-            for group in ai.groups:
-                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                os.makedirs(os.path.dirname(fname), exist_ok=True)
-                with open(fname, "a", encoding="utf-8") as log_file:
-                    log_file.write(text)
-            ui.root.after(0, ui.log, text)
-            if isinstance(ai, Speaker):
-                ui.root.after(0, ui.update_sent, list(messages_to_humans))
-            if not isinstance(ai, Tracer):
-                msg_count += 1
-
-            if msg_count >= len(active_participants) and archivist and archivist.active:
-                with chat_lock:
-                    current_log = list(chat_log)
-                context = [
-                    m
-                    for m in current_log
-                    if set(m.get("groups", ["general"])) & set(archivist.groups)
-                ]
                 try:
-                    summary = archivist.step(context)
-                except requests.Timeout:
-                    logger.error("%s timed out", archivist.name)
+                    summary = step_with_retry(
+                        archivist_ai, lambda: archivist_ai.step(context)
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("Error from %s: %s", archivist.name, exc)
-                else:
-                    logger.info("%s archived transcript", archivist.name)
-                    ts_display = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    logger.error("Error from %s: %s", archivist_ai.name, exc)
+                    summary = ""
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if summary:
+                    ts_display = timestamp
                     ts_file = datetime.now().strftime("%Y%m%d%H%M%S")
                     text = (
-                        f"[{ts_display}] {archivist.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
+                        f"[{ts_display}] {archivist_ai.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                     )
                     print(text)
-                    ui.root.after(0, ui.log, text)
-                    summary_text = f"[{ts_display}] {archivist.name}: {summary}\n{'-' * 80}\n\n"
-                    for group in archivist.groups:
+                    ui.root.after(
+                        0,
+                        ui.log,
+                        {
+                            "sender": archivist_ai.name,
+                            "timestamp": ts_display,
+                            "message": "archived transcript and wrote summary.",
+                            "groups": archivist_ai.groups,
+                        },
+                    )
+                    summary_text = f"[{ts_display}] {archivist_ai.name}: {summary}\n{'-' * 80}\n\n"
+                    for group in archivist_ai.groups:
                         fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                         if os.path.exists(fname):
                             os.makedirs(os.path.join("chatlogs", "summarized"), exist_ok=True)
@@ -646,6 +946,7 @@ def main() -> None:
                                 f"chat_log_{group}_{ts_file}.txt",
                             )
                             shutil.copy2(fname, dest)
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
                         with open(fname, "w", encoding="utf-8") as log_file:
                             log_file.write(summary_text)
                     with chat_lock:
@@ -653,20 +954,78 @@ def main() -> None:
                             m
                             for m in chat_log
                             if not (
-                                set(m.get("groups", ["general"]))
-                                & set(archivist.groups)
+                                set(m.get("groups", ["general"])) & set(archivist_ai.groups)
                             )
                         ]
                         entry = {
-                            "sender": archivist.name,
+                            "sender": archivist_ai.name,
                             "timestamp": ts_display,
                             "message": summary,
-                            "groups": archivist.groups,
+                            "groups": archivist_ai.groups,
                             "epoch": time.time(),
                         }
                         chat_log.append(entry)
-                        sent_messages.append(entry)
-                    msg_count = 0
+
+            with chat_lock:
+                context = [
+                    m
+                    for m in chat_log
+                    if set(m.get("groups", ["general"])) & set(speaker_ai.groups)
+                ]
+            thinking_payload = speaker_ai.model.build_prompt(context)
+            speaker_prompt = "\n".join(
+                [
+                    "-----You Are Thinking the Following-----",
+                    thinking_payload,
+                    "-----The User Said the Following-----",
+                    payload_message,
+                    "----Instructions-----Respond to what the user said using what you are thinking as context.",
+                ]
+            )
+            parts = []
+            if speaker_ai.model.system_prompt:
+                parts.append(speaker_ai.model.system_prompt)
+            role_topic = " ".join(
+                [p for p in [speaker_ai.model.topic_prompt, speaker_ai.model.role_prompt] if p]
+            )
+            if role_topic:
+                parts.append(role_topic)
+            parts.append("You are speaking to humans.")
+            system_text = "\n".join(parts)
+            try:
+                s_reply = step_with_retry(
+                    speaker_ai,
+                    lambda: speaker_ai.model.generate_from_prompt(
+                        speaker_prompt,
+                        system=system_text,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error from %s: %s", speaker_ai.name, exc)
+                time.sleep(0.5)
+                continue
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with chat_lock:
+                entry = {
+                    "sender": speaker_ai.name,
+                    "timestamp": timestamp,
+                    "message": s_reply,
+                    "groups": speaker_ai.groups,
+                    "epoch": time.time(),
+                }
+                chat_log.append(entry)
+                messages_to_humans.append(entry)
+                save_messages_to_humans(messages_to_humans)
+                append_human_log(entry)
+            text = f"[{timestamp}] {speaker_ai.name}: {s_reply}\n{'-' * 80}\n\n"
+            print(text)
+            for group in speaker_ai.groups:
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
+            ui.root.after(0, ui.log, entry)
+            ui.root.after(0, ui.update_sent, list(messages_to_humans))
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
@@ -705,7 +1064,6 @@ def main() -> None:
 
     t = threading.Thread(target=conversation_loop, daemon=True)
     t.start()
-    threads.append(t)
 
     ui.start()
     logger.debug("Exiting main")

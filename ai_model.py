@@ -9,9 +9,8 @@ from tools import tool_schema, tool_descriptions, call_tool
 from runtime_utils import (
     create_object_logger,
     generate_with_watchdog,
-    parse_model_size,
     strip_think_markup,
-    WATCHDOG_TRACKER,
+    tokenize_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
-        watchdog_timeout: int = 300,
+        watchdog_timeout: int = 900,
         system_prompt: Optional[str] = None,
     ) -> None:
         logger.debug(
@@ -46,7 +45,6 @@ class AIModel:
         )
         self.name = name
         self.model_id = model_id
-        self.model_size = parse_model_size(model_id)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.watchdog_timeout = watchdog_timeout
@@ -99,17 +97,18 @@ class AIModel:
         prompt = self.build_prompt(chat_log)
 
         import json
-        self.logger.info(
-            "AIModel.generate_response payload about to be sent:\n%s",
-            json.dumps(
-                {
-                    "model": self.model_id,
-                    "prompt": prompt,
-                    "temperature": self.temperature,
-                },
-                indent=2,
-            ),
-        )
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "AIModel.generate_response payload about to be sent:\n%s",
+                json.dumps(
+                    {
+                        "model": self.model_id,
+                        "prompt": prompt,
+                        "temperature": self.temperature,
+                    },
+                    indent=2,
+                ),
+            )
 
         payload = {
             "model": self.model_id,
@@ -122,20 +121,24 @@ class AIModel:
         if self.system_prompt:
             system_parts.append(self.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.role_prompt, self.topic_prompt] if p]
+            [p for p in [self.topic_prompt, self.role_prompt] if p]
         )
         if role_topic:
             system_parts.append(role_topic)
         if system_parts:
-            payload["system"] = "\n".join(system_parts)
+            system_text = "\n".join(system_parts)
+            payload["system"] = system_text
+            payload["prompt"] = f"{prompt}\n{system_text}"
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_response")
@@ -157,22 +160,23 @@ class AIModel:
             num_predict,
         )
         import json
-        self.logger.info(
-            "AIModel.generate_from_prompt payload about to be sent:\n%s",
-            json.dumps(
-                {
-                    "model": self.model_id,
-                    "prompt": prompt,
-                    "temperature": self.temperature if temperature is None else temperature,
-                    "options": {
-                        **({"num_ctx": num_ctx} if num_ctx is not None else {}),
-                        **({"num_predict": num_predict} if num_predict is not None else {}),
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "AIModel.generate_from_prompt payload about to be sent:\n%s",
+                json.dumps(
+                    {
+                        "model": self.model_id,
+                        "prompt": prompt,
+                        "temperature": self.temperature if temperature is None else temperature,
+                        "options": {
+                            **({"num_ctx": num_ctx} if num_ctx is not None else {}),
+                            **({"num_predict": num_predict} if num_predict is not None else {}),
+                        },
+                        **({"system": system} if system is not None else {}),
                     },
-                    **({"system": system} if system is not None else {}),
-                },
-                indent=2,
-            ),
-        )
+                    indent=2,
+                ),
+            )
         payload = {
             "model": self.model_id,
             "prompt": prompt,
@@ -183,27 +187,33 @@ class AIModel:
         if num_ctx is not None and self.max_tokens is not None:
             payload["options"]["num_ctx"] = num_ctx
         # num_predict is accepted for compatibility but intentionally ignored
+        system_text = None
         if system is None:
             system_parts = []
             if self.system_prompt:
                 system_parts.append(self.system_prompt)
             role_topic = " ".join(
-                [p for p in [self.role_prompt, self.topic_prompt] if p]
+                [p for p in [self.topic_prompt, self.role_prompt] if p]
             )
             if role_topic:
                 system_parts.append(role_topic)
             if system_parts:
-                payload["system"] = "\n".join(system_parts)
+                system_text = "\n".join(system_parts)
         elif system:
-            payload["system"] = system
+            system_text = system
+        if system_text:
+            payload["system"] = system_text
+            payload["prompt"] = f"{prompt}\n{system_text}"
         # if system is empty string, omit the system field entirely
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            raise
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_from_prompt")
@@ -220,9 +230,10 @@ class AIModel:
             messages,
             tools,
         )
+        payload_messages = [m.copy() for m in messages]
         payload = {
             "model": self.model_id,
-            "messages": messages,
+            "messages": payload_messages,
             "temperature": self.temperature,
             "options": {},
             "stream": False,
@@ -233,19 +244,27 @@ class AIModel:
         if self.system_prompt:
             system_parts.append(self.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.role_prompt, self.topic_prompt] if p]
+            [p for p in [self.topic_prompt, self.role_prompt] if p]
         )
         if role_topic:
             system_parts.append(role_topic)
         if system_parts:
-            payload["system"] = "\n".join(system_parts)
+            system_text = "\n".join(system_parts)
+            payload["system"] = system_text
+            if payload_messages:
+                last = payload_messages[-1]
+                content = last.get("content", "")
+                if isinstance(content, str):
+                    last["content"] = f"{content}\n{system_text}"
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        result_text = generate_with_watchdog(
-            payload,
-            self.model_size,
-            WATCHDOG_TRACKER,
-        )
+        try:
+            result_text = generate_with_watchdog(
+                payload,
+                base_timeout=self.watchdog_timeout,
+            )
+        except requests.Timeout:
+            raise
         try:
             data = json.loads(result_text)
         except json.JSONDecodeError as exc:  # noqa: BLE001
@@ -296,7 +315,7 @@ class Agent:
             temperature=float(config.get("temperature", 0.7)),
             max_tokens=max_tok,
             chat_style=config.get("chat_style"),
-            watchdog_timeout=int(config.get("watchdog_timeout", 300)),
+            watchdog_timeout=int(config.get("watchdog_timeout", 900)),
             system_prompt=config.get("system_prompt"),
         )
 
@@ -408,7 +427,7 @@ class ToolAgent(Agent):
         self.logger.debug("Entering ToolAgent.step with context=%s", context)
         parts = []
         role_topic = " ".join(
-            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+            [p for p in [self.model.topic_prompt, self.model.role_prompt] if p]
         )
         if role_topic:
             parts.append(role_topic)
@@ -504,64 +523,11 @@ class Archivist(Agent):
 class Listener(Agent):
     """Agent that monitors user questions and notifies other AIs."""
 
-    CHECK_INSTRUCTIONS = (
-        "You are a Listener AI. You are not speaking to a human. "
-        "Determine if the user's question has been answered in the output to the world. "
-        "The user's message displays under -----Message from User----- "
-        "Messages sent to the user appear under -----Output to World----- "
-        "Reply with 'Yes' if the output contains the answer to he message from the user. Reply with 'No' if it has not. "
-        "Do not respond with anything but 'Yes' or 'No'."
-    )
-
     PROMPT_INSTRUCTIONS = (
         "You are a Listener AI speaking to other AIs. "
         "The user's message displays under -----Message from User----- "
-        "Gently remind the other AIs that the user asked a question and restate the question in your own words."
+        "Gently remind the other AIs that the user sent a message and restate the message in your own words."
     )
-
-    CLEAR_INSTRUCTIONS = (
-        "You are a Listener AI speaking to other AIs. "
-        "The user's message displays under -----Message from User----- "
-        "Let the other AIs know that the users request has been addressed."
-    )
-
-    def check_answered(self, message: str, outputs: List[str]) -> bool:
-        """Return True if the user's question appears answered."""
-        if not outputs:
-            return False
-        for out in outputs:
-            print(out)
-            lines = [
-                (
-                    "Below is a message received from the humans and a message "
-                    "sent to the humans. Does the sent message respond to the "
-                    "received message? Only answer yes or no:"
-                ),
-                "-----------------",
-                f"Received Message: {message}",
-                "-----------------",
-                f"Sent Message: {out}",
-            ]
-            prompt = "\n".join(lines)
-            wc = len(prompt.split())
-            logger.info(
-                "Listener.check_answered: token count=%d, will call generate_from_prompt with num_predict=3",
-                wc,
-            )
-            reply = self.model.generate_from_prompt(
-                prompt,
-                num_ctx=wc,
-                num_predict=3,
-                temperature=0.0,
-                system=self.CHECK_INSTRUCTIONS,
-            )
-            logger.info("Listener.check_answered: got reply <%s>", reply)
-
-            logger.debug("Listener responded: %s", reply)
-            cleaned = re.sub(r"[^a-zA-Z]", "", reply).lower()
-            if "yes" in cleaned:
-                return True
-        return False
 
     def prompt_ais(self, transcript: str, message: str) -> str:
         """Ask other AIs to answer the user's question."""
@@ -578,18 +544,6 @@ class Listener(Agent):
         logger.info("Listener.prompt_ais: got reply of length %d", len(reply))
         return reply
 
-    def clear_ais(self, message: str) -> str:
-        """Notify other AIs that the user's request has been addressed."""
-        lines = ["-----Message from User-----"]
-        lines.append(message)
-        lines.append("-----Your Instructions-----")
-        lines.append(self.CLEAR_INSTRUCTIONS)
-        prompt = "\n".join(lines)
-        logger.info("Listener.clear_ais: notifying other AIs request addressed")
-        reply = self.model.generate_from_prompt(prompt, system="")
-        logger.info("Listener.clear_ais: got reply of length %d", len(reply))
-        return reply
-
 
 class Speaker(Agent):
     """Agent responsible for communicating with humans."""
@@ -603,7 +557,7 @@ class Speaker(Agent):
         if self.model.system_prompt:
             parts.append(self.model.system_prompt)
         role_topic = " ".join(
-            [p for p in [self.model.role_prompt, self.model.topic_prompt] if p]
+            [p for p in [self.model.topic_prompt, self.model.role_prompt] if p]
         )
         if role_topic:
             parts.append(role_topic)

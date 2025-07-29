@@ -5,15 +5,17 @@ import threading
 import time
 from collections import deque
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
 import ctypes
 
 import logging
+import sys
 import requests
 
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 GLOBAL_LOG_LEVEL = logging.INFO
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +35,10 @@ def init_global_logging(level: int) -> None:
     GLOBAL_LOG_LEVEL = level
     os.makedirs("logs", exist_ok=True)
     handlers = [
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
         logging.FileHandler(os.path.join("logs", "fenra.log"), mode="a", encoding="utf-8"),
     ]
-    logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers)
+    logging.basicConfig(level=level, format=LOG_FORMAT, handlers=handlers, force=True)
     logger.debug("Exiting init_global_logging")
 
 
@@ -95,9 +97,12 @@ class ThreadTimeTracker:
     """Manage per-thread time trackers and compute a global average."""
 
     def __init__(self, rolling_window: int = 10) -> None:
-        logger.debug("Entering ThreadTimeTracker.__init__ rolling_window=%s", rolling_window)
+        logger.debug(
+            "Entering ThreadTimeTracker.__init__ rolling_window=%s", rolling_window
+        )
         self.trackers: Dict[int, AITimeTracker] = {}
         self.rolling_window = rolling_window
+        self.timeout_extra = 0.0
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized ThreadTimeTracker")
         logger.debug("Exiting ThreadTimeTracker.__init__")
@@ -120,57 +125,132 @@ class ThreadTimeTracker:
         self._tracker_for(tid).record(wall_time, model_size_gb)
         self.logger.debug("Exiting ThreadTimeTracker.record")
 
-    def average(self) -> float:
-        self.logger.debug("Entering ThreadTimeTracker.average")
-        total = 300
+    def _total_and_count(self) -> Tuple[float, int]:
+        """Return the aggregated total time and count across trackers."""
+        total = 300 + self.timeout_extra
         count = 1
         for tracker in self.trackers.values():
             total += sum(tracker.data)
             count += len(tracker.data)
+        return total, count
+
+    def average(self) -> float:
+        self.logger.debug("Entering ThreadTimeTracker.average")
+        total, count = self._total_and_count()
         avg = total / count
         self.logger.debug("Global average AI seconds: %.2f", avg)
         self.logger.debug("Exiting ThreadTimeTracker.average")
         return avg
 
+    def record_timeout(self) -> None:
+        """Increase total time so the average grows by 5%."""
+        self.logger.debug("Entering ThreadTimeTracker.record_timeout")
+        total, _ = self._total_and_count()
+        extra = total * 0.05
+        self.timeout_extra += extra
+        self.logger.debug(
+            "Added %.2f seconds due to timeout. New extra total %.2f", extra, self.timeout_extra
+        )
+        self.logger.debug("Exiting ThreadTimeTracker.record_timeout")
+
 
 WATCHDOG_TRACKER = ThreadTimeTracker()
 
 
-def parse_model_size(model_id: str) -> float:
-    """Return the disk size of the model in gigabytes."""
+def parse_model_size(model_id: str, max_retries: int = 3) -> float:
+    """Return the disk size of the model in gigabytes.
+
+    If the ``ollama list`` command fails, retry up to ``max_retries`` times
+    before falling back to a default size of ``7.0`` gigabytes.
+    """
     logger = logging.getLogger("ModelSize")
     logger.debug("Entering parse_model_size model_id=%s", model_id)
-    try:
-        import subprocess
+    import subprocess
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = subprocess.run(
+                ["ollama", "list", model_id],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            lines = result.stdout.splitlines()
+            for line in lines:
+                if model_id in line:
+                    match = re.search(r"(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)", line, re.IGNORECASE)
+                    if not match:
+                        break
+                    value = float(match.group(1))
+                    unit = match.group(2).upper()
+                    if unit == "KB":
+                        return value / (1024 * 1024)
+                    if unit == "MB":
+                        return value / 1024
+                    if unit == "GB":
+                        return value
+                    if unit == "TB":
+                        return value * 1024
+            logger.error(
+                "Failed to parse model size from ollama output for %s", model_id
+            )
+        except FileNotFoundError:
+            logger.error("ollama executable not found")
+            break
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "Error running ollama list for %s (attempt %d/%d): %s",
+                model_id,
+                attempt,
+                max_retries,
+                exc,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Unexpected error obtaining size for %s (attempt %d/%d): %s",
+                model_id,
+                attempt,
+                max_retries,
+                exc,
+            )
 
-        result = subprocess.run(
-            ["ollama", "list", model_id], capture_output=True, text=True, check=True
-        )
-        lines = result.stdout.splitlines()
-        for line in lines:
-            if model_id in line:
-                match = re.search(r"(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)", line, re.IGNORECASE)
-                if not match:
-                    break
-                value = float(match.group(1))
-                unit = match.group(2).upper()
-                if unit == "KB":
-                    return value / (1024 * 1024)
-                if unit == "MB":
-                    return value / 1024
-                if unit == "GB":
-                    return value
-                if unit == "TB":
-                    return value * 1024
-        logger.error("Failed to parse model size from ollama output for %s", model_id)
-    except FileNotFoundError:
-        logger.error("ollama executable not found")
-    except subprocess.CalledProcessError as exc:
-        logger.error("Error running ollama list for %s: %s", model_id, exc)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Unexpected error obtaining size for %s: %s", model_id, exc)
+        if attempt < max_retries:
+            logger.info(
+                "Retrying model size retrieval for %s (%d/%d)",
+                model_id,
+                attempt + 1,
+                max_retries,
+            )
+            time.sleep(2)
+
+    logger.error(
+        "Failed to obtain model size for %s after %d attempts; defaulting to 7.0GB",
+        model_id,
+        max_retries,
+    )
     logger.debug("Exiting parse_model_size")
     return 7.0
+
+
+def tokenize_text(model: str, text: str) -> List[int]:
+    """Return token IDs for the given text using Ollama's tokenize API."""
+    logger.debug("Entering tokenize_text model=%s text=%s", model, text)
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/tokenize",
+            json={"model": model, "prompt": text},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        tokens = data.get("tokens")
+        if isinstance(tokens, list):
+            result = [int(t) for t in tokens]
+            logger.debug("Exiting tokenize_text with %s", result)
+            return result
+    except Exception as exc:  # noqa: BLE001
+        logger.error("tokenize_text failed for %s: %s", text, exc)
+    logger.debug("Exiting tokenize_text with empty list")
+    return []
 
 
 def parse_response(resp: requests.Response) -> str:
@@ -210,25 +290,18 @@ def kill_thread(thread: threading.Thread) -> None:
 
 def generate_with_watchdog(
     payload: Dict,
-    model_size_gb: float,
-    tracker: ThreadTimeTracker,
-    timeout_cushion: float = 2.0,
+    *,
+    base_timeout: float = 900,
 ) -> str:
-    """Call Ollama with a watchdog timeout based on normalized averages."""
-    logger.debug(
-        "Entering generate_with_watchdog model_size_gb=%s timeout_cushion=%s",
-        model_size_gb,
-        timeout_cushion,
-    )
+    """Call Ollama with a fixed watchdog timeout."""
+    logger.debug("Entering generate_with_watchdog base_timeout=%s", base_timeout)
 
     model_id = payload.get("model", "unknown")
     wd_logger = create_object_logger(f"Watchdog-{model_id}")
     wd_logger.info("Starting generation with watchdog")
 
     start = time.time()
-    avg_ai = tracker.average()
-    expected_wall = avg_ai * ((model_size_gb / 7) ** 1.2)
-    timeout = expected_wall * timeout_cushion
+    timeout = base_timeout
     wd_logger.debug("Timeout set to %.2fs", timeout)
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
@@ -241,13 +314,31 @@ def generate_with_watchdog(
         if resp.status_code != 200:
             raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
         text = parse_response(resp)
-        wall = time.time() - start
-        tracker.record(threading.get_ident(), wall, model_size_gb)
         wd_logger.info("Generation complete")
         logger.debug("Exiting generate_with_watchdog")
         return str(text)
     except requests.Timeout as exc:
         wd_logger.error("Timeout exceeded")
+        # Increase the global timeout tracking if applicable
+        try:
+            import subprocess
+
+            subprocess.run(
+                ["taskkill", "/IM", "ollama.exe", "/F"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            subprocess.run(
+                ["ollama", "ps"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        except Exception as cmd_exc:  # noqa: BLE001
+            wd_logger.error(
+                "Failed running timeout cleanup commands: %s", cmd_exc
+            )
         raise exc
     except Exception as exc:  # noqa: BLE001
         wd_logger.error("Exception during generation: %s", exc)

@@ -10,3 +10,7 @@ chat_log*.txt
 /scripts
 *.zip
 fenra_config-101+.txt
+fc.txt
+fenra_config-Fenra.txt
+fenra_config-big.txt
+fenra_config_trunc.txt
