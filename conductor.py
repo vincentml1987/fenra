@@ -630,6 +630,15 @@ def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
 
 
 def main() -> None:
+
+    subprocess.run(
+        ["ollama", "ps"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    
+    time.sleep(10)
     config_path = "fenra_config.txt"
     level = _parse_debug_level(config_path)
     init_global_logging(level)
