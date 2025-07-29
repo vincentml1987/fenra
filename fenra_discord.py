@@ -41,19 +41,23 @@ class DiscordToFenra(discord.Client):
         if msg.author.bot or msg.channel.id != CHANNEL_ID:
             return
 
-        # build the Fenra‑style queue entry
+        # Use display_name (nickname in that server, or username fallback)
+        author = msg.author.display_name
+
+        # Build a single‐field JSON entry where "message" includes the author
         entry = {
-            "sender": msg.author.name,
             "timestamp": msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "message": msg.content,
-            # optional: you could add "epoch": msg.created_at.timestamp(),
-            # and/or a "groups": ["general"] key if you like.
+            "message": (
+                f"The following message was sent by Discord user {author}: "
+                f"{msg.content}"
+            )
         }
 
         queue = load_queue()
         queue.append(entry)
         save_queue(queue)
-        print(f"[Discord→Fenra] Queued message from {entry['sender']} at {entry['timestamp']}")
+        print(f"[Discord→Fenra] Queued message at {entry['timestamp']}")
+
 
 # ─── run ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
