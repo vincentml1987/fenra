@@ -330,11 +330,19 @@ def generate_with_watchdog(
                 check=False,
             )
             subprocess.run(
+                ["taskkill", "/IM", "ollama app.exe", "/F"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            subprocess.run(
                 ["ollama", "ps"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 check=False,
             )
+            
+            time.sleep(10)
         except Exception as cmd_exc:  # noqa: BLE001
             wd_logger.error(
                 "Failed running timeout cleanup commands: %s", cmd_exc
