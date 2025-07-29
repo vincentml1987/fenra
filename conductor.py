@@ -641,6 +641,14 @@ def main() -> None:
     model_ids = parse_model_ids(config_path)
     ensure_models_available(model_ids)
 
+    parser = configparser.ConfigParser()
+    with open(config_path, "r", encoding="utf-8") as f:
+        parser.read_file(f)
+
+    forgetfulness_weight = parser.getfloat("global", "forgetfulness", fallback=1.0)
+    talkativeness_weight = parser.getfloat("global", "talkativeness", fallback=1.0)
+    rumination_weight = parser.getfloat("global", "rumination", fallback=1.0)
+
     agents: List[Agent] = []
     archivists: List[Archivist] = []
     listeners: List[Listener] = []
@@ -685,6 +693,8 @@ def main() -> None:
         logger.debug("Entering conversation_loop")
         while True:
             with chat_lock:
+                message_queue[:] = load_message_queue()
+                ui.root.after(0, ui.update_queue, list(message_queue))
                 if inject_queue:
                     pending = list(inject_queue)
                     inject_queue.clear()
@@ -708,7 +718,7 @@ def main() -> None:
                     os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
-                print(text)
+                logger.debug(text.strip())
                 ui.root.after(0, ui.log, msg)
 
             if not (active_listeners and active_ruminators and active_speakers):
@@ -716,17 +726,30 @@ def main() -> None:
                 continue
 
             if queue_empty:
-                available: List[Tuple[str, Agent]] = []
-                for r in active_ruminators:
-                    available.append(("ruminator", r))
-                for a in active_archivists:
-                    available.append(("archivist", a))
-                for s in active_speakers:
-                    available.append(("speaker", s))
-                if not available:
+                choices: List[Tuple[str, float]] = []
+                if active_ruminators:
+                    choices.append(("ruminator", rumination_weight))
+                if active_archivists:
+                    choices.append(("archivist", forgetfulness_weight))
+                if active_speakers:
+                    choices.append(("speaker", talkativeness_weight))
+                total = sum(w for _, w in choices)
+                if total == 0 or not choices:
                     time.sleep(0.5)
                     continue
-                role, agent = random.choice(available)
+                r = random.random() * total
+                role = ""
+                for name, weight in choices:
+                    if r < weight:
+                        role = name
+                        break
+                    r -= weight
+                if role == "ruminator":
+                    agent = random.choice(active_ruminators)
+                elif role == "archivist":
+                    agent = random.choice(active_archivists)
+                else:
+                    agent = random.choice(active_speakers)
                 with chat_lock:
                     context = [
                         m
@@ -756,7 +779,7 @@ def main() -> None:
                         os.makedirs(os.path.dirname(fname), exist_ok=True)
                         with open(fname, "a", encoding="utf-8") as log_file:
                             log_file.write(text)
-                    print(text)
+                    logger.debug(text.strip())
                     ui.root.after(0, ui.log, entry)
                     time.sleep(0.5)
                     continue
@@ -775,7 +798,7 @@ def main() -> None:
                         text = (
                             f"[{ts_display}] {agent.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                         )
-                        print(text)
+                        logger.debug(text.strip())
                         ui.root.after(
                             0,
                             ui.log,
@@ -840,7 +863,7 @@ def main() -> None:
                         save_messages_to_humans(messages_to_humans)
                         append_human_log(entry)
                     text = f"[{timestamp}] {agent.name}: {s_reply}\n{'-' * 80}\n\n"
-                    print(text)
+                    logger.debug(text.strip())
                     for group in agent.groups:
                         fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                         os.makedirs(os.path.dirname(fname), exist_ok=True)
@@ -873,7 +896,7 @@ def main() -> None:
                 os.makedirs(os.path.dirname(fname), exist_ok=True)
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
-            print(text)
+            logger.debug(text.strip())
             ui.root.after(0, ui.log, human_entry)
 
             prev_groups = listener.groups
@@ -938,7 +961,7 @@ def main() -> None:
                 os.makedirs(os.path.dirname(fname), exist_ok=True)
                 with open(fname, "a", encoding="utf-8") as log_file:
                     log_file.write(text)
-            print(text)
+            logger.debug(text.strip())
             ui.root.after(0, ui.log, entry)
 
             for rum in selected_rums:
@@ -969,7 +992,7 @@ def main() -> None:
                     os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
-                print(text)
+                logger.debug(text.strip())
                 ui.root.after(0, ui.log, entry)
 
             if archivist_ai:
@@ -993,7 +1016,7 @@ def main() -> None:
                     text = (
                         f"[{ts_display}] {archivist_ai.name} archived transcript and wrote summary.\n{'-' * 80}\n\n"
                     )
-                    print(text)
+                    logger.debug(text.strip())
                     ui.root.after(
                         0,
                         ui.log,
@@ -1093,7 +1116,7 @@ def main() -> None:
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to post Speaker message to Discord: %s", exc)
             text = f"[{timestamp}] {speaker_ai.name}: {s_reply}\n{'-' * 80}\n\n"
-            print(text)
+            logger.debug(text.strip())
             for group in speaker_ai.groups:
                 fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                 os.makedirs(os.path.dirname(fname), exist_ok=True)
