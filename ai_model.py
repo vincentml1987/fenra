@@ -4,13 +4,13 @@ import re
 import requests
 from typing import List, Dict, Optional
 
-from tools import tool_schema, tool_descriptions, call_tool
+from tools import tool_schema, call_tool
 
 from runtime_utils import (
     create_object_logger,
     generate_with_watchdog,
     strip_think_markup,
-    tokenize_text,
+    WATCHDOG_TRACKER,
 )
 
 logger = logging.getLogger(__name__)
