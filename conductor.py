@@ -13,6 +13,8 @@ import math
 
 import logging
 import requests
+import subprocess
+from subprocess import Popen, TimeoutExpired
 
 from ai_model import Agent, Ruminator, Archivist, ToolAgent, Listener, Speaker
 from fenra_ui import FenraUI
@@ -32,6 +34,21 @@ logger = create_object_logger("Conductor")
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
+
+# Handle starting and restarting the Ollama server
+
+def start_ollama_server() -> Popen:
+    """Start the Ollama server as a background process."""
+    return Popen(
+        ["ollama", "serve", "--daemon"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+
+
+# Current running Ollama process
+server_proc: Popen | None = None
 
 # Discord integration (outbound only)
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -614,31 +631,39 @@ def post_to_discord(content: str) -> None:
         _post_to_discord_via_bot(content)
 
 
-def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
-    """Call an agent function, retrying indefinitely on timeout."""
-    base_timeout = agent.model.watchdog_timeout
-    timeout = base_timeout
-    while True:
-        agent.model.watchdog_timeout = timeout
+def restart_ollama_server() -> None:
+    """Restart the Ollama server process."""
+    global server_proc
+    if server_proc is not None:
         try:
-            return func()
-        except requests.Timeout:
-            logger.error("%s timed out", agent.name)
-            timeout *= 1.5
-        finally:
-            agent.model.watchdog_timeout = base_timeout
+            server_proc.kill()
+            server_proc.wait(timeout=10)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to kill Ollama server: %s", exc)
+    server_proc = start_ollama_server()
+    time.sleep(5)
+
+
+def step_with_retry(agent: Agent, func: Callable[[], str]) -> str:
+    """Call an agent function, retrying once after restarting Ollama on timeout."""
+    base_timeout = agent.model.watchdog_timeout
+    agent.model.watchdog_timeout = base_timeout
+    try:
+        return func()
+    except (requests.Timeout, TimeoutExpired):
+        logger.error("%s timed out; restarting Ollama server", agent.name)
+        restart_ollama_server()
+        agent.model.watchdog_timeout = base_timeout
+        return func()
+    finally:
+        agent.model.watchdog_timeout = base_timeout
 
 
 def main() -> None:
 
-    subprocess.run(
-        ["ollama", "ps"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    
-    time.sleep(10)
+    global server_proc
+    server_proc = start_ollama_server()
+    time.sleep(5)
     config_path = "fenra_config.txt"
     level = _parse_debug_level(config_path)
     init_global_logging(level)

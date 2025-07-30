@@ -319,34 +319,6 @@ def generate_with_watchdog(
         return str(text)
     except requests.Timeout as exc:
         wd_logger.error("Timeout exceeded")
-        # Increase the global timeout tracking if applicable
-        try:
-            import subprocess
-
-            subprocess.run(
-                ["taskkill", "/IM", "ollama.exe", "/F"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            subprocess.run(
-                ["taskkill", "/IM", "ollama app.exe", "/F"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            subprocess.run(
-                ["ollama", "ps"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            
-            time.sleep(10)
-        except Exception as cmd_exc:  # noqa: BLE001
-            wd_logger.error(
-                "Failed running timeout cleanup commands: %s", cmd_exc
-            )
         raise exc
     except Exception as exc:  # noqa: BLE001
         wd_logger.error("Exception during generation: %s", exc)
