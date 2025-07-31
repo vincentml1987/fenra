@@ -300,18 +300,36 @@ class Agent:
         role_prompt: str,
         config: Dict[str, Optional[str]],
         groups: Optional[List[str]] = None,
+        groups_in: Optional[List[str]] = None,
+        groups_out: Optional[List[str]] = None,
+        allow_self_consume: bool = False,
     ) -> None:
         logger.debug(
-            "Entering Agent.__init__ with name=%s model_name=%s role_prompt=%s groups=%s",
+            "Entering Agent.__init__ with name=%s model_name=%s role_prompt=%s groups=%s groups_in=%s groups_out=%s allow_self_consume=%s",
             name,
             model_name,
             role_prompt,
             groups,
+            groups_in,
+            groups_out,
+            allow_self_consume,
         )
         self.name = name
         self.model_name = model_name
         self.role_prompt = role_prompt
-        self.groups = groups or ["general"]
+        groups_in_set = set(groups_in or [])
+        groups_out_set = set(groups_out or [])
+        if groups:
+            g_set = set(groups)
+            groups_in_set |= g_set
+            groups_out_set |= g_set
+        if not groups_in_set and not groups_out_set:
+            groups_in_set.add("general")
+            groups_out_set.add("general")
+        self.groups_in = groups_in_set
+        self.groups_out = groups_out_set
+        self.groups = sorted(groups_in_set | groups_out_set)
+        self.allow_self_consume = allow_self_consume
         self.active = True
         self.logger = create_object_logger(self.__class__.__name__)
         self.logger.info("Initialized agent %s", self.name)
@@ -538,6 +556,22 @@ class Listener(Agent):
             system="",
         )
         logger.info("Listener.prompt_ais: got reply of length %d", len(reply))
+        return reply
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        """Generate a notice to other AIs about the most recent user message."""
+        self.logger.debug("Entering Listener.step with context=%s", context)
+        message = ""
+        for entry in reversed(context):
+            if entry.get("sender") in {"Human", "System"}:
+                message = entry.get("message", "")
+                break
+        lines = ["-----Message from User-----", message, "-----Your Instructions-----", self.PROMPT_INSTRUCTIONS]
+        prompt = "\n".join(lines)
+        self.logger.info("Listener.step: sending prompt to model")
+        reply = self.model.generate_from_prompt(prompt, system="")
+        self.logger.info("Listener.step: got reply of length %d", len(reply))
+        self.logger.debug("Exiting Listener.step")
         return reply
 
 
