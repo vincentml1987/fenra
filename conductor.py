@@ -707,11 +707,6 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         parser.read_file(f)
 
-    forgetfulness_weight = parser.getfloat("global", "forgetfulness", fallback=1.0)
-    talkativeness_weight = parser.getfloat("global", "talkativeness", fallback=1.0)
-    rumination_weight = parser.getfloat("global", "rumination", fallback=1.0)
-    attentiveness_weight = parser.getfloat("global", "attentiveness", fallback=1.0)
-
     agents: List[Agent] = []
     archivists: List[Archivist] = []
     listeners: List[Listener] = []
@@ -844,90 +839,87 @@ def main() -> None:
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             epoch += 1
-            entry = {
-                "sender": state_current.name,
-                "timestamp": timestamp,
-                "message": reply,
-                "groups": list(state_current.groups_out),
-                "epoch": epoch,
-            }
-            with chat_lock:
-                chat_log.append(entry)
-            text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
-            for group in state_current.groups_out or ["general"]:
-                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                os.makedirs(os.path.dirname(fname), exist_ok=True)
-                with open(fname, "a", encoding="utf-8") as log_file:
-                    log_file.write(text)
-            logger.debug(text.strip())
-            ui.root.after(0, ui.log, entry)
-            if isinstance(state_current, Speaker):
-                messages_to_humans.append(entry)
-                save_messages_to_humans(messages_to_humans)
-                append_human_log(entry)
-                try:
-                    discord_text = f"**{entry['sender']}** — {entry['timestamp']}\n{entry['message']}"
-                    post_to_discord(discord_text)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("Failed to post Speaker message to Discord: %s", exc)
-                ui.root.after(0, ui.update_sent, list(messages_to_humans))
+            groups_target = list(state_current.groups_out or state_current.groups_in or ["general"])
+            if isinstance(state_current, Archivist):
+                summary_dir = os.path.join("chatlogs", "summarized")
+                os.makedirs(summary_dir, exist_ok=True)
+                with chat_lock:
+                    chat_log[:] = [
+                        e
+                        for e in chat_log
+                        if not (set(e.get("groups", ["general"])) & set(groups_target))
+                    ]
+                for group in groups_target:
+                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    if os.path.exists(src):
+                        dest = os.path.join(
+                            summary_dir,
+                            f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
+                        )
+                        try:
+                            shutil.move(src, dest)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("Failed to move %s to %s: %s", src, dest, exc)
+                    text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
+                    with open(src, "w", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                    entry_group = {
+                        "sender": state_current.name,
+                        "timestamp": timestamp,
+                        "message": reply,
+                        "groups": [group],
+                        "epoch": epoch,
+                    }
+                    with chat_lock:
+                        chat_log.append(entry_group)
+                    ui.root.after(0, ui.log, entry_group)
+            else:
+                entry = {
+                    "sender": state_current.name,
+                    "timestamp": timestamp,
+                    "message": reply,
+                    "groups": groups_target,
+                    "epoch": epoch,
+                }
+                with chat_lock:
+                    chat_log.append(entry)
+                text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
+                for group in groups_target:
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
+                    with open(fname, "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                logger.debug(text.strip())
+                ui.root.after(0, ui.log, entry)
+                if isinstance(state_current, Speaker):
+                    messages_to_humans.append(entry)
+                    save_messages_to_humans(messages_to_humans)
+                    append_human_log(entry)
+                    try:
+                        discord_text = f"**{entry['sender']}** — {entry['timestamp']}\n{entry['message']}"
+                        post_to_discord(discord_text)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Failed to post Speaker message to Discord: %s", exc)
+                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
 
+            S = set(state_current.groups_out)
             candidates = [
                 b
                 for b in active_agents
-                if b is not state_current or state_current.allow_self_consume
+                if (b is not state_current or state_current.allow_self_consume)
+                and (b.groups_in & S)
             ]
-            candidates = [b for b in candidates if b.groups_in & state_current.groups_out]
+
+            if len(candidates) > 1:
+                candidates = [b for b in candidates if b is not state_current]
 
             if candidates:
-                role_buckets = {
-                    "speaker": [a for a in candidates if isinstance(a, Speaker)],
-                    "ruminator": [
-                        a
-                        for a in candidates
-                        if isinstance(a, Ruminator) or isinstance(a, ToolAgent)
-                    ],
-                    "archivist": [a for a in candidates if isinstance(a, Archivist)],
-                    "listener": [a for a in candidates if isinstance(a, Listener)],
-                }
-                available = {
-                    role: agents_list
-                    for role, agents_list in role_buckets.items()
-                    if agents_list
-                }
-                weights = {
-                    "speaker": talkativeness_weight,
-                    "ruminator": rumination_weight,
-                    "archivist": forgetfulness_weight,
-                    "listener": attentiveness_weight,
-                }
-
-                roles = list(available.keys())
-                if len(roles) > 1 and state_current in candidates:
-                    candidates = [c for c in candidates if c is not state_current]
-                    for role in roles:
-                        available[role] = [a for a in available[role] if a is not state_current] or available[role]
-
-                weight_values = [weights[r] for r in roles]
-                total = sum(weight_values)
-                if total <= 0:
-                    chosen_role = random.choice(roles)
-                else:
-                    rnd = random.random() * total
-                    for r, w in zip(roles, weight_values):
-                        if rnd < w:
-                            chosen_role = r
-                            break
-                        rnd -= w
-                    else:
-                        chosen_role = roles[-1]
-
-                state_current = random.choice(available[chosen_role])
+                state_current = random.choice(candidates)
             else:
-                pool = [b for b in active_agents if b is not state_current]
+                pool = [a for a in active_agents if a is not state_current]
                 if not pool:
                     pool = active_agents
                 state_current = random.choice(pool)
