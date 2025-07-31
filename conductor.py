@@ -710,6 +710,7 @@ def main() -> None:
     forgetfulness_weight = parser.getfloat("global", "forgetfulness", fallback=1.0)
     talkativeness_weight = parser.getfloat("global", "talkativeness", fallback=1.0)
     rumination_weight = parser.getfloat("global", "rumination", fallback=1.0)
+    attentiveness_weight = parser.getfloat("global", "attentiveness", fallback=1.0)
 
     agents: List[Agent] = []
     archivists: List[Archivist] = []
@@ -873,16 +874,58 @@ def main() -> None:
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
+
             candidates = [
                 b
                 for b in active_agents
                 if b is not state_current or state_current.allow_self_consume
             ]
             candidates = [b for b in candidates if b.groups_in & state_current.groups_out]
-            if len(candidates) > 1:
-                candidates = [b for b in candidates if b is not state_current]
+
             if candidates:
-                state_current = random.choice(candidates)
+                role_buckets = {
+                    "speaker": [a for a in candidates if isinstance(a, Speaker)],
+                    "ruminator": [
+                        a
+                        for a in candidates
+                        if isinstance(a, Ruminator) or isinstance(a, ToolAgent)
+                    ],
+                    "archivist": [a for a in candidates if isinstance(a, Archivist)],
+                    "listener": [a for a in candidates if isinstance(a, Listener)],
+                }
+                available = {
+                    role: agents_list
+                    for role, agents_list in role_buckets.items()
+                    if agents_list
+                }
+                weights = {
+                    "speaker": talkativeness_weight,
+                    "ruminator": rumination_weight,
+                    "archivist": forgetfulness_weight,
+                    "listener": attentiveness_weight,
+                }
+
+                roles = list(available.keys())
+                if len(roles) > 1 and state_current in candidates:
+                    candidates = [c for c in candidates if c is not state_current]
+                    for role in roles:
+                        available[role] = [a for a in available[role] if a is not state_current] or available[role]
+
+                weight_values = [weights[r] for r in roles]
+                total = sum(weight_values)
+                if total <= 0:
+                    chosen_role = random.choice(roles)
+                else:
+                    rnd = random.random() * total
+                    for r, w in zip(roles, weight_values):
+                        if rnd < w:
+                            chosen_role = r
+                            break
+                        rnd -= w
+                    else:
+                        chosen_role = roles[-1]
+
+                state_current = random.choice(available[chosen_role])
             else:
                 pool = [b for b in active_agents if b is not state_current]
                 if not pool:
