@@ -709,6 +709,7 @@ def main() -> None:
 
     talkativeness = parser.getfloat("global", "talkativeness", fallback=1.0)
     forgetfulness = parser.getfloat("global", "forgetfulness", fallback=1.0)
+    rumination = parser.getfloat("global", "rumination", fallback=1.0)
     attention = parser.getfloat("global", "attention", fallback=0.0)
     interest = parser.getfloat("global", "interest", fallback=0.0)
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
@@ -756,10 +757,11 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness
+        nonlocal talkativeness, forgetfulness, rumination
         logger.debug("Entering conversation_loop")
         state_current = random.choice(agents)
         epoch = 0
+        ui.root.after(0, ui.update_weights, talkativeness, rumination, forgetfulness)
         while True:
             with chat_lock:
                 message_queue[:] = load_message_queue()
@@ -915,6 +917,7 @@ def main() -> None:
                     talkativeness,
                     forgetfulness,
                 )
+                ui.root.after(0, ui.update_weights, talkativeness, rumination, forgetfulness)
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
