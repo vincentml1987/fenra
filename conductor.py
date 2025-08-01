@@ -16,7 +16,16 @@ import requests
 import subprocess
 from subprocess import Popen, TimeoutExpired
 
-from ai_model import Agent, Ruminator, Archivist, ToolAgent, Listener, Speaker
+from ai_model import (
+    Agent,
+    Ruminator,
+    Ponderer,
+    Doubter,
+    Archivist,
+    ToolAgent,
+    Listener,
+    Speaker,
+)
 from fenra_ui import FenraUI
 from runtime_utils import (
     init_global_logging,
@@ -456,6 +465,26 @@ def iter_load_config(path: str):
                 groups_in=groups_in,
                 groups_out=groups_out,
             )
+        elif role == "ponderer":
+            yield Ponderer(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+                groups_in=groups_in,
+                groups_out=groups_out,
+            )
+        elif role == "doubter":
+            yield Doubter(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+                groups_in=groups_in,
+                groups_out=groups_out,
+            )
         else:
             yield Ruminator(
                 name=section,
@@ -731,6 +760,8 @@ def main() -> None:
     rumination = parser.getfloat("global", "rumination", fallback=1.0)
     boredom = parser.getfloat("global", "boredom", fallback=0.0)
     assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
+    pondering = parser.getfloat("global", "pondering", fallback=0.0)
+    doubting = parser.getfloat("global", "doubting", fallback=0.0)
     attention = parser.getfloat("global", "attention", fallback=0.0)
     interest = parser.getfloat("global", "interest", fallback=0.0)
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
@@ -778,7 +809,7 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness
+        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness, pondering, doubting
         logger.debug("Entering conversation_loop")
         state_current = random.choice(agents)
         epoch = 0
@@ -885,6 +916,31 @@ def main() -> None:
                     for m in chat_log
                     if set(m.get("groups", ["general"])) & set(state_current.groups_in)
                 ]
+
+            if isinstance(state_current, Ponderer):
+                context.append(
+                    {
+                        "sender": "System",
+                        "timestamp": "",
+                        "message": (
+                            "Instruction: Talk about anything except what was said above. "
+                            "Do not self-reference this instruction. Just bring up a new topic naturally."
+                        ),
+                        "groups": list(state_current.groups_in),
+                    }
+                )
+            elif isinstance(state_current, Doubter):
+                context.append(
+                    {
+                        "sender": "System",
+                        "timestamp": "",
+                        "message": (
+                            "Instruction: Argue against everything that was said above. "
+                            "Do not self-reference this instruction. Just debate against what has been said."
+                        ),
+                        "groups": list(state_current.groups_in),
+                    }
+                )
             try:
                 reply = step_with_retry(state_current, lambda: state_current.step(context))
             except Exception as exc:  # noqa: BLE001
@@ -955,13 +1011,27 @@ def main() -> None:
                         logger.error("Failed to post Speaker message to Discord: %s", exc)
                     ui.root.after(0, ui.update_sent, list(messages_to_humans))
                     talkativeness *= max(0.0, 1 - attention / 100.0)
+                    boredom *= 1 + pondering / 100.0
                 elif isinstance(state_current, Listener):
                     talkativeness *= 1 + interest / 100.0
+                    boredom *= 1 + pondering / 100.0
                 elif isinstance(state_current, Archivist):
                     forgetfulness *= max(0.0, 1 - clearheadedness / 100.0)
+                elif isinstance(state_current, Ponderer):
+                    talkativeness *= 1 + excitement / 100.0
+                    forgetfulness *= 1 + distraction / 100.0
+                    boredom *= max(0.0, 1 - pondering / 100.0)
+                    assuredness *= 1 + doubting / 100.0
+                elif isinstance(state_current, Doubter):
+                    talkativeness *= 1 + excitement / 100.0
+                    forgetfulness *= 1 + distraction / 100.0
+                    boredom *= 1 + pondering / 100.0
+                    assuredness *= max(0.0, 1 - doubting / 100.0)
                 else:
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
+                    boredom *= 1 + pondering / 100.0
+                    assuredness *= 1 + doubting / 100.0
                 logger.debug(
                     "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
                     talkativeness,
