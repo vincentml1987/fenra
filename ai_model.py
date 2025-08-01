@@ -600,3 +600,33 @@ class Speaker(Agent):
         self.logger.debug("Exiting Speaker.step")
         return reply
 
+
+class Ponderer(Agent):
+    """Agent that speaks about anything except the given context."""
+
+    PROMPT_INSTRUCTIONS = "Talk about anything except the following:"
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        self.logger.debug("Entering Ponderer.step with context=%s", context)
+        transcript = "\n".join(e.get("message", "") for e in context)
+        prompt = f"{self.PROMPT_INSTRUCTIONS}\n{transcript}"
+        reply = self.model.generate_from_prompt(prompt, system="")
+        self.logger.info("Ponderer.step: generated reply of length %d", len(reply))
+        self.logger.debug("Exiting Ponderer.step")
+        return reply
+
+
+class Doubter(Agent):
+    """Agent that argues against points in the context."""
+
+    PROMPT_INSTRUCTIONS = "Argue against these points:"
+
+    def step(self, context: List[Dict[str, str]]) -> str:
+        self.logger.debug("Entering Doubter.step with context=%s", context)
+        transcript = "\n".join(e.get("message", "") for e in context)
+        prompt = f"{self.PROMPT_INSTRUCTIONS}\n{transcript}"
+        reply = self.model.generate_from_prompt(prompt, system="")
+        self.logger.info("Doubter.step: generated reply of length %d", len(reply))
+        self.logger.debug("Exiting Doubter.step")
+        return reply
+

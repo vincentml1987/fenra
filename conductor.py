@@ -16,7 +16,16 @@ import requests
 import subprocess
 from subprocess import Popen, TimeoutExpired
 
-from ai_model import Agent, Ruminator, Archivist, ToolAgent, Listener, Speaker
+from ai_model import (
+    Agent,
+    Ruminator,
+    Archivist,
+    ToolAgent,
+    Listener,
+    Speaker,
+    Ponderer,
+    Doubter,
+)
 from fenra_ui import FenraUI
 from runtime_utils import init_global_logging, parse_log_level, create_object_logger
 
@@ -451,6 +460,26 @@ def iter_load_config(path: str):
                 groups_in=groups_in,
                 groups_out=groups_out,
             )
+        elif role == "ponderer":
+            yield Ponderer(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+                groups_in=groups_in,
+                groups_out=groups_out,
+            )
+        elif role == "doubter":
+            yield Doubter(
+                name=section,
+                model_name=model_id,
+                role_prompt=role_prompt,
+                config=cfg,
+                groups=groups,
+                groups_in=groups_in,
+                groups_out=groups_out,
+            )
         else:
             yield Ruminator(
                 name=section,
@@ -735,12 +764,19 @@ def main() -> None:
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
     distraction = parser.getfloat("global", "distraction", fallback=0.0)
     clearheadedness = parser.getfloat("global", "clearheadedness", fallback=0.0)
+    pondering = parser.getfloat("global", "pondering", fallback=0.0)
+    doubting = parser.getfloat("global", "doubting", fallback=0.0)
+
+    boredom = 0.0
+    assuredness = 0.0
 
     agents: List[Agent] = []
     archivists: List[Archivist] = []
     listeners: List[Listener] = []
     speakers: List[Speaker] = []
     ruminators: List[Agent] = []
+    ponderers: List[Ponderer] = []
+    doubters: List[Doubter] = []
     all_groups: List[str] = []
 
     agent_lock = threading.Lock()
@@ -757,6 +793,10 @@ def main() -> None:
                     listeners.append(agent)
                 elif isinstance(agent, Speaker):
                     speakers.append(agent)
+                elif isinstance(agent, Ponderer):
+                    ponderers.append(agent)
+                elif isinstance(agent, Doubter):
+                    doubters.append(agent)
                 else:
                     ruminators.append(agent)
                 all_groups = sorted({g for a in agents for g in a.groups})
@@ -777,7 +817,7 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination
+        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness
         logger.debug("Entering conversation_loop")
         last_name = load_last_agent()
         with agent_lock:
@@ -792,6 +832,8 @@ def main() -> None:
             speaker_pool = [a for a in pool if isinstance(a, Speaker)]
             ruminator_pool = [a for a in pool if a in ruminators]
             archivist_pool = [a for a in pool if isinstance(a, Archivist)]
+            ponderer_pool = [a for a in pool if isinstance(a, Ponderer)]
+            doubter_pool = [a for a in pool if isinstance(a, Doubter)]
             options: List[List[Agent]] = []
             weights: List[float] = []
             if speaker_pool:
@@ -803,6 +845,12 @@ def main() -> None:
             if archivist_pool:
                 options.append(archivist_pool)
                 weights.append(forgetfulness)
+            if ponderer_pool:
+                options.append(ponderer_pool)
+                weights.append(pondering * boredom)
+            if doubter_pool:
+                options.append(doubter_pool)
+                weights.append(doubting * max(0.0, 100 - assuredness))
             if not options:
                 return random.choice(pool)
             idx = random.choices(range(len(options)), weights=weights, k=1)[0]
@@ -974,13 +1022,22 @@ def main() -> None:
                         logger.error("Failed to post Speaker message to Discord: %s", exc)
                     ui.root.after(0, ui.update_sent, list(messages_to_humans))
                     talkativeness *= max(0.0, 1 - attention / 100.0)
+                    boredom += 1
                 elif isinstance(state_current, Listener):
                     talkativeness *= 1 + interest / 100.0
+                    boredom += 1
                 elif isinstance(state_current, Archivist):
                     forgetfulness *= max(0.0, 1 - clearheadedness / 100.0)
+                elif isinstance(state_current, Ponderer):
+                    boredom = max(0.0, boredom - 1)
+                elif isinstance(state_current, Doubter):
+                    assuredness = max(0.0, assuredness - 1)
                 else:
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
+                    boredom += 1
+                    if isinstance(state_current, Ruminator):
+                        assuredness += 1
                 logger.debug(
                     "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
                     talkativeness,
