@@ -58,6 +58,12 @@ class FenraUI:
         )
         self.timeout_label = tk.Label(left, text=f"Base Timeout: {self.base_timeout}s")
         self.timeout_label.pack(anchor="w")
+        self.talk_label = tk.Label(left, text="Talkativeness: 0.00")
+        self.talk_label.pack(anchor="w")
+        self.rumination_label = tk.Label(left, text="Rumination: 0.00")
+        self.rumination_label.pack(anchor="w")
+        self.forget_label = tk.Label(left, text="Forgetfulness: 0.00")
+        self.forget_label.pack(anchor="w")
 
         right = tk.Frame(sys_tab)
         right.pack(side=tk.RIGHT, fill=tk.Y)
@@ -117,6 +123,7 @@ class FenraUI:
         self.sent_list.pack(fill=tk.BOTH, expand=True)
         self._refresh_chat_display()
         self._refresh_log_display()
+        self.update_weights(0.0, 0.0, 0.0)
         logger.debug("Exiting FenraUI.__init__")
 
     def _ensure_agent_in_tree(self, sender: str, groups) -> None:
@@ -244,6 +251,18 @@ class FenraUI:
             self.sent_list.insert(tk.END, text)
         self._refresh_chat_display()
         logger.debug("Exiting update_sent")
+
+    def update_weights(self, talkativeness: float, rumination: float, forgetfulness: float) -> None:
+        logger.debug(
+            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s",
+            talkativeness,
+            rumination,
+            forgetfulness,
+        )
+        self.talk_label.config(text=f"Talkativeness: {talkativeness:.2f}")
+        self.rumination_label.config(text=f"Rumination: {rumination:.2f}")
+        self.forget_label.config(text=f"Forgetfulness: {forgetfulness:.2f}")
+        logger.debug("Exiting update_weights")
 
     def _expand_all(self):
         logger.debug("Entering _expand_all")
