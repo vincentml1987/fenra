@@ -93,7 +93,6 @@ class FenraUI:
         self.notebook.add(json_tab, text="Sent JSONs")
         self.json_output = scrolledtext.ScrolledText(json_tab, state="disabled")
         self.json_output.pack(fill=tk.BOTH, expand=True)
-        self.json_payloads = []
         self._refresh_log_display()
         self.update_weights(0.0, 0.0, 0.0, 0.0, 0.0)
         logger.debug("Exiting FenraUI.__init__")
@@ -261,7 +260,6 @@ class FenraUI:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         text = json.dumps(payload, indent=2)
         entry = f"[{ts}]\n{text}\n{'='*73}\n"
-        self.json_payloads.append(entry)
         self.json_output.configure(state="normal")
         self.json_output.insert(tk.END, entry)
         self.json_output.yview(tk.END)
