@@ -443,6 +443,16 @@ class Ruminator(Agent):
         return reply
 
 
+class Ponderer(Ruminator):
+    """Ruminator that reduces boredom when active."""
+    pass
+
+
+class Doubter(Ruminator):
+    """Ruminator that decreases assuredness when active."""
+    pass
+
+
 class ToolAgent(Agent):
     """Agent capable of using tools via the Ollama API."""
 
