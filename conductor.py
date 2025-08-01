@@ -18,7 +18,12 @@ from subprocess import Popen, TimeoutExpired
 
 from ai_model import Agent, Ruminator, Archivist, ToolAgent, Listener, Speaker
 from fenra_ui import FenraUI
-from runtime_utils import init_global_logging, parse_log_level, create_object_logger
+from runtime_utils import (
+    init_global_logging,
+    parse_log_level,
+    create_object_logger,
+    add_json_watcher,
+)
 
 
 def _parse_debug_level(path: str) -> int:
@@ -710,6 +715,8 @@ def main() -> None:
     talkativeness = parser.getfloat("global", "talkativeness", fallback=1.0)
     forgetfulness = parser.getfloat("global", "forgetfulness", fallback=1.0)
     rumination = parser.getfloat("global", "rumination", fallback=1.0)
+    boredom = parser.getfloat("global", "boredom", fallback=0.0)
+    assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
     attention = parser.getfloat("global", "attention", fallback=0.0)
     interest = parser.getfloat("global", "interest", fallback=0.0)
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
@@ -757,11 +764,19 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination
+        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness
         logger.debug("Entering conversation_loop")
         state_current = random.choice(agents)
         epoch = 0
-        ui.root.after(0, ui.update_weights, talkativeness, rumination, forgetfulness)
+        ui.root.after(
+            0,
+            ui.update_weights,
+            talkativeness,
+            rumination,
+            forgetfulness,
+            boredom,
+            assuredness,
+        )
         while True:
             with chat_lock:
                 message_queue[:] = load_message_queue()
@@ -938,7 +953,15 @@ def main() -> None:
                     talkativeness,
                     forgetfulness,
                 )
-                ui.root.after(0, ui.update_weights, talkativeness, rumination, forgetfulness)
+                ui.root.after(
+                    0,
+                    ui.update_weights,
+                    talkativeness,
+                    rumination,
+                    forgetfulness,
+                    boredom,
+                    assuredness,
+                )
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
@@ -991,7 +1014,12 @@ def main() -> None:
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
-    ui = FenraUI(agents, inject_callback=None, send_callback=None)
+    ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
+
+    def _json_logger(payload: Dict) -> None:
+        ui.root.after(0, ui.log_json, payload)
+
+    add_json_watcher(_json_logger)
 
     def send_message(message: str) -> None:
         logger.debug("Entering send_message message=%s", message)

@@ -5,7 +5,7 @@ import threading
 import time
 from collections import deque
 
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Callable
 import ctypes
 
 import logging
@@ -18,6 +18,14 @@ GLOBAL_LOG_LEVEL = logging.INFO
 
 
 logger = logging.getLogger(__name__)
+
+# Registered callbacks to inspect JSON payloads sent to Ollama
+JSON_WATCHERS: List[Callable[[Dict], None]] = []
+
+
+def add_json_watcher(func: Callable[[Dict], None]) -> None:
+    """Register a callback for outgoing Ollama payloads."""
+    JSON_WATCHERS.append(func)
 
 
 def parse_log_level(level_name: str) -> int:
@@ -306,6 +314,11 @@ def generate_with_watchdog(
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
             wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        for func in JSON_WATCHERS:
+            try:
+                func(payload)
+            except Exception:  # noqa: BLE001
+                pass
         resp = requests.post(
             "http://localhost:11434/api/generate",
             json=payload,

@@ -2,6 +2,9 @@ import logging
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog
 from tkinter import ttk
+import configparser
+import json
+from datetime import datetime
 
 from ai_model import Ruminator, Archivist
 
@@ -11,7 +14,7 @@ logger = logging.getLogger(__name__)
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, inject_callback=None, send_callback=None):
+    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="fenra_config.txt"):
         logger.debug(
             "Entering FenraUI.__init__ with agents=%s inject_callback=%s send_callback=%s",
             agents,
@@ -27,27 +30,46 @@ class FenraUI:
         self.sent_messages = []
         self.log_messages = []
 
+        parser = configparser.ConfigParser()
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                parser.read_file(f)
+        except Exception:  # noqa: BLE001
+            parser.read(config_path)
+        self.global_config = dict(parser.items("global")) if parser.has_section("global") else {}
+
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # ----- Chat Window Tab -----
-        chat_tab = tk.Frame(self.notebook)
-        self.notebook.add(chat_tab, text="Chat Window")
+        # ----- Current Values Tab -----
+        values_tab = tk.Frame(self.notebook)
+        self.notebook.add(values_tab, text="Current Values")
 
-        self.chat_output = scrolledtext.ScrolledText(chat_tab, state="disabled", height=20)
-        self.chat_output.pack(fill=tk.BOTH, expand=True)
+        self.config_output = scrolledtext.ScrolledText(values_tab, state="disabled", height=12)
+        self.config_output.pack(fill=tk.BOTH, expand=True)
+        self.config_output.configure(state="normal")
+        self.config_output.insert(tk.END, "Global Configuration:\n")
+        for k, v in self.global_config.items():
+            self.config_output.insert(tk.END, f"{k} = {v}\n")
+        self.config_output.insert(tk.END, "\n")
+        self.config_output.configure(state="disabled")
 
-        msg_frame = tk.Frame(chat_tab)
-        msg_frame.pack(fill=tk.X)
-        tk.Label(msg_frame, text="Message:").pack(side=tk.LEFT, anchor="n")
-        self.message_box = scrolledtext.ScrolledText(msg_frame, height=4)
-        self.message_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.chat_send_btn = tk.Button(msg_frame, text="Send", command=self._send_from_box)
-        self.chat_send_btn.pack(side=tk.RIGHT)
+        values_frame = tk.Frame(values_tab)
+        values_frame.pack(fill=tk.X)
+        self.thought_label = tk.Label(values_frame, text="Thoughtfulness: 0.00")
+        self.thought_label.pack(anchor="w")
+        self.rumination_label = tk.Label(values_frame, text="Rumination: 0.00")
+        self.rumination_label.pack(anchor="w")
+        self.forget_label = tk.Label(values_frame, text="Forgetfulness: 0.00")
+        self.forget_label.pack(anchor="w")
+        self.boredom_label = tk.Label(values_frame, text="Boredom: 0.00")
+        self.boredom_label.pack(anchor="w")
+        self.assured_label = tk.Label(values_frame, text="Assuredness: 0.00")
+        self.assured_label.pack(anchor="w")
 
-        # ----- System Info Tab -----
+        # ----- Internal Thoughts Tab -----
         sys_tab = tk.Frame(self.notebook)
-        self.notebook.add(sys_tab, text="System Info")
+        self.notebook.add(sys_tab, text="Internal Thoughts")
 
         left = tk.Frame(sys_tab)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -58,90 +80,24 @@ class FenraUI:
         )
         self.timeout_label = tk.Label(left, text=f"Base Timeout: {self.base_timeout}s")
         self.timeout_label.pack(anchor="w")
-        self.talk_label = tk.Label(left, text="Talkativeness: 0.00")
-        self.talk_label.pack(anchor="w")
-        self.rumination_label = tk.Label(left, text="Rumination: 0.00")
-        self.rumination_label.pack(anchor="w")
-        self.forget_label = tk.Label(left, text="Forgetfulness: 0.00")
-        self.forget_label.pack(anchor="w")
-
-        right = tk.Frame(sys_tab)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
-
         # ----- Console Tab -----
         console_tab = tk.Frame(self.notebook)
         self.notebook.add(console_tab, text="Console")
-        self.console_output = scrolledtext.ScrolledText(console_tab, state="disabled", bg="black", fg="white")
+        self.console_output = scrolledtext.ScrolledText(
+            console_tab, state="disabled", bg="black", fg="white"
+        )
         self.console_output.pack(fill=tk.BOTH, expand=True)
 
-        self.tree = ttk.Treeview(right, show="tree")
-        self.tree.pack(fill=tk.BOTH, expand=True)
-        self.tree.bind(
-            "<<TreeviewSelect>>",
-            lambda e: (self._refresh_chat_display(), self._refresh_log_display()),
-        )
-
-        self.group_names = []
-
-        group_map = {}
-        for a in agents:
-            for g in a.groups:
-                group_map.setdefault(g, []).append(a.name)
-        self.group_map = {g: list(names) for g, names in group_map.items()}
-        self.group_nodes = {}
-
-        self.all_groups_item = self.tree.insert("", tk.END, text="All Groups", open=False)
-        self.group_names.append("All Groups")
-
-        for group in sorted(group_map):
-            parent = self.tree.insert("", tk.END, text=group, open=False)
-            self.group_nodes[group] = parent
-            for name in sorted(group_map[group]):
-                self.tree.insert(parent, tk.END, text=name)
-            self.group_names.append(group)
-        self.group_items = list(self.tree.get_children())
-
-        btn_frame = tk.Frame(right)
-        btn_frame.pack(fill=tk.X)
-        self.expand_btn = tk.Button(btn_frame, text="Expand All", command=self._expand_all)
-        self.expand_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.collapse_btn = tk.Button(btn_frame, text="Collapse All", command=self._collapse_all)
-        self.collapse_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.inject_button = tk.Button(right, text="Inject Message", command=self._inject_message)
-        self.inject_button.pack(fill=tk.X)
-
-        self.send_button = tk.Button(right, text="Send message", command=self._send_message)
-        self.send_button.pack(fill=tk.X)
-
-        tk.Label(right, text="Queued Messages:").pack(fill=tk.X)
-        self.queue_list = tk.Listbox(right, height=8)
-        self.queue_list.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(right, text="Sent to Humans:").pack(fill=tk.X)
-        self.sent_list = tk.Listbox(right, height=8)
-        self.sent_list.pack(fill=tk.BOTH, expand=True)
-        self._refresh_chat_display()
+        # ----- Sent JSONs Tab -----
+        json_tab = tk.Frame(self.notebook)
+        self.notebook.add(json_tab, text="Sent JSONs")
+        self.json_output = scrolledtext.ScrolledText(json_tab, state="disabled")
+        self.json_output.pack(fill=tk.BOTH, expand=True)
+        self.json_payloads = []
         self._refresh_log_display()
-        self.update_weights(0.0, 0.0, 0.0)
+        self.update_weights(0.0, 0.0, 0.0, 0.0, 0.0)
         logger.debug("Exiting FenraUI.__init__")
 
-    def _ensure_agent_in_tree(self, sender: str, groups) -> None:
-        """Add missing groups or agents to the tree view."""
-        if not sender:
-            return
-        for group in groups or ["general"]:
-            if group not in self.group_nodes:
-                parent = self.tree.insert("", tk.END, text=group, open=False)
-                self.group_nodes[group] = parent
-                self.group_map[group] = []
-                self.group_names.append(group)
-                self.group_items.append(parent)
-            else:
-                parent = self.group_nodes[group]
-            if sender not in self.group_map[group]:
-                self.tree.insert(parent, tk.END, text=sender)
-                self.group_map[group].append(sender)
 
     class _InjectDialog(simpledialog.Dialog):
         """Dialog for entering a message to inject."""
@@ -211,12 +167,7 @@ class FenraUI:
         if not self.inject_callback:
             logger.debug("Exiting _inject_message: no callback")
             return
-        selected = self.tree.focus() or self.all_groups_item
-        group_item = selected
-        parent = self.tree.parent(selected)
-        if parent:
-            group_item = parent
-        group_name = self.tree.item(group_item, "text") or "All Groups"
+        group_name = "All Groups"
         dialog = self._InjectDialog(self.root, group_name)
         result = dialog.result
         if result:
@@ -236,89 +187,54 @@ class FenraUI:
 
     def update_queue(self, messages):
         logger.debug("Entering update_queue messages=%s", messages)
-        self.queue_list.delete(0, tk.END)
-        for m in messages:
-            text = f"[{m['timestamp']}] {m['message']}"
-            self.queue_list.insert(tk.END, text)
+        # Queue display was removed; store for potential future use
         logger.debug("Exiting update_queue")
 
     def update_sent(self, messages):
         logger.debug("Entering update_sent messages=%s", messages)
         self.sent_messages = list(messages)
-        self.sent_list.delete(0, tk.END)
-        for m in messages:
-            text = f"[{m['timestamp']}] {m['sender']}: {m['message']}"
-            self.sent_list.insert(tk.END, text)
-        self._refresh_chat_display()
         logger.debug("Exiting update_sent")
 
-    def update_weights(self, talkativeness: float, rumination: float, forgetfulness: float) -> None:
+    def update_weights(
+        self,
+        thoughtfulness: float,
+        rumination: float,
+        forgetfulness: float,
+        boredom: float = 0.0,
+        assuredness: float = 0.0,
+    ) -> None:
         logger.debug(
-            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s",
-            talkativeness,
+            "Entering update_weights thoughtfulness=%s rumination=%s forgetfulness=%s boredom=%s assuredness=%s",
+            thoughtfulness,
             rumination,
             forgetfulness,
+            boredom,
+            assuredness,
         )
-        self.talk_label.config(text=f"Talkativeness: {talkativeness:.2f}")
+        self.thought_label.config(text=f"Thoughtfulness: {thoughtfulness:.2f}")
         self.rumination_label.config(text=f"Rumination: {rumination:.2f}")
         self.forget_label.config(text=f"Forgetfulness: {forgetfulness:.2f}")
+        self.boredom_label.config(text=f"Boredom: {boredom:.2f}")
+        self.assured_label.config(text=f"Assuredness: {assuredness:.2f}")
         logger.debug("Exiting update_weights")
 
     def _expand_all(self):
-        logger.debug("Entering _expand_all")
-        for item in self.group_items:
-            self.tree.item(item, open=True)
-        logger.debug("Exiting _expand_all")
+        logger.debug("_expand_all called but tree view removed")
 
     def _collapse_all(self):
-        logger.debug("Entering _collapse_all")
-        for item in self.group_items:
-            self.tree.item(item, open=False)
-        logger.debug("Exiting _collapse_all")
+        logger.debug("_collapse_all called but tree view removed")
 
     def _send_from_box(self):
-        logger.debug("Entering _send_from_box")
-        if not self.send_callback:
-            logger.debug("Exiting _send_from_box: no callback")
-            return
-        message = self.message_box.get("1.0", tk.END).rstrip()
-        if message:
-            self.send_callback(message)
-            self.message_box.delete("1.0", tk.END)
-        logger.debug("Exiting _send_from_box")
+        logger.debug("_send_from_box called but message box removed")
 
     def _refresh_chat_display(self):
-        logger.debug("Entering _refresh_chat_display")
-        self.chat_output.configure(state="normal")
-        self.chat_output.delete("1.0", tk.END)
-        for m in self.sent_messages:
-            text = f"[{m['timestamp']}] {m['sender']}: {m['message']}\n{'-'*80}\n\n"
-            self.chat_output.insert(tk.END, text)
-        self.chat_output.yview(tk.END)
-        self.chat_output.configure(state="disabled")
-        logger.debug("Exiting _refresh_chat_display")
+        logger.debug("_refresh_chat_display called but chat display removed")
 
     def _refresh_log_display(self):
         logger.debug("Entering _refresh_log_display")
-        selected = self.tree.focus() or self.all_groups_item
-        group_filter = None
-        sender_filter = None
-        parent = self.tree.parent(selected)
-        if parent:
-            sender_filter = self.tree.item(selected, "text")
-        else:
-            name = self.tree.item(selected, "text")
-            if name != "All Groups":
-                group_filter = name
-
         self.output.configure(state="normal")
         self.output.delete("1.0", tk.END)
         for m in self.log_messages:
-            if sender_filter and m.get("sender") != sender_filter:
-                continue
-            groups = m.get("groups", ["general"])
-            if group_filter and group_filter not in groups:
-                continue
             text = f"[{m['timestamp']}] {m['sender']}: {m['message']}\n{'-'*80}\n\n"
             self.output.insert(tk.END, text)
         self.output.yview(tk.END)
@@ -329,7 +245,6 @@ class FenraUI:
     def log(self, entry):
         logger.debug("Entering log entry=%s", entry)
         self.log_messages.append(entry)
-        self._ensure_agent_in_tree(entry.get("sender"), entry.get("groups"))
         text = (
             f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
             f"{'-' * 80}\n\n"
@@ -340,6 +255,18 @@ class FenraUI:
         self.console_output.configure(state="disabled")
         self._refresh_log_display()
         logger.debug("Exiting log")
+
+    def log_json(self, payload: dict) -> None:
+        logger.debug("Entering log_json payload=%s", payload)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        text = json.dumps(payload, indent=2)
+        entry = f"[{ts}]\n{text}\n{'='*73}\n"
+        self.json_payloads.append(entry)
+        self.json_output.configure(state="normal")
+        self.json_output.insert(tk.END, entry)
+        self.json_output.yview(tk.END)
+        self.json_output.configure(state="disabled")
+        logger.debug("Exiting log_json")
 
     def start(self):
         logger.debug("Entering start")
