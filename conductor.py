@@ -896,6 +896,14 @@ def main() -> None:
                         messages_to_humans.append(entry)
                         save_messages_to_humans(messages_to_humans)
                         append_human_log(entry)
+                        try:
+                            discord_text = (
+                                f"**{entry['sender']}** — {entry['timestamp']}\n"
+                                f"[Internal Reflection]\n{entry['message']}"
+                            )
+                            post_to_discord(discord_text)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("Failed to post Speaker message to Discord: %s", exc)
                     text = f"[{timestamp}] {agent.name}: {s_reply}\n{'-' * 80}\n\n"
                     logger.debug(text.strip())
                     for group in agent.groups:
