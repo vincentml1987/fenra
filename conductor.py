@@ -708,6 +708,20 @@ def main() -> None:
     model_ids = parse_model_ids(config_path)
     ensure_models_available(model_ids)
 
+    if level <= logging.INFO:
+        payload_logger = logging.getLogger("payloads")
+        payload_logger.setLevel(logging.INFO)
+        payload_logger.propagate = False
+        handler = logging.FileHandler(os.path.join("logs", "payloads.log"), mode="a", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        payload_logger.handlers.clear()
+        payload_logger.addHandler(handler)
+
+        def _file_json_logger(payload: Dict) -> None:
+            payload_logger.info(json.dumps(payload, indent=2))
+
+        add_json_watcher(_file_json_logger)
+
     parser = configparser.ConfigParser()
     with open(config_path, "r", encoding="utf-8") as f:
         parser.read_file(f)
@@ -1015,11 +1029,6 @@ def main() -> None:
         logger.debug("Exiting conversation_loop")
 
     ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
-
-    def _json_logger(payload: Dict) -> None:
-        ui.root.after(0, ui.log_json, payload)
-
-    add_json_watcher(_json_logger)
 
     def send_message(message: str) -> None:
         logger.debug("Entering send_message message=%s", message)

@@ -3,10 +3,6 @@ import tkinter as tk
 from tkinter import scrolledtext, simpledialog
 from tkinter import ttk
 import configparser
-import json
-from datetime import datetime
-
-from ai_model import Ruminator, Archivist
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +77,6 @@ class FenraUI:
         self.timeout_label = tk.Label(left, text=f"Base Timeout: {self.base_timeout}s")
         self.timeout_label.pack(anchor="w")
 
-        # ----- Sent JSONs Tab -----
-        json_tab = tk.Frame(self.notebook)
-        self.notebook.add(json_tab, text="Sent JSONs")
-        self.json_output = scrolledtext.ScrolledText(json_tab, state="disabled")
-        self.json_output.pack(fill=tk.BOTH, expand=True)
         self._refresh_log_display()
         self.update_weights(0.0, 0.0, 0.0, 0.0, 0.0)
         logger.debug("Exiting FenraUI.__init__")
@@ -240,16 +231,6 @@ class FenraUI:
         self._refresh_log_display()
         logger.debug("Exiting log")
 
-    def log_json(self, payload: dict) -> None:
-        logger.debug("Entering log_json payload=%s", payload)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        text = json.dumps(payload, indent=2)
-        entry = f"[{ts}]\n{text}\n{'='*73}\n"
-        self.json_output.configure(state="normal")
-        self.json_output.insert(tk.END, entry)
-        self.json_output.yview(tk.END)
-        self.json_output.configure(state="disabled")
-        logger.debug("Exiting log_json")
 
     def start(self):
         logger.debug("Entering start")
