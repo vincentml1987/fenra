@@ -599,6 +599,26 @@ def append_human_log(entry: Dict[str, object]) -> None:
         logger.error("Failed to write human log: %s", exc)
 
 
+def load_last_agent(path: str = "last_agent") -> str | None:
+    """Return the name of the most recently used agent if recorded."""
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip() or None
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to read last agent file: %s", exc)
+    return None
+
+
+def save_last_agent(name: str, path: str = "last_agent") -> None:
+    """Persist the name of the most recently used agent."""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(name)
+    except OSError as exc:
+        logger.error("Failed to write last agent file: %s", exc)
+
+
 def _discord_chunks(text: str, limit: int = 1900):
     """Yield message chunks within Discord's ~2000 char cap."""
     text = text or ""
@@ -759,8 +779,34 @@ def main() -> None:
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination
         logger.debug("Entering conversation_loop")
-        state_current = random.choice(agents)
+        last_name = load_last_agent()
+        with agent_lock:
+            state_current = next(
+                (a for a in agents if a.name == last_name and a.active),
+                None,
+            )
+        if state_current is None:
+            state_current = random.choice(agents)
         epoch = 0
+        def weighted_choice(pool: List[Agent]) -> Agent:
+            speaker_pool = [a for a in pool if isinstance(a, Speaker)]
+            ruminator_pool = [a for a in pool if a in ruminators]
+            archivist_pool = [a for a in pool if isinstance(a, Archivist)]
+            options: List[List[Agent]] = []
+            weights: List[float] = []
+            if speaker_pool:
+                options.append(speaker_pool)
+                weights.append(talkativeness)
+            if ruminator_pool:
+                options.append(ruminator_pool)
+                weights.append(rumination)
+            if archivist_pool:
+                options.append(archivist_pool)
+                weights.append(forgetfulness)
+            if not options:
+                return random.choice(pool)
+            idx = random.choices(range(len(options)), weights=weights, k=1)[0]
+            return random.choice(options[idx])
         ui.root.after(0, ui.update_weights, talkativeness, rumination, forgetfulness)
         while True:
             with chat_lock:
@@ -849,6 +895,8 @@ def main() -> None:
                         log_file.write(text)
                 logger.debug(text.strip())
                 ui.root.after(0, ui.log, human_entry)
+
+            save_last_agent(state_current.name)
 
             with chat_lock:
                 context = [
@@ -983,10 +1031,10 @@ def main() -> None:
                     candidates = [b for b in candidates if b is not state_current]
 
                 if candidates:
-                    state_current = random.choice(candidates)
+                    state_current = weighted_choice(candidates)
                 else:
                     pool = [a for a in active_agents if a is not state_current] or active_agents
-                    state_current = random.choice(pool)
+                    state_current = weighted_choice(pool)
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
