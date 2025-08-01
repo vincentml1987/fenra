@@ -52,7 +52,7 @@ class FenraUI:
 
         values_frame = tk.Frame(values_tab)
         values_frame.pack(fill=tk.X)
-        self.thought_label = tk.Label(values_frame, text="Thoughtfulness: 0.00")
+        self.thought_label = tk.Label(values_frame, text="Talkativeness: 0.00")
         self.thought_label.pack(anchor="w")
         self.rumination_label = tk.Label(values_frame, text="Rumination: 0.00")
         self.rumination_label.pack(anchor="w")
@@ -180,21 +180,21 @@ class FenraUI:
 
     def update_weights(
         self,
-        thoughtfulness: float,
+        talkativeness: float,
         rumination: float,
         forgetfulness: float,
         boredom: float = 0.0,
         assuredness: float = 0.0,
     ) -> None:
         logger.debug(
-            "Entering update_weights thoughtfulness=%s rumination=%s forgetfulness=%s boredom=%s assuredness=%s",
-            thoughtfulness,
+            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s boredom=%s assuredness=%s",
+            talkativeness,
             rumination,
             forgetfulness,
             boredom,
             assuredness,
         )
-        self.thought_label.config(text=f"Thoughtfulness: {thoughtfulness:.2f}")
+        self.thought_label.config(text=f"Talkativeness: {talkativeness:.2f}")
         self.rumination_label.config(text=f"Rumination: {rumination:.2f}")
         self.forget_label.config(text=f"Forgetfulness: {forgetfulness:.2f}")
         self.boredom_label.config(text=f"Boredom: {boredom:.2f}")

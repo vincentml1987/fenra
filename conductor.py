@@ -1090,7 +1090,40 @@ def main() -> None:
                     candidates = [b for b in candidates if b is not state_current]
 
                 if candidates:
-                    state_current = random.choice(candidates)
+                    speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
+                    ruminator_candidates = [
+                        c
+                        for c in candidates
+                        if isinstance(c, Ruminator)
+                        and not isinstance(c, (Ponderer, Doubter))
+                    ]
+                    archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
+                    ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
+                    doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
+
+                    pools = []
+                    weights = []
+                    if speaker_candidates:
+                        pools.append(speaker_candidates)
+                        weights.append(talkativeness)
+                    if ruminator_candidates:
+                        pools.append(ruminator_candidates)
+                        weights.append(rumination)
+                    if archivist_candidates:
+                        pools.append(archivist_candidates)
+                        weights.append(forgetfulness)
+                    if ponderer_candidates:
+                        pools.append(ponderer_candidates)
+                        weights.append(boredom)
+                    if doubter_candidates:
+                        pools.append(doubter_candidates)
+                        weights.append(assuredness)
+
+                    if pools:
+                        selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                        state_current = random.choice(selected_pool)
+                    else:
+                        state_current = random.choice(candidates)
                 else:
                     pool = [a for a in active_agents if a is not state_current] or active_agents
                     state_current = random.choice(pool)
