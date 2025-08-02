@@ -34,6 +34,13 @@ class FenraUI:
             parser.read(config_path)
         self.global_config = dict(parser.items("global")) if parser.has_section("global") else {}
 
+        # Extract initial weights so the UI reflects configured values immediately
+        tv = float(self.global_config.get("talkativeness", 0.0))
+        rum = float(self.global_config.get("rumination", 0.0))
+        fg = float(self.global_config.get("forgetfulness", 0.0))
+        bd = float(self.global_config.get("boredom", 0.0))
+        ct = float(self.global_config.get("certainty", 0.0))
+
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
@@ -78,7 +85,7 @@ class FenraUI:
         self.timeout_label.pack(anchor="w")
 
         self._refresh_log_display()
-        self.update_weights(0.0, 0.0, 0.0, 0.0, 0.0)
+        self.update_weights(tv, rum, fg, bd, ct)
         logger.debug("Exiting FenraUI.__init__")
 
 
