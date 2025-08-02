@@ -755,12 +755,12 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         parser.read_file(f)
 
-    talkativeness = parser.getfloat("global", "talkativeness", fallback=1.0)
-    forgetfulness = parser.getfloat("global", "forgetfulness", fallback=1.0)
-    rumination = parser.getfloat("global", "rumination", fallback=1.0)
-    boredom = parser.getfloat("global", "boredom", fallback=0.0)
-    assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
-    certainty = parser.getfloat("global", "certainty", fallback=0.0)
+    talkativeness: float = parser.getfloat("global", "talkativeness", fallback=1.0)
+    forgetfulness: float = parser.getfloat("global", "forgetfulness", fallback=1.0)
+    rumination: float = parser.getfloat("global", "rumination", fallback=1.0)
+    boredom: float = parser.getfloat("global", "boredom", fallback=0.0)
+    assuredness: float = parser.getfloat("global", "assuredness", fallback=0.0)
+    certainty: float = parser.getfloat("global", "certainty", fallback=0.0)
     restlessness = parser.getfloat("global", "restlessness", fallback=0.0)
     doubting = parser.getfloat("global", "doubting", fallback=0.0)
     attentiveness = parser.getfloat("global", "attentiveness", fallback=0.0)
