@@ -761,13 +761,16 @@ def main() -> None:
     boredom = parser.getfloat("global", "boredom", fallback=0.0)
     assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
     certainty = parser.getfloat("global", "certainty", fallback=0.0)
-    pondering = parser.getfloat("global", "pondering", fallback=0.0)
+    restlessness = parser.getfloat("global", "restlessness", fallback=0.0)
     doubting = parser.getfloat("global", "doubting", fallback=0.0)
-    attention = parser.getfloat("global", "attention", fallback=0.0)
-    interest = parser.getfloat("global", "interest", fallback=0.0)
+    attentiveness = parser.getfloat("global", "attentiveness", fallback=0.0)
+    stimulation = parser.getfloat("global", "stimulation", fallback=0.0)
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
     distraction = parser.getfloat("global", "distraction", fallback=0.0)
-    clearheadedness = parser.getfloat("global", "clearheadedness", fallback=0.0)
+    focus = parser.getfloat("global", "focus", fallback=0.0)
+    extroversion = parser.getfloat("global", "extroversion", fallback=0.0)
+    fixation = parser.getfloat("global", "fixation", fallback=0.0)
+    uncertainty = parser.getfloat("global", "uncertainty", fallback=0.0)
 
     agents: List[Agent] = []
     archivists: List[Archivist] = []
@@ -810,7 +813,7 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness, certainty, pondering, doubting
+        nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
         state_current = random.choice(agents)
         epoch = 0
@@ -1011,29 +1014,26 @@ def main() -> None:
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Failed to post Speaker message to Discord: %s", exc)
                     ui.root.after(0, ui.update_sent, list(messages_to_humans))
-                    talkativeness *= max(0.0, 1 - attention / 100.0)
-                    boredom *= 1 + pondering / 100.0
+                    talkativeness *= max(0.0, 1 - attentiveness / 100.0)
+                    forgetfulness *= 1 + distraction / 100.0
+                    boredom *= max(0.0, 1 - extroversion / 100.0)
                 elif isinstance(state_current, Listener):
-                    talkativeness *= 1 + interest / 100.0
-                    boredom *= max(0.0, 1 - interest / 100.0)
-                    certainty *= max(0.0, 1 - assuredness / 100.0)
+                    talkativeness *= 1 + stimulation / 100.0
+                    forgetfulness *= 1 + distraction / 100.0
+                    boredom *= max(0.0, 1 - extroversion / 100.0)
                 elif isinstance(state_current, Archivist):
-                    forgetfulness *= max(0.0, 1 - clearheadedness / 100.0)
-                elif isinstance(state_current, Ponderer):
-                    talkativeness *= 1 + excitement / 100.0
-                    forgetfulness *= 1 + distraction / 100.0
-                    boredom *= max(0.0, 1 - interest / 100.0)
+                    forgetfulness *= max(0.0, 1 - focus / 100.0)
                     certainty *= 1 + doubting / 100.0
-                elif isinstance(state_current, Doubter):
-                    talkativeness *= 1 + excitement / 100.0
+                elif isinstance(state_current, Ponderer):
                     forgetfulness *= 1 + distraction / 100.0
-                    boredom *= 1 + pondering / 100.0
-                    certainty *= max(0.0, 1 - assuredness / 100.0)
+                    boredom *= max(0.0, 1 - fixation / 100.0)
+                elif isinstance(state_current, Doubter):
+                    forgetfulness *= 1 + distraction / 100.0
+                    certainty *= max(0.0, 1 - uncertainty / 100.0)
                 else:
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
-                    boredom *= 1 + pondering / 100.0
-                    certainty *= 1 + doubting / 100.0
+                    boredom *= 1 + restlessness / 100.0
                 logger.debug(
                     "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
                     talkativeness,
