@@ -760,6 +760,7 @@ def main() -> None:
     rumination = parser.getfloat("global", "rumination", fallback=1.0)
     boredom = parser.getfloat("global", "boredom", fallback=0.0)
     assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
+    certainty = parser.getfloat("global", "certainty", fallback=0.0)
     pondering = parser.getfloat("global", "pondering", fallback=0.0)
     doubting = parser.getfloat("global", "doubting", fallback=0.0)
     attention = parser.getfloat("global", "attention", fallback=0.0)
@@ -809,7 +810,7 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness, pondering, doubting
+        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness, certainty, pondering, doubting
         logger.debug("Entering conversation_loop")
         state_current = random.choice(agents)
         epoch = 0
@@ -820,7 +821,7 @@ def main() -> None:
             rumination,
             forgetfulness,
             boredom,
-            assuredness,
+            certainty,
         )
         while True:
             with chat_lock:
@@ -1014,24 +1015,25 @@ def main() -> None:
                     boredom *= 1 + pondering / 100.0
                 elif isinstance(state_current, Listener):
                     talkativeness *= 1 + interest / 100.0
-                    boredom *= 1 + pondering / 100.0
+                    boredom *= max(0.0, 1 - interest / 100.0)
+                    certainty *= max(0.0, 1 - assuredness / 100.0)
                 elif isinstance(state_current, Archivist):
                     forgetfulness *= max(0.0, 1 - clearheadedness / 100.0)
                 elif isinstance(state_current, Ponderer):
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
-                    boredom *= max(0.0, 1 - pondering / 100.0)
-                    assuredness *= 1 + doubting / 100.0
+                    boredom *= max(0.0, 1 - interest / 100.0)
+                    certainty *= 1 + doubting / 100.0
                 elif isinstance(state_current, Doubter):
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
                     boredom *= 1 + pondering / 100.0
-                    assuredness *= max(0.0, 1 - doubting / 100.0)
+                    certainty *= max(0.0, 1 - assuredness / 100.0)
                 else:
                     talkativeness *= 1 + excitement / 100.0
                     forgetfulness *= 1 + distraction / 100.0
                     boredom *= 1 + pondering / 100.0
-                    assuredness *= 1 + doubting / 100.0
+                    certainty *= 1 + doubting / 100.0
                 logger.debug(
                     "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
                     talkativeness,
@@ -1044,7 +1046,7 @@ def main() -> None:
                     rumination,
                     forgetfulness,
                     boredom,
-                    assuredness,
+                    certainty,
                 )
 
             with agent_lock:
@@ -1117,7 +1119,7 @@ def main() -> None:
                         weights.append(boredom)
                     if doubter_candidates:
                         pools.append(doubter_candidates)
-                        weights.append(assuredness)
+                        weights.append(certainty)
 
                     if pools:
                         selected_pool = random.choices(pools, weights=weights, k=1)[0]

@@ -60,8 +60,8 @@ class FenraUI:
         self.forget_label.pack(anchor="w")
         self.boredom_label = tk.Label(values_frame, text="Boredom: 0.00")
         self.boredom_label.pack(anchor="w")
-        self.assured_label = tk.Label(values_frame, text="Assuredness: 0.00")
-        self.assured_label.pack(anchor="w")
+        self.certainty_label = tk.Label(values_frame, text="Certainty: 0.00")
+        self.certainty_label.pack(anchor="w")
 
         # ----- Internal Thoughts Tab -----
         sys_tab = tk.Frame(self.notebook)
@@ -184,21 +184,21 @@ class FenraUI:
         rumination: float,
         forgetfulness: float,
         boredom: float = 0.0,
-        assuredness: float = 0.0,
+        certainty: float = 0.0,
     ) -> None:
         logger.debug(
-            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s boredom=%s assuredness=%s",
+            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s boredom=%s certainty=%s",
             talkativeness,
             rumination,
             forgetfulness,
             boredom,
-            assuredness,
+            certainty,
         )
         self.thought_label.config(text=f"Talkativeness: {talkativeness:.2f}")
         self.rumination_label.config(text=f"Rumination: {rumination:.2f}")
         self.forget_label.config(text=f"Forgetfulness: {forgetfulness:.2f}")
         self.boredom_label.config(text=f"Boredom: {boredom:.2f}")
-        self.assured_label.config(text=f"Assuredness: {assuredness:.2f}")
+        self.certainty_label.config(text=f"Certainty: {certainty:.2f}")
         logger.debug("Exiting update_weights")
 
     def _expand_all(self):

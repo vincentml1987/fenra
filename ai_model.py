@@ -449,7 +449,7 @@ class Ponderer(Ruminator):
 
 
 class Doubter(Ruminator):
-    """Ruminator that decreases assuredness when active."""
+    """Ruminator that decreases certainty when active."""
     pass
 
 
