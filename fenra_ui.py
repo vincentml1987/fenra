@@ -85,6 +85,7 @@ class FenraUI:
         self.timeout_label.pack(anchor="w")
 
         self._refresh_log_display()
+        # Initialize display with the configured weights
         self.update_weights(tv, rum, fg, bd, ct)
         logger.debug("Exiting FenraUI.__init__")
 
