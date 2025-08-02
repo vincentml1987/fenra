@@ -85,7 +85,15 @@ class FenraUI:
         self.timeout_label.pack(anchor="w")
 
         self._refresh_log_display()
-        # Seed UI with the configured personality weights
+        logger.debug(
+            "Seeding UI with config weights: talkativeness=%s, rumination=%s, "
+            "forgetfulness=%s, boredom=%s, certainty=%s",
+            tv,
+            rum,
+            fg,
+            bd,
+            ct,
+        )
         self.update_weights(tv, rum, fg, bd, ct)
         logger.debug("Exiting FenraUI.__init__")
 
