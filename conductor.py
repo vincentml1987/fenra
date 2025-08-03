@@ -1136,7 +1136,8 @@ def main() -> None:
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
-    logging.getLogger("fenra_ui").setLevel(logging.DEBUG)
+    fenra_ui_logger = logging.getLogger("fenra_ui")
+    fenra_ui_logger.setLevel(level)
     ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
 
     def send_message(message: str) -> None:
