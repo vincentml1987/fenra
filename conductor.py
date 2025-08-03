@@ -787,7 +787,6 @@ def main() -> None:
     fenra_ui_logger = logging.getLogger("fenra_ui")
     fenra_ui_logger.setLevel(level)
     ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
-    ui.root.title("Fenra (Loading...)")
 
     agent_lock = threading.Lock()
     ready_event = threading.Event()
@@ -808,8 +807,7 @@ def main() -> None:
                 all_groups = sorted({g for a in agents for g in a.groups})
                 if archivists and listeners and speakers and ruminators:
                     ready_event.set()
-            ui.root.after(0, ui.root.title, f"Fenra (Loading: {agent.name})")
-        ui.root.after(0, ui.root.title, "Fenra (All Agents Loaded)")
+
 
     threading.Thread(target=loader, daemon=True).start()
     logger.info("Loading agents in background...")
