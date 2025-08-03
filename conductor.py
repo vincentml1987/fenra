@@ -648,6 +648,8 @@ def _post_to_discord_via_webhook(content: str) -> None:
     if not DISCORD_WEBHOOK_URL:
         return
     for part in _discord_chunks(content):
+        if not part.strip():
+            continue
         try:
             resp = requests.post(
                 DISCORD_WEBHOOK_URL,
@@ -671,6 +673,8 @@ def _post_to_discord_via_bot(content: str) -> None:
         "Content-Type": "application/json",
     }
     for part in _discord_chunks(content):
+        if not part.strip():
+            continue
         try:
             resp = requests.post(url, headers=headers, json={"content": part}, timeout=10)
             if resp.status_code == 429:
@@ -685,7 +689,8 @@ def _post_to_discord_via_bot(content: str) -> None:
 
 def post_to_discord(content: str) -> None:
     """Send a message to Discord using webhook if available, else bot token."""
-    if not content:
+    if not content or not content.strip():
+        logger.debug("Skipping empty Discord message")
         return
     if DISCORD_WEBHOOK_URL:
         _post_to_discord_via_webhook(content)
