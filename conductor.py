@@ -895,29 +895,36 @@ def main() -> None:
                     state_current = random.choice(listener_candidates)
 
             if isinstance(state_current, Listener):
+                human_entry = None
                 with chat_lock:
                     message_queue[:] = load_message_queue()
-                    if not message_queue:
-                        continue
-                    msg = message_queue.pop(0)
-                    save_message_queue(message_queue)
-                    ui.root.after(0, ui.update_queue, list(message_queue))
-                    human_entry = {
-                        "sender": msg.get("sender", "Human"),
-                        "timestamp": msg.get("timestamp", timestamp),
-                        "message": msg.get("message", ""),
-                        "groups": msg.get("groups", list(state_current.groups_in) or ["general"]),
-                        "epoch": time.time(),
-                    }
-                    chat_log.append(human_entry)
-                text = f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n{'-' * 80}\n\n"
-                for group in human_entry["groups"]:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    os.makedirs(os.path.dirname(fname), exist_ok=True)
-                    with open(fname, "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                logger.debug(text.strip())
-                ui.root.after(0, ui.log, human_entry)
+                    if message_queue:
+                        msg = message_queue.pop(0)
+                        save_message_queue(message_queue)
+                        ui.root.after(0, ui.update_queue, list(message_queue))
+                        human_entry = {
+                            "sender": msg.get("sender", "Human"),
+                            "timestamp": msg.get("timestamp", timestamp),
+                            "message": msg.get("message", ""),
+                            "groups": msg.get(
+                                "groups",
+                                list(state_current.groups_in) or ["general"],
+                            ),
+                            "epoch": time.time(),
+                        }
+                        chat_log.append(human_entry)
+                if human_entry:
+                    text = (
+                        f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
+                        f"{'-' * 80}\n\n"
+                    )
+                    for group in human_entry["groups"]:
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    logger.debug(text.strip())
+                    ui.root.after(0, ui.log, human_entry)
 
             with chat_lock:
                 context = [
