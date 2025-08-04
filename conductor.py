@@ -866,16 +866,34 @@ def main() -> None:
                 if not missing:
                     return candidate
                 logger.warning(
-                    "Agent %s missing downstream types: %s; re-selecting",
+                    "Agent %s missing downstream types: %s; re-selecting in 5s",
                     candidate.name,
                     ", ".join(missing),
                 )
+                time.sleep(5)
+                if pool is None:
+                    with agent_lock:
+                        active = [a for a in agents if a.active]
+                        pool = active
+                else:
+                    with agent_lock:
+                        active = [a for a in agents if a.active]
                 selection = [a for a in pool if a is not candidate] or pool
                 candidate = random.choice(selection)
 
         with agent_lock:
             active_agents = [a for a in agents if a.active]
-        state_current = ensure_downstream(random.choice(active_agents), active_agents)
+        if message_queue:
+            candidate = next(
+                (a for a in active_agents if isinstance(a, Listener)), None
+            )
+        else:
+            candidate = next(
+                (a for a in active_agents if not isinstance(a, Listener)), None
+            )
+        if candidate is None:
+            candidate = random.choice(active_agents)
+        state_current = ensure_downstream(candidate, active_agents)
         epoch = 0
         ui.root.after(
             0,
@@ -1136,10 +1154,11 @@ def main() -> None:
                 if candidates:
                     break
                 logger.warning(
-                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting",
+                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting in 5s",
                     state_current.name,
                     S,
                 )
+                time.sleep(5)
                 pool = [a for a in active_agents if a is not state_current] or active_agents
                 state_current = random.choice(pool)
 
