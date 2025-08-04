@@ -827,7 +827,27 @@ def main() -> None:
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
-        state_current = random.choice(agents)
+        def ensure_downstream(candidate: Agent, active: List[Agent]) -> Agent:
+            """Return an agent that has at least one downstream listener."""
+            while True:
+                S = set(candidate.groups_out)
+                downstream = [
+                    a
+                    for a in active
+                    if (a is not candidate or candidate.allow_self_consume)
+                    and (a.groups_in & S)
+                ]
+                if downstream:
+                    return candidate
+                logger.warning(
+                    "No downstream agents for %s; re-selecting", candidate.name
+                )
+                pool = [a for a in active if a is not candidate] or active
+                candidate = random.choice(pool)
+
+        with agent_lock:
+            active_agents = [a for a in agents if a.active]
+        state_current = ensure_downstream(random.choice(active_agents), active_agents)
         epoch = 0
         ui.root.after(
             0,
@@ -1151,6 +1171,10 @@ def main() -> None:
                 else:
                     pool = [a for a in active_agents if a is not state_current] or active_agents
                     state_current = random.choice(pool)
+
+            with agent_lock:
+                active_agents = [a for a in agents if a.active]
+            state_current = ensure_downstream(state_current, active_agents)
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
