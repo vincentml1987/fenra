@@ -74,158 +74,6 @@ DISCORD_BOT_TOKEN = (
 )
 
 
-def load_config(path: str):
-    """Parse fenra_config.txt and return instantiated agent objects."""
-    logger.debug("Entering load_config path=%s", path)
-    parser = configparser.ConfigParser()
-    '''if not parser.read(path):
-        raise RuntimeError(f"Failed to read config file {path}")'''
-        
-    with open(path, 'r', encoding='utf-8') as f:
-        parser.read_file(f)
-
-    logger.info("Loaded configuration from %s", path)
-
-    sections = parser.sections()
-    global_present = parser.has_section("global")
-    topic_in_models = any(
-        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
-    )
-    if not global_present and not topic_in_models:
-        raise RuntimeError(
-            "Config error: topic_prompt not found in global or model sections."
-        )
-
-    if global_present:
-        topic_prompt_global = parser.get("global", "topic_prompt")
-        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
-        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
-        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
-        chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
-        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
-        init_global_logging(parse_log_level(debug_level_str))
-    else:
-        topic_prompt_global = None
-        temperature_global = 0.7
-        max_tokens_global = None
-        chat_style_global = None
-        watchdog_global = 900
-        init_global_logging(logging.INFO)
-
-    agents = []
-    for section in sections:
-        if section == "global":
-            continue
-
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-
-        model_id = parser.get(section, "model")
-        role_prompt = parser.get(section, "role_prompt", fallback="")
-        groups_str = parser.get(section, "groups", fallback="")
-        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-        groups_in_str = parser.get(section, "groups_in", fallback="")
-        groups_in = [g.strip() for g in groups_in_str.split(',') if g.strip()]
-        groups_out_str = parser.get(section, "groups_out", fallback="")
-        groups_out = [g.strip() for g in groups_out_str.split(',') if g.strip()]
-        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
-        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
-        if max_tokens_str is not None:
-            max_tokens = int(max_tokens_str)
-        else:
-            max_tokens = max_tokens_global
-        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
-        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
-        system_prompt = parser.get(section, "system_prompt", fallback=None)
-
-        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
-        if topic_prompt is None:
-            raise RuntimeError(
-                f"Config error: topic_prompt missing for AI '{section}' and no global default."
-            )
-
-        role = parser.get(section, "role", fallback="ruminator").lower()
-
-        cfg = {
-            "topic_prompt": topic_prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "chat_style": chat_style,
-            "watchdog_timeout": watchdog,
-            "system_prompt": system_prompt,
-        }
-
-        if role == "archivist":
-            agents.append(
-                Archivist(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        elif role in ("tool", "toolagent", "tools"):
-            agent = ToolAgent(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-            agents.append(agent)
-        elif role == "listener":
-            agents.append(
-                Listener(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        elif role == "speaker":
-            agents.append(
-                Speaker(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        else:
-            agents.append(
-                Ruminator(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-
-    if not agents:
-        raise RuntimeError("No active AI models found in config.")
-
-    logger.debug("Exiting load_config")
-    return agents
-
 
 def load_global_defaults(path: str) -> Dict[str, object]:
     """Return default model configuration from the global section."""
@@ -320,183 +168,153 @@ def ensure_models_available(model_ids: List[str]) -> None:
     logger.debug("Exiting ensure_models_available")
 
 
-def parse_model_ids(path: str) -> List[str]:
-    """Return a list of **unique** model IDs for all active agents."""
-    logger.debug("Entering parse_model_ids path=%s", path)
-    parser = configparser.ConfigParser()
-    with open(path, "r", encoding="utf-8") as f:
-        parser.read_file(f)
-
+def parse_model_ids(directory: str) -> List[str]:
+    """Return a list of **unique** model IDs for all active agents in ``directory``."""
+    logger.debug("Entering parse_model_ids directory=%s", directory)
     ids: List[str] = []
     seen = set()
-    for section in parser.sections():
-        if section == "global":
+    for fname in sorted(os.listdir(directory)):
+        fpath = os.path.join(directory, fname)
+        if not os.path.isfile(fpath):
             continue
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-        model = parser.get(section, "model")
-        if model not in seen:
-            ids.append(model)
-            seen.add(model)
+        parser = configparser.ConfigParser()
+        with open(fpath, "r", encoding="utf-8") as f:
+            parser.read_file(f)
+        for section in parser.sections():
+            if section == "global":
+                continue
+            if not parser.has_option(section, "model"):
+                raise RuntimeError(f"Config error: model missing for AI '{section}'")
+            active = parser.getboolean(section, "active", fallback=True)
+            if not active:
+                continue
+            model = parser.get(section, "model")
+            if model not in seen:
+                ids.append(model)
+                seen.add(model)
     logger.debug("Exiting parse_model_ids with %s", ids)
     return ids
 
 
-def iter_load_config(path: str):
-    """Yield Agent objects from the configuration file one by one."""
-    logger.debug("Entering iter_load_config path=%s", path)
-    parser = configparser.ConfigParser()
-    with open(path, "r", encoding="utf-8") as f:
-        parser.read_file(f)
-
-    sections = parser.sections()
-    global_present = parser.has_section("global")
-    topic_in_models = any(
-        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
-    )
-    if not global_present and not topic_in_models:
-        raise RuntimeError(
-            "Config error: topic_prompt not found in global or model sections."
-        )
-
-    if global_present:
-        topic_prompt_global = parser.get("global", "topic_prompt")
-        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
-        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
-        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
-        chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
-        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
-        init_global_logging(parse_log_level(debug_level_str))
-    else:
-        topic_prompt_global = None
-        temperature_global = 0.7
-        max_tokens_global = None
-        chat_style_global = None
-        watchdog_global = 900
-        init_global_logging(logging.INFO)
-
-    for section in sections:
-        if section == "global":
+def iter_load_config(directory: str, defaults: Dict[str, object]):
+    """Yield Agent objects from all config files in ``directory``."""
+    logger.debug("Entering iter_load_config path=%s", directory)
+    for fname in sorted(os.listdir(directory)):
+        fpath = os.path.join(directory, fname)
+        if not os.path.isfile(fpath):
             continue
-
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-
-        model_id = parser.get(section, "model")
-        role_prompt = parser.get(section, "role_prompt", fallback="")
-        groups_str = parser.get(section, "groups", fallback="")
-        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-        groups_in_str = parser.get(section, "groups_in", fallback="")
-        groups_in = [g.strip() for g in groups_in_str.split(',') if g.strip()]
-        groups_out_str = parser.get(section, "groups_out", fallback="")
-        groups_out = [g.strip() for g in groups_out_str.split(',') if g.strip()]
-        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
-        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
-        if max_tokens_str is not None:
-            max_tokens = int(max_tokens_str)
-        else:
-            max_tokens = max_tokens_global
-        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
-        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
-        system_prompt = parser.get(section, "system_prompt", fallback=None)
-
-        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
-        if topic_prompt is None:
-            raise RuntimeError(
-                f"Config error: topic_prompt missing for AI '{section}' and no global default."
-            )
-
-        role = parser.get(section, "role", fallback="ruminator").lower()
-
-        cfg = {
-            "topic_prompt": topic_prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "chat_style": chat_style,
-            "watchdog_timeout": watchdog,
-            "system_prompt": system_prompt,
-        }
-
-        if role == "archivist":
-            yield Archivist(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role in ("tool", "toolagent", "tools"):
-            yield ToolAgent(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "listener":
-            yield Listener(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "speaker":
-            yield Speaker(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "ponderer":
-            yield Ponderer(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "doubter":
-            yield Doubter(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        else:
-            yield Ruminator(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-
+        parser = configparser.ConfigParser()
+        with open(fpath, "r", encoding="utf-8") as f:
+            parser.read_file(f)
+        for section in parser.sections():
+            if section == "global":
+                continue
+            if not parser.has_option(section, "model"):
+                raise RuntimeError(f"Config error: model missing for AI '{section}'")
+            active = parser.getboolean(section, "active", fallback=True)
+            if not active:
+                continue
+            model_id = parser.get(section, "model")
+            role_prompt = parser.get(section, "role_prompt", fallback="")
+            groups = [g.strip() for g in parser.get(section, "groups", fallback="").split(',') if g.strip()]
+            groups_in = [g.strip() for g in parser.get(section, "groups_in", fallback="").split(',') if g.strip()]
+            groups_out = [g.strip() for g in parser.get(section, "groups_out", fallback="").split(',') if g.strip()]
+            temperature = parser.getfloat(section, "temperature", fallback=defaults["temperature"])
+            max_tokens_str = parser.get(section, "max_tokens", fallback=None)
+            if max_tokens_str is not None:
+                max_tokens = int(max_tokens_str)
+            else:
+                max_tokens = defaults["max_tokens"]
+            chat_style = parser.get(section, "chat_style", fallback=defaults["chat_style"])
+            watchdog = parser.getint(section, "watchdog_timeout", fallback=defaults["watchdog_timeout"])
+            system_prompt = parser.get(section, "system_prompt", fallback=defaults["system_prompt"])
+            topic_prompt = parser.get(section, "topic_prompt", fallback=defaults["topic_prompt"])
+            if topic_prompt is None:
+                raise RuntimeError(
+                    f"Config error: topic_prompt missing for AI '{section}' and no global default."
+                )
+            role = parser.get(section, "role", fallback="ruminator").lower()
+            cfg = {
+                "topic_prompt": topic_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "chat_style": chat_style,
+                "watchdog_timeout": watchdog,
+                "system_prompt": system_prompt,
+            }
+            if role == "archivist":
+                yield Archivist(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role in ("tool", "toolagent", "tools"):
+                yield ToolAgent(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "listener":
+                yield Listener(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "speaker":
+                yield Speaker(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "ponderer":
+                yield Ponderer(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "doubter":
+                yield Doubter(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            else:
+                yield Ruminator(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
     logger.debug("Exiting iter_load_config")
+
+
 
 
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
@@ -732,14 +550,15 @@ def main() -> None:
     server_proc = start_ollama_server()
     time.sleep(5)
     config_path = "fenra_config.txt"
+    agents_dir = "agents"
     level = _parse_debug_level(config_path)
     init_global_logging(level)
     global logger
     logger = create_object_logger("Conductor")
     logger.debug("Entering main")
     logger.info("Starting conductor")
-    load_global_defaults(config_path)
-    model_ids = parse_model_ids(config_path)
+    defaults = load_global_defaults(config_path)
+    model_ids = parse_model_ids(agents_dir)
     ensure_models_available(model_ids)
 
     if level <= logging.INFO:
@@ -793,7 +612,7 @@ def main() -> None:
 
     def loader() -> None:
         nonlocal all_groups
-        for agent in iter_load_config(config_path):
+        for agent in iter_load_config(agents_dir, defaults):
             with agent_lock:
                 agents.append(agent)
                 if isinstance(agent, Archivist):
