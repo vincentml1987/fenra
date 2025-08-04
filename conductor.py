@@ -1094,13 +1094,23 @@ def main() -> None:
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
 
-            S = set(state_current.groups_out)
-            candidates = [
-                b
-                for b in active_agents
-                if (b is not state_current or state_current.allow_self_consume)
-                and (b.groups_in & S)
-            ]
+            while True:
+                S = set(state_current.groups_out)
+                candidates = [
+                    b
+                    for b in active_agents
+                    if (b is not state_current or state_current.allow_self_consume)
+                    and (b.groups_in & S)
+                ]
+                if candidates:
+                    break
+                logger.warning(
+                    "No downstream agents for %s (groups_out=%s); re-selecting",
+                    state_current.name,
+                    S,
+                )
+                pool = [a for a in active_agents if a is not state_current] or active_agents
+                state_current = random.choice(pool)
 
             if message_queue:
                 listener_candidates = [c for c in candidates if isinstance(c, Listener)]
@@ -1122,55 +1132,48 @@ def main() -> None:
                         fallback = [l for l in active_agents if isinstance(l, Listener)]
                     if fallback:
                         state_current = random.choice(fallback)
-                    elif candidates:
+                    else:
                         if len(candidates) > 1:
                             candidates = [b for b in candidates if b is not state_current]
                         state_current = random.choice(candidates)
-                    else:
-                        pool = [a for a in active_agents if a is not state_current] or active_agents
-                        state_current = random.choice(pool)
             else:
                 if len(candidates) > 1:
                     candidates = [b for b in candidates if b is not state_current]
 
-                if candidates:
-                    speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
-                    ruminator_candidates = [
-                        c
-                        for c in candidates
-                        if isinstance(c, Ruminator)
-                        and not isinstance(c, (Ponderer, Doubter))
-                    ]
-                    archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
-                    ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
-                    doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
+                speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
+                ruminator_candidates = [
+                    c
+                    for c in candidates
+                    if isinstance(c, Ruminator)
+                    and not isinstance(c, (Ponderer, Doubter))
+                ]
+                archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
+                ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
+                doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
 
-                    pools = []
-                    weights = []
-                    if speaker_candidates:
-                        pools.append(speaker_candidates)
-                        weights.append(talkativeness)
-                    if ruminator_candidates:
-                        pools.append(ruminator_candidates)
-                        weights.append(rumination)
-                    if archivist_candidates:
-                        pools.append(archivist_candidates)
-                        weights.append(forgetfulness)
-                    if ponderer_candidates:
-                        pools.append(ponderer_candidates)
-                        weights.append(boredom)
-                    if doubter_candidates:
-                        pools.append(doubter_candidates)
-                        weights.append(certainty)
+                pools = []
+                weights = []
+                if speaker_candidates:
+                    pools.append(speaker_candidates)
+                    weights.append(talkativeness)
+                if ruminator_candidates:
+                    pools.append(ruminator_candidates)
+                    weights.append(rumination)
+                if archivist_candidates:
+                    pools.append(archivist_candidates)
+                    weights.append(forgetfulness)
+                if ponderer_candidates:
+                    pools.append(ponderer_candidates)
+                    weights.append(boredom)
+                if doubter_candidates:
+                    pools.append(doubter_candidates)
+                    weights.append(certainty)
 
-                    if pools:
-                        selected_pool = random.choices(pools, weights=weights, k=1)[0]
-                        state_current = random.choice(selected_pool)
-                    else:
-                        state_current = random.choice(candidates)
+                if pools:
+                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                    state_current = random.choice(selected_pool)
                 else:
-                    pool = [a for a in active_agents if a is not state_current] or active_agents
-                    state_current = random.choice(pool)
+                    state_current = random.choice(candidates)
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
