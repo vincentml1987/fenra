@@ -827,23 +827,51 @@ def main() -> None:
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
-        def ensure_downstream(candidate: Agent, active: List[Agent]) -> Agent:
-            """Return an agent that has at least one downstream listener."""
+        def _missing_downstream_types(agent: Agent, active: List[Agent]) -> List[str]:
+            """Return a list of agent type names missing downstream from ``agent``."""
+            S = set(agent.groups_out)
+            required = {
+                Listener: False,
+                Speaker: False,
+                Ruminator: False,
+                Archivist: False,
+                Ponderer: False,
+                Doubter: False,
+            }
+            for a in active:
+                if (a is not agent or agent.allow_self_consume) and (a.groups_in & S):
+                    if isinstance(a, Doubter):
+                        required[Doubter] = True
+                    elif isinstance(a, Ponderer):
+                        required[Ponderer] = True
+                    elif isinstance(a, Listener):
+                        required[Listener] = True
+                    elif isinstance(a, Speaker):
+                        required[Speaker] = True
+                    elif isinstance(a, Archivist):
+                        required[Archivist] = True
+                    elif isinstance(a, Ruminator):
+                        required[Ruminator] = True
+            return [cls.__name__ for cls, ok in required.items() if not ok]
+
+        def ensure_downstream(
+            candidate: Agent,
+            active: List[Agent],
+            pool: List[Agent] | None = None,
+        ) -> Agent:
+            """Return an agent that has all downstream role types."""
+            pool = pool or active
             while True:
-                S = set(candidate.groups_out)
-                downstream = [
-                    a
-                    for a in active
-                    if (a is not candidate or candidate.allow_self_consume)
-                    and (a.groups_in & S)
-                ]
-                if downstream:
+                missing = _missing_downstream_types(candidate, active)
+                if not missing:
                     return candidate
                 logger.warning(
-                    "No downstream agents for %s; re-selecting", candidate.name
+                    "Agent %s missing downstream types: %s; re-selecting",
+                    candidate.name,
+                    ", ".join(missing),
                 )
-                pool = [a for a in active if a is not candidate] or active
-                candidate = random.choice(pool)
+                selection = [a for a in pool if a is not candidate] or pool
+                candidate = random.choice(selection)
 
         with agent_lock:
             active_agents = [a for a in agents if a.active]
@@ -1096,16 +1124,19 @@ def main() -> None:
 
             while True:
                 S = set(state_current.groups_out)
-                candidates = [
+                raw_candidates = [
                     b
                     for b in active_agents
                     if (b is not state_current or state_current.allow_self_consume)
                     and (b.groups_in & S)
                 ]
+                candidates = [
+                    c for c in raw_candidates if not _missing_downstream_types(c, active_agents)
+                ]
                 if candidates:
                     break
                 logger.warning(
-                    "No downstream agents for %s (groups_out=%s); re-selecting",
+                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting",
                     state_current.name,
                     S,
                 )
@@ -1177,7 +1208,7 @@ def main() -> None:
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
-            state_current = ensure_downstream(state_current, active_agents)
+            state_current = ensure_downstream(state_current, active_agents, candidates)
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
