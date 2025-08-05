@@ -74,158 +74,6 @@ DISCORD_BOT_TOKEN = (
 )
 
 
-def load_config(path: str):
-    """Parse fenra_config.txt and return instantiated agent objects."""
-    logger.debug("Entering load_config path=%s", path)
-    parser = configparser.ConfigParser()
-    '''if not parser.read(path):
-        raise RuntimeError(f"Failed to read config file {path}")'''
-        
-    with open(path, 'r', encoding='utf-8') as f:
-        parser.read_file(f)
-
-    logger.info("Loaded configuration from %s", path)
-
-    sections = parser.sections()
-    global_present = parser.has_section("global")
-    topic_in_models = any(
-        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
-    )
-    if not global_present and not topic_in_models:
-        raise RuntimeError(
-            "Config error: topic_prompt not found in global or model sections."
-        )
-
-    if global_present:
-        topic_prompt_global = parser.get("global", "topic_prompt")
-        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
-        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
-        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
-        chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
-        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
-        init_global_logging(parse_log_level(debug_level_str))
-    else:
-        topic_prompt_global = None
-        temperature_global = 0.7
-        max_tokens_global = None
-        chat_style_global = None
-        watchdog_global = 900
-        init_global_logging(logging.INFO)
-
-    agents = []
-    for section in sections:
-        if section == "global":
-            continue
-
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-
-        model_id = parser.get(section, "model")
-        role_prompt = parser.get(section, "role_prompt", fallback="")
-        groups_str = parser.get(section, "groups", fallback="")
-        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-        groups_in_str = parser.get(section, "groups_in", fallback="")
-        groups_in = [g.strip() for g in groups_in_str.split(',') if g.strip()]
-        groups_out_str = parser.get(section, "groups_out", fallback="")
-        groups_out = [g.strip() for g in groups_out_str.split(',') if g.strip()]
-        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
-        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
-        if max_tokens_str is not None:
-            max_tokens = int(max_tokens_str)
-        else:
-            max_tokens = max_tokens_global
-        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
-        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
-        system_prompt = parser.get(section, "system_prompt", fallback=None)
-
-        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
-        if topic_prompt is None:
-            raise RuntimeError(
-                f"Config error: topic_prompt missing for AI '{section}' and no global default."
-            )
-
-        role = parser.get(section, "role", fallback="ruminator").lower()
-
-        cfg = {
-            "topic_prompt": topic_prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "chat_style": chat_style,
-            "watchdog_timeout": watchdog,
-            "system_prompt": system_prompt,
-        }
-
-        if role == "archivist":
-            agents.append(
-                Archivist(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        elif role in ("tool", "toolagent", "tools"):
-            agent = ToolAgent(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-            agents.append(agent)
-        elif role == "listener":
-            agents.append(
-                Listener(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        elif role == "speaker":
-            agents.append(
-                Speaker(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-        else:
-            agents.append(
-                Ruminator(
-                    name=section,
-                    model_name=model_id,
-                    role_prompt=role_prompt,
-                    config=cfg,
-                    groups=groups,
-                    groups_in=groups_in,
-                    groups_out=groups_out,
-                )
-            )
-
-    if not agents:
-        raise RuntimeError("No active AI models found in config.")
-
-    logger.debug("Exiting load_config")
-    return agents
-
 
 def load_global_defaults(path: str) -> Dict[str, object]:
     """Return default model configuration from the global section."""
@@ -320,183 +168,153 @@ def ensure_models_available(model_ids: List[str]) -> None:
     logger.debug("Exiting ensure_models_available")
 
 
-def parse_model_ids(path: str) -> List[str]:
-    """Return a list of **unique** model IDs for all active agents."""
-    logger.debug("Entering parse_model_ids path=%s", path)
-    parser = configparser.ConfigParser()
-    with open(path, "r", encoding="utf-8") as f:
-        parser.read_file(f)
-
+def parse_model_ids(directory: str) -> List[str]:
+    """Return a list of **unique** model IDs for all active agents in ``directory``."""
+    logger.debug("Entering parse_model_ids directory=%s", directory)
     ids: List[str] = []
     seen = set()
-    for section in parser.sections():
-        if section == "global":
+    for fname in sorted(os.listdir(directory)):
+        fpath = os.path.join(directory, fname)
+        if not os.path.isfile(fpath):
             continue
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-        model = parser.get(section, "model")
-        if model not in seen:
-            ids.append(model)
-            seen.add(model)
+        parser = configparser.ConfigParser()
+        with open(fpath, "r", encoding="utf-8") as f:
+            parser.read_file(f)
+        for section in parser.sections():
+            if section == "global":
+                continue
+            if not parser.has_option(section, "model"):
+                raise RuntimeError(f"Config error: model missing for AI '{section}'")
+            active = parser.getboolean(section, "active", fallback=True)
+            if not active:
+                continue
+            model = parser.get(section, "model")
+            if model not in seen:
+                ids.append(model)
+                seen.add(model)
     logger.debug("Exiting parse_model_ids with %s", ids)
     return ids
 
 
-def iter_load_config(path: str):
-    """Yield Agent objects from the configuration file one by one."""
-    logger.debug("Entering iter_load_config path=%s", path)
-    parser = configparser.ConfigParser()
-    with open(path, "r", encoding="utf-8") as f:
-        parser.read_file(f)
-
-    sections = parser.sections()
-    global_present = parser.has_section("global")
-    topic_in_models = any(
-        parser.has_option(sec, "topic_prompt") for sec in sections if sec != "global"
-    )
-    if not global_present and not topic_in_models:
-        raise RuntimeError(
-            "Config error: topic_prompt not found in global or model sections."
-        )
-
-    if global_present:
-        topic_prompt_global = parser.get("global", "topic_prompt")
-        temperature_global = parser.getfloat("global", "temperature", fallback=0.7)
-        max_tokens_global_str = parser.get("global", "max_tokens", fallback=None)
-        max_tokens_global = int(max_tokens_global_str) if max_tokens_global_str else None
-        chat_style_global = parser.get("global", "chat_style", fallback=None)
-        watchdog_global = parser.getint("global", "watchdog_timeout", fallback=900)
-        debug_level_str = parser.get("global", "debug_level", fallback="INFO")
-        init_global_logging(parse_log_level(debug_level_str))
-    else:
-        topic_prompt_global = None
-        temperature_global = 0.7
-        max_tokens_global = None
-        chat_style_global = None
-        watchdog_global = 900
-        init_global_logging(logging.INFO)
-
-    for section in sections:
-        if section == "global":
+def iter_load_config(directory: str, defaults: Dict[str, object]):
+    """Yield Agent objects from all config files in ``directory``."""
+    logger.debug("Entering iter_load_config path=%s", directory)
+    for fname in sorted(os.listdir(directory)):
+        fpath = os.path.join(directory, fname)
+        if not os.path.isfile(fpath):
             continue
-
-        if not parser.has_option(section, "model"):
-            raise RuntimeError(f"Config error: model missing for AI '{section}'")
-
-        active = parser.getboolean(section, "active", fallback=True)
-        if not active:
-            continue
-
-        model_id = parser.get(section, "model")
-        role_prompt = parser.get(section, "role_prompt", fallback="")
-        groups_str = parser.get(section, "groups", fallback="")
-        groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-        groups_in_str = parser.get(section, "groups_in", fallback="")
-        groups_in = [g.strip() for g in groups_in_str.split(',') if g.strip()]
-        groups_out_str = parser.get(section, "groups_out", fallback="")
-        groups_out = [g.strip() for g in groups_out_str.split(',') if g.strip()]
-        temperature = parser.getfloat(section, "temperature", fallback=temperature_global)
-        max_tokens_str = parser.get(section, "max_tokens", fallback=None)
-        if max_tokens_str is not None:
-            max_tokens = int(max_tokens_str)
-        else:
-            max_tokens = max_tokens_global
-        chat_style = parser.get(section, "chat_style", fallback=chat_style_global)
-        watchdog = parser.getint(section, "watchdog_timeout", fallback=watchdog_global)
-        system_prompt = parser.get(section, "system_prompt", fallback=None)
-
-        topic_prompt = parser.get(section, "topic_prompt", fallback=topic_prompt_global)
-        if topic_prompt is None:
-            raise RuntimeError(
-                f"Config error: topic_prompt missing for AI '{section}' and no global default."
-            )
-
-        role = parser.get(section, "role", fallback="ruminator").lower()
-
-        cfg = {
-            "topic_prompt": topic_prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "chat_style": chat_style,
-            "watchdog_timeout": watchdog,
-            "system_prompt": system_prompt,
-        }
-
-        if role == "archivist":
-            yield Archivist(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role in ("tool", "toolagent", "tools"):
-            yield ToolAgent(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "listener":
-            yield Listener(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "speaker":
-            yield Speaker(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "ponderer":
-            yield Ponderer(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        elif role == "doubter":
-            yield Doubter(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-        else:
-            yield Ruminator(
-                name=section,
-                model_name=model_id,
-                role_prompt=role_prompt,
-                config=cfg,
-                groups=groups,
-                groups_in=groups_in,
-                groups_out=groups_out,
-            )
-
+        parser = configparser.ConfigParser()
+        with open(fpath, "r", encoding="utf-8") as f:
+            parser.read_file(f)
+        for section in parser.sections():
+            if section == "global":
+                continue
+            if not parser.has_option(section, "model"):
+                raise RuntimeError(f"Config error: model missing for AI '{section}'")
+            active = parser.getboolean(section, "active", fallback=True)
+            if not active:
+                continue
+            model_id = parser.get(section, "model")
+            role_prompt = parser.get(section, "role_prompt", fallback="")
+            groups = [g.strip() for g in parser.get(section, "groups", fallback="").split(',') if g.strip()]
+            groups_in = [g.strip() for g in parser.get(section, "groups_in", fallback="").split(',') if g.strip()]
+            groups_out = [g.strip() for g in parser.get(section, "groups_out", fallback="").split(',') if g.strip()]
+            temperature = parser.getfloat(section, "temperature", fallback=defaults["temperature"])
+            max_tokens_str = parser.get(section, "max_tokens", fallback=None)
+            if max_tokens_str is not None:
+                max_tokens = int(max_tokens_str)
+            else:
+                max_tokens = defaults["max_tokens"]
+            chat_style = parser.get(section, "chat_style", fallback=defaults["chat_style"])
+            watchdog = parser.getint(section, "watchdog_timeout", fallback=defaults["watchdog_timeout"])
+            system_prompt = parser.get(section, "system_prompt", fallback=defaults["system_prompt"])
+            topic_prompt = parser.get(section, "topic_prompt", fallback=defaults["topic_prompt"])
+            if topic_prompt is None:
+                raise RuntimeError(
+                    f"Config error: topic_prompt missing for AI '{section}' and no global default."
+                )
+            role = parser.get(section, "role", fallback="ruminator").lower()
+            cfg = {
+                "topic_prompt": topic_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "chat_style": chat_style,
+                "watchdog_timeout": watchdog,
+                "system_prompt": system_prompt,
+            }
+            if role == "archivist":
+                yield Archivist(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role in ("tool", "toolagent", "tools"):
+                yield ToolAgent(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "listener":
+                yield Listener(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "speaker":
+                yield Speaker(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "ponderer":
+                yield Ponderer(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            elif role == "doubter":
+                yield Doubter(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
+            else:
+                yield Ruminator(
+                    name=section,
+                    model_name=model_id,
+                    role_prompt=role_prompt,
+                    config=cfg,
+                    groups=groups,
+                    groups_in=groups_in,
+                    groups_out=groups_out,
+                )
     logger.debug("Exiting iter_load_config")
+
+
 
 
 def _load_chat_history_for_group(path: str, group: str) -> List[Dict[str, str]]:
@@ -648,6 +466,8 @@ def _post_to_discord_via_webhook(content: str) -> None:
     if not DISCORD_WEBHOOK_URL:
         return
     for part in _discord_chunks(content):
+        if not part.strip():
+            continue
         try:
             resp = requests.post(
                 DISCORD_WEBHOOK_URL,
@@ -671,6 +491,8 @@ def _post_to_discord_via_bot(content: str) -> None:
         "Content-Type": "application/json",
     }
     for part in _discord_chunks(content):
+        if not part.strip():
+            continue
         try:
             resp = requests.post(url, headers=headers, json={"content": part}, timeout=10)
             if resp.status_code == 429:
@@ -685,7 +507,8 @@ def _post_to_discord_via_bot(content: str) -> None:
 
 def post_to_discord(content: str) -> None:
     """Send a message to Discord using webhook if available, else bot token."""
-    if not content:
+    if not content or not content.strip():
+        logger.debug("Skipping empty Discord message")
         return
     if DISCORD_WEBHOOK_URL:
         _post_to_discord_via_webhook(content)
@@ -727,14 +550,15 @@ def main() -> None:
     server_proc = start_ollama_server()
     time.sleep(5)
     config_path = "fenra_config.txt"
+    agents_dir = "agents"
     level = _parse_debug_level(config_path)
     init_global_logging(level)
     global logger
     logger = create_object_logger("Conductor")
     logger.debug("Entering main")
     logger.info("Starting conductor")
-    load_global_defaults(config_path)
-    model_ids = parse_model_ids(config_path)
+    defaults = load_global_defaults(config_path)
+    model_ids = parse_model_ids(agents_dir)
     ensure_models_available(model_ids)
 
     if level <= logging.INFO:
@@ -755,18 +579,22 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         parser.read_file(f)
 
-    talkativeness = parser.getfloat("global", "talkativeness", fallback=1.0)
-    forgetfulness = parser.getfloat("global", "forgetfulness", fallback=1.0)
-    rumination = parser.getfloat("global", "rumination", fallback=1.0)
-    boredom = parser.getfloat("global", "boredom", fallback=0.0)
-    assuredness = parser.getfloat("global", "assuredness", fallback=0.0)
-    pondering = parser.getfloat("global", "pondering", fallback=0.0)
+    talkativeness: float = parser.getfloat("global", "talkativeness", fallback=1.0)
+    forgetfulness: float = parser.getfloat("global", "forgetfulness", fallback=1.0)
+    rumination: float = parser.getfloat("global", "rumination", fallback=1.0)
+    boredom: float = parser.getfloat("global", "boredom", fallback=0.0)
+    assuredness: float = parser.getfloat("global", "assuredness", fallback=0.0)
+    certainty: float = parser.getfloat("global", "certainty", fallback=0.0)
+    restlessness = parser.getfloat("global", "restlessness", fallback=0.0)
     doubting = parser.getfloat("global", "doubting", fallback=0.0)
-    attention = parser.getfloat("global", "attention", fallback=0.0)
-    interest = parser.getfloat("global", "interest", fallback=0.0)
+    attentiveness = parser.getfloat("global", "attentiveness", fallback=0.0)
+    stimulation = parser.getfloat("global", "stimulation", fallback=0.0)
     excitement = parser.getfloat("global", "excitement", fallback=0.0)
     distraction = parser.getfloat("global", "distraction", fallback=0.0)
-    clearheadedness = parser.getfloat("global", "clearheadedness", fallback=0.0)
+    focus = parser.getfloat("global", "focus", fallback=0.0)
+    extroversion = parser.getfloat("global", "extroversion", fallback=0.0)
+    fixation = parser.getfloat("global", "fixation", fallback=0.0)
+    uncertainty = parser.getfloat("global", "uncertainty", fallback=0.0)
 
     agents: List[Agent] = []
     archivists: List[Archivist] = []
@@ -775,12 +603,16 @@ def main() -> None:
     ruminators: List[Agent] = []
     all_groups: List[str] = []
 
+    fenra_ui_logger = logging.getLogger("fenra_ui")
+    fenra_ui_logger.setLevel(level)
+    ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
+
     agent_lock = threading.Lock()
     ready_event = threading.Event()
 
     def loader() -> None:
         nonlocal all_groups
-        for agent in iter_load_config(config_path):
+        for agent in iter_load_config(agents_dir, defaults):
             with agent_lock:
                 agents.append(agent)
                 if isinstance(agent, Archivist):
@@ -795,10 +627,13 @@ def main() -> None:
                 if archivists and listeners and speakers and ruminators:
                     ready_event.set()
 
+
     threading.Thread(target=loader, daemon=True).start()
     logger.info("Loading agents in background...")
 
-    ready_event.wait()
+    while not ready_event.is_set():
+        ui.root.update()
+        time.sleep(0.1)
 
     # At least one of each agent type loaded
 
@@ -809,9 +644,75 @@ def main() -> None:
     chat_lock = threading.Lock()
 
     def conversation_loop() -> None:
-        nonlocal talkativeness, forgetfulness, rumination, boredom, assuredness, pondering, doubting
+        nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
-        state_current = random.choice(agents)
+        def _missing_downstream_types(agent: Agent, active: List[Agent]) -> List[str]:
+            """Return a list of agent type names missing downstream from ``agent``."""
+            S = set(agent.groups_out)
+            required = {
+                Listener: False,
+                Speaker: False,
+                Ruminator: False,
+                Archivist: False,
+                Ponderer: False,
+                Doubter: False,
+            }
+            for a in active:
+                if (a is not agent or agent.allow_self_consume) and (a.groups_in & S):
+                    if isinstance(a, Doubter):
+                        required[Doubter] = True
+                    elif isinstance(a, Ponderer):
+                        required[Ponderer] = True
+                    elif isinstance(a, Listener):
+                        required[Listener] = True
+                    elif isinstance(a, Speaker):
+                        required[Speaker] = True
+                    elif isinstance(a, Archivist):
+                        required[Archivist] = True
+                    elif isinstance(a, Ruminator):
+                        required[Ruminator] = True
+            return [cls.__name__ for cls, ok in required.items() if not ok]
+
+        def ensure_downstream(
+            candidate: Agent,
+            active: List[Agent],
+            pool: List[Agent] | None = None,
+        ) -> Agent:
+            """Return an agent that has all downstream role types."""
+            pool = pool or active
+            while True:
+                missing = _missing_downstream_types(candidate, active)
+                if not missing:
+                    return candidate
+                logger.warning(
+                    "Agent %s missing downstream types: %s; re-selecting in 5s",
+                    candidate.name,
+                    ", ".join(missing),
+                )
+                time.sleep(5)
+                if pool is None:
+                    with agent_lock:
+                        active = [a for a in agents if a.active]
+                        pool = active
+                else:
+                    with agent_lock:
+                        active = [a for a in agents if a.active]
+                selection = [a for a in pool if a is not candidate] or pool
+                candidate = random.choice(selection)
+
+        with agent_lock:
+            active_agents = [a for a in agents if a.active]
+        if message_queue:
+            candidate = next(
+                (a for a in active_agents if isinstance(a, Listener)), None
+            )
+        else:
+            candidate = next(
+                (a for a in active_agents if not isinstance(a, Listener)), None
+            )
+        if candidate is None:
+            candidate = random.choice(active_agents)
+        state_current = ensure_downstream(candidate, active_agents)
         epoch = 0
         ui.root.after(
             0,
@@ -820,7 +721,7 @@ def main() -> None:
             rumination,
             forgetfulness,
             boredom,
-            assuredness,
+            certainty,
         )
         while True:
             with chat_lock:
@@ -886,29 +787,36 @@ def main() -> None:
                     state_current = random.choice(listener_candidates)
 
             if isinstance(state_current, Listener):
+                human_entry = None
                 with chat_lock:
                     message_queue[:] = load_message_queue()
-                    if not message_queue:
-                        continue
-                    msg = message_queue.pop(0)
-                    save_message_queue(message_queue)
-                    ui.root.after(0, ui.update_queue, list(message_queue))
-                    human_entry = {
-                        "sender": msg.get("sender", "Human"),
-                        "timestamp": msg.get("timestamp", timestamp),
-                        "message": msg.get("message", ""),
-                        "groups": msg.get("groups", list(state_current.groups_in) or ["general"]),
-                        "epoch": time.time(),
-                    }
-                    chat_log.append(human_entry)
-                text = f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n{'-' * 80}\n\n"
-                for group in human_entry["groups"]:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    os.makedirs(os.path.dirname(fname), exist_ok=True)
-                    with open(fname, "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                logger.debug(text.strip())
-                ui.root.after(0, ui.log, human_entry)
+                    if message_queue:
+                        msg = message_queue.pop(0)
+                        save_message_queue(message_queue)
+                        ui.root.after(0, ui.update_queue, list(message_queue))
+                        human_entry = {
+                            "sender": msg.get("sender", "Human"),
+                            "timestamp": msg.get("timestamp", timestamp),
+                            "message": msg.get("message", ""),
+                            "groups": msg.get(
+                                "groups",
+                                list(state_current.groups_in) or ["general"],
+                            ),
+                            "epoch": time.time(),
+                        }
+                        chat_log.append(human_entry)
+                if human_entry:
+                    text = (
+                        f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
+                        f"{'-' * 80}\n\n"
+                    )
+                    for group in human_entry["groups"]:
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    logger.debug(text.strip())
+                    ui.root.after(0, ui.log, human_entry)
 
             with chat_lock:
                 context = [
@@ -1010,53 +918,68 @@ def main() -> None:
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Failed to post Speaker message to Discord: %s", exc)
                     ui.root.after(0, ui.update_sent, list(messages_to_humans))
-                    talkativeness *= max(0.0, 1 - attention / 100.0)
-                    boredom *= 1 + pondering / 100.0
-                elif isinstance(state_current, Listener):
-                    talkativeness *= 1 + interest / 100.0
-                    boredom *= 1 + pondering / 100.0
-                elif isinstance(state_current, Archivist):
-                    forgetfulness *= max(0.0, 1 - clearheadedness / 100.0)
-                elif isinstance(state_current, Ponderer):
-                    talkativeness *= 1 + excitement / 100.0
-                    forgetfulness *= 1 + distraction / 100.0
-                    boredom *= max(0.0, 1 - pondering / 100.0)
-                    assuredness *= 1 + doubting / 100.0
-                elif isinstance(state_current, Doubter):
-                    talkativeness *= 1 + excitement / 100.0
-                    forgetfulness *= 1 + distraction / 100.0
-                    boredom *= 1 + pondering / 100.0
-                    assuredness *= max(0.0, 1 - doubting / 100.0)
-                else:
-                    talkativeness *= 1 + excitement / 100.0
-                    forgetfulness *= 1 + distraction / 100.0
-                    boredom *= 1 + pondering / 100.0
-                    assuredness *= 1 + doubting / 100.0
-                logger.debug(
-                    "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
-                    talkativeness,
-                    forgetfulness,
-                )
-                ui.root.after(
-                    0,
-                    ui.update_weights,
-                    talkativeness,
-                    rumination,
-                    forgetfulness,
-                    boredom,
-                    assuredness,
-                )
+
+            # Apply PTCD updates regardless of agent type
+            if isinstance(state_current, Speaker):
+                talkativeness *= max(0.0, 1 - attentiveness / 100.0)
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(state_current, Listener):
+                talkativeness *= 1 + stimulation / 100.0
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(state_current, Archivist):
+                forgetfulness *= max(0.0, 1 - focus / 100.0)
+                certainty *= 1 + doubting / 100.0
+            elif isinstance(state_current, Ponderer):
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - fixation / 100.0)
+            elif isinstance(state_current, Doubter):
+                forgetfulness *= 1 + distraction / 100.0
+                certainty *= max(0.0, 1 - uncertainty / 100.0)
+            else:
+                talkativeness *= 1 + excitement / 100.0
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= 1 + restlessness / 100.0
+            logger.debug(
+                "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
+                talkativeness,
+                forgetfulness,
+            )
+            ui.root.after(
+                0,
+                ui.update_weights,
+                talkativeness,
+                rumination,
+                forgetfulness,
+                boredom,
+                certainty,
+            )
 
             with agent_lock:
                 active_agents = [a for a in agents if a.active]
 
-            S = set(state_current.groups_out)
-            candidates = [
-                b
-                for b in active_agents
-                if (b is not state_current or state_current.allow_self_consume)
-                and (b.groups_in & S)
-            ]
+            while True:
+                S = set(state_current.groups_out)
+                raw_candidates = [
+                    b
+                    for b in active_agents
+                    if (b is not state_current or state_current.allow_self_consume)
+                    and (b.groups_in & S)
+                ]
+                candidates = [
+                    c for c in raw_candidates if not _missing_downstream_types(c, active_agents)
+                ]
+                if candidates:
+                    break
+                logger.warning(
+                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting in 5s",
+                    state_current.name,
+                    S,
+                )
+                time.sleep(5)
+                pool = [a for a in active_agents if a is not state_current] or active_agents
+                state_current = random.choice(pool)
 
             if message_queue:
                 listener_candidates = [c for c in candidates if isinstance(c, Listener)]
@@ -1078,60 +1001,55 @@ def main() -> None:
                         fallback = [l for l in active_agents if isinstance(l, Listener)]
                     if fallback:
                         state_current = random.choice(fallback)
-                    elif candidates:
+                    else:
                         if len(candidates) > 1:
                             candidates = [b for b in candidates if b is not state_current]
                         state_current = random.choice(candidates)
-                    else:
-                        pool = [a for a in active_agents if a is not state_current] or active_agents
-                        state_current = random.choice(pool)
             else:
                 if len(candidates) > 1:
                     candidates = [b for b in candidates if b is not state_current]
 
-                if candidates:
-                    speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
-                    ruminator_candidates = [
-                        c
-                        for c in candidates
-                        if isinstance(c, Ruminator)
-                        and not isinstance(c, (Ponderer, Doubter))
-                    ]
-                    archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
-                    ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
-                    doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
+                speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
+                ruminator_candidates = [
+                    c
+                    for c in candidates
+                    if isinstance(c, Ruminator)
+                    and not isinstance(c, (Ponderer, Doubter))
+                ]
+                archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
+                ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
+                doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
 
-                    pools = []
-                    weights = []
-                    if speaker_candidates:
-                        pools.append(speaker_candidates)
-                        weights.append(talkativeness)
-                    if ruminator_candidates:
-                        pools.append(ruminator_candidates)
-                        weights.append(rumination)
-                    if archivist_candidates:
-                        pools.append(archivist_candidates)
-                        weights.append(forgetfulness)
-                    if ponderer_candidates:
-                        pools.append(ponderer_candidates)
-                        weights.append(boredom)
-                    if doubter_candidates:
-                        pools.append(doubter_candidates)
-                        weights.append(assuredness)
+                pools = []
+                weights = []
+                if speaker_candidates:
+                    pools.append(speaker_candidates)
+                    weights.append(talkativeness)
+                if ruminator_candidates:
+                    pools.append(ruminator_candidates)
+                    weights.append(rumination)
+                if archivist_candidates:
+                    pools.append(archivist_candidates)
+                    weights.append(forgetfulness)
+                if ponderer_candidates:
+                    pools.append(ponderer_candidates)
+                    weights.append(boredom)
+                if doubter_candidates:
+                    pools.append(doubter_candidates)
+                    weights.append(certainty)
 
-                    if pools:
-                        selected_pool = random.choices(pools, weights=weights, k=1)[0]
-                        state_current = random.choice(selected_pool)
-                    else:
-                        state_current = random.choice(candidates)
+                if pools:
+                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                    state_current = random.choice(selected_pool)
                 else:
-                    pool = [a for a in active_agents if a is not state_current] or active_agents
-                    state_current = random.choice(pool)
+                    state_current = random.choice(candidates)
+
+            with agent_lock:
+                active_agents = [a for a in agents if a.active]
+            state_current = ensure_downstream(state_current, active_agents, candidates)
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
-
-    ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
 
     def send_message(message: str) -> None:
         logger.debug("Entering send_message message=%s", message)
