@@ -2,7 +2,8 @@ import json
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Tuple, Callable
+from typing import List, Dict, Tuple, Callable, Iterable
+from collections import defaultdict
 import configparser
 import threading
 import os
@@ -597,10 +598,15 @@ def main() -> None:
     uncertainty = parser.getfloat("global", "uncertainty", fallback=0.0)
 
     agents: List[Agent] = []
+    active_agents: set[Agent] = set()
+    agents_by_role: Dict[type, set[Agent]] = defaultdict(set)
+    agents_by_group_in: Dict[str, set[Agent]] = defaultdict(set)
+    roles_by_group: Dict[str, set[type]] = defaultdict(set)
     archivists: List[Archivist] = []
     listeners: List[Listener] = []
     speakers: List[Speaker] = []
     ruminators: List[Agent] = []
+    all_groups_set: set[str] = set()
     all_groups: List[str] = []
 
     fenra_ui_logger = logging.getLogger("fenra_ui")
@@ -615,6 +621,12 @@ def main() -> None:
         for agent in iter_load_config(agents_dir, defaults):
             with agent_lock:
                 agents.append(agent)
+                agents_by_role[type(agent)].add(agent)
+                if agent.active:
+                    active_agents.add(agent)
+                    for g in agent.groups_in:
+                        agents_by_group_in[g].add(agent)
+                        roles_by_group[g].add(type(agent))
                 if isinstance(agent, Archivist):
                     archivists.append(agent)
                 elif isinstance(agent, Listener):
@@ -623,7 +635,8 @@ def main() -> None:
                     speakers.append(agent)
                 else:
                     ruminators.append(agent)
-                all_groups = sorted({g for a in agents for g in a.groups})
+                all_groups_set.update(agent.groups)
+                all_groups = sorted(all_groups_set)
                 if archivists and listeners and speakers and ruminators:
                     ready_event.set()
 
@@ -646,42 +659,22 @@ def main() -> None:
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
-        def _missing_downstream_types(agent: Agent, active: List[Agent]) -> List[str]:
-            """Return a list of agent type names missing downstream from ``agent``."""
+        def missing_downstream_roles(agent: Agent) -> List[str]:
+            """Return a list of role names missing downstream from ``agent``."""
             S = set(agent.groups_out)
-            required = {
-                Listener: False,
-                Speaker: False,
-                Ruminator: False,
-                Archivist: False,
-                Ponderer: False,
-                Doubter: False,
-            }
-            for a in active:
-                if (a is not agent or agent.allow_self_consume) and (a.groups_in & S):
-                    if isinstance(a, Doubter):
-                        required[Doubter] = True
-                    elif isinstance(a, Ponderer):
-                        required[Ponderer] = True
-                    elif isinstance(a, Listener):
-                        required[Listener] = True
-                    elif isinstance(a, Speaker):
-                        required[Speaker] = True
-                    elif isinstance(a, Archivist):
-                        required[Archivist] = True
-                    elif isinstance(a, Ruminator):
-                        required[Ruminator] = True
-            return [cls.__name__ for cls, ok in required.items() if not ok]
+            present: set[type] = set()
+            for grp in S:
+                roles = roles_by_group.get(grp, set())
+                if not agent.allow_self_consume and agent in agents_by_group_in.get(grp, set()):
+                    roles = roles - {type(agent)}
+                present |= roles
+            required = {Listener, Speaker, Ruminator, Archivist, Ponderer, Doubter}
+            return [cls.__name__ for cls in required if cls not in present]
 
-        def ensure_downstream(
-            candidate: Agent,
-            active: List[Agent],
-            pool: List[Agent] | None = None,
-        ) -> Agent:
+        def ensure_downstream(candidate: Agent, pool: Iterable[Agent] | None = None) -> Agent:
             """Return an agent that has all downstream role types."""
-            pool = pool or active
             while True:
-                missing = _missing_downstream_types(candidate, active)
+                missing = missing_downstream_roles(candidate)
                 if not missing:
                     return candidate
                 logger.warning(
@@ -690,29 +683,23 @@ def main() -> None:
                     ", ".join(missing),
                 )
                 time.sleep(5)
-                if pool is None:
-                    with agent_lock:
-                        active = [a for a in agents if a.active]
-                        pool = active
-                else:
-                    with agent_lock:
-                        active = [a for a in agents if a.active]
-                selection = [a for a in pool if a is not candidate] or pool
+                with agent_lock:
+                    current_pool = list(pool if pool is not None else active_agents)
+                if not current_pool:
+                    continue
+                selection = [a for a in current_pool if a is not candidate] or current_pool
                 candidate = random.choice(selection)
 
         with agent_lock:
-            active_agents = [a for a in agents if a.active]
+            current_active = set(active_agents)
         if message_queue:
-            candidate = next(
-                (a for a in active_agents if isinstance(a, Listener)), None
-            )
+            candidate = next(iter(agents_by_role[Listener]), None)
         else:
-            candidate = next(
-                (a for a in active_agents if not isinstance(a, Listener)), None
-            )
+            non_listeners = current_active - agents_by_role[Listener]
+            candidate = next(iter(non_listeners), None)
         if candidate is None:
-            candidate = random.choice(active_agents)
-        state_current = ensure_downstream(candidate, active_agents)
+            candidate = random.choice(tuple(current_active))
+        state_current = ensure_downstream(candidate)
         epoch = 0
         ui.root.after(
             0,
@@ -756,12 +743,12 @@ def main() -> None:
                 ui.root.after(0, ui.log, entry)
 
             with agent_lock:
-                active_agents = [a for a in agents if a.active]
-            if not active_agents:
+                current_active = set(active_agents)
+            if not current_active:
                 time.sleep(0.5)
                 continue
-            if state_current not in active_agents:
-                state_current = random.choice(active_agents)
+            if state_current not in current_active:
+                state_current = random.choice(tuple(current_active))
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -769,22 +756,18 @@ def main() -> None:
                 message_queue[:] = load_message_queue()
 
             if message_queue and not isinstance(state_current, Listener):
-                with agent_lock:
-                    active_agents = [a for a in agents if a.active]
                 S = set(state_current.groups_out)
-                listener_candidates = [
-                    a
-                    for a in active_agents
-                    if isinstance(a, Listener)
-                    and (a.groups_in & S)
-                    and (a is not state_current or state_current.allow_self_consume)
-                ]
+                listener_candidates: set[Agent] = set()
+                for grp in S:
+                    listener_candidates |= (
+                        agents_by_group_in.get(grp, set()) & agents_by_role[Listener]
+                    )
+                if not state_current.allow_self_consume:
+                    listener_candidates.discard(state_current)
                 if not listener_candidates:
-                    listener_candidates = [
-                        l for l in active_agents if isinstance(l, Listener)
-                    ]
+                    listener_candidates = agents_by_role[Listener].copy()
                 if listener_candidates:
-                    state_current = random.choice(listener_candidates)
+                    state_current = random.choice(tuple(listener_candidates))
 
             if isinstance(state_current, Listener):
                 human_entry = None
@@ -957,19 +940,16 @@ def main() -> None:
             )
 
             with agent_lock:
-                active_agents = [a for a in agents if a.active]
+                current_active = set(active_agents)
 
             while True:
                 S = set(state_current.groups_out)
-                raw_candidates = [
-                    b
-                    for b in active_agents
-                    if (b is not state_current or state_current.allow_self_consume)
-                    and (b.groups_in & S)
-                ]
-                candidates = [
-                    c for c in raw_candidates if not _missing_downstream_types(c, active_agents)
-                ]
+                raw_candidates: set[Agent] = set()
+                for grp in S:
+                    raw_candidates |= agents_by_group_in.get(grp, set())
+                if not state_current.allow_self_consume:
+                    raw_candidates.discard(state_current)
+                candidates = [c for c in raw_candidates if not missing_downstream_roles(c)]
                 if candidates:
                     break
                 logger.warning(
@@ -978,75 +958,72 @@ def main() -> None:
                     S,
                 )
                 time.sleep(5)
-                pool = [a for a in active_agents if a is not state_current] or active_agents
+                with agent_lock:
+                    current_active = set(active_agents)
+                pool = [a for a in current_active if a is not state_current] or list(current_active)
                 state_current = random.choice(pool)
 
+            candidates_set = set(candidates)
             if message_queue:
-                listener_candidates = [c for c in candidates if isinstance(c, Listener)]
+                listener_candidates = agents_by_role[Listener] & candidates_set
                 if not listener_candidates:
-                    listener_candidates = [
-                        l
-                        for l in active_agents
-                        if isinstance(l, Listener)
-                        and (l.groups_in & S)
-                        and (l is not state_current or state_current.allow_self_consume)
-                    ]
-                if len(listener_candidates) > 1:
-                    listener_candidates = [l for l in listener_candidates if l is not state_current]
+                    listener_candidates = set()
+                    for grp in S:
+                        listener_candidates |= (
+                            agents_by_group_in.get(grp, set()) & agents_by_role[Listener]
+                        )
+                    if not state_current.allow_self_consume:
+                        listener_candidates.discard(state_current)
                 if listener_candidates:
-                    state_current = random.choice(listener_candidates)
+                    state_current = random.choice(tuple(listener_candidates))
                 else:
-                    fallback = [l for l in active_agents if isinstance(l, Listener) and l is not state_current]
-                    if not fallback:
-                        fallback = [l for l in active_agents if isinstance(l, Listener)]
+                    fallback = (agents_by_role[Listener] - {state_current}) or agents_by_role[Listener]
                     if fallback:
-                        state_current = random.choice(fallback)
+                        state_current = random.choice(tuple(fallback))
                     else:
-                        if len(candidates) > 1:
-                            candidates = [b for b in candidates if b is not state_current]
-                        state_current = random.choice(candidates)
+                        if len(candidates_set) > 1 and state_current in candidates_set:
+                            candidates_set.remove(state_current)
+                        state_current = random.choice(tuple(candidates_set))
             else:
-                if len(candidates) > 1:
-                    candidates = [b for b in candidates if b is not state_current]
+                if len(candidates_set) > 1 and state_current in candidates_set:
+                    candidates_set.remove(state_current)
 
-                speaker_candidates = [c for c in candidates if isinstance(c, Speaker)]
-                ruminator_candidates = [
-                    c
-                    for c in candidates
-                    if isinstance(c, Ruminator)
-                    and not isinstance(c, (Ponderer, Doubter))
-                ]
-                archivist_candidates = [c for c in candidates if isinstance(c, Archivist)]
-                ponderer_candidates = [c for c in candidates if isinstance(c, Ponderer)]
-                doubter_candidates = [c for c in candidates if isinstance(c, Doubter)]
+                speaker_candidates = agents_by_role[Speaker] & candidates_set
+                ruminator_candidates = (
+                    (agents_by_role[Ruminator] - agents_by_role[Ponderer] - agents_by_role[Doubter])
+                    & candidates_set
+                )
+                archivist_candidates = agents_by_role[Archivist] & candidates_set
+                ponderer_candidates = agents_by_role[Ponderer] & candidates_set
+                doubter_candidates = agents_by_role[Doubter] & candidates_set
 
                 pools = []
                 weights = []
                 if speaker_candidates:
-                    pools.append(speaker_candidates)
+                    pools.append(list(speaker_candidates))
                     weights.append(talkativeness)
                 if ruminator_candidates:
-                    pools.append(ruminator_candidates)
+                    pools.append(list(ruminator_candidates))
                     weights.append(rumination)
                 if archivist_candidates:
-                    pools.append(archivist_candidates)
+                    pools.append(list(archivist_candidates))
                     weights.append(forgetfulness)
                 if ponderer_candidates:
-                    pools.append(ponderer_candidates)
+                    pools.append(list(ponderer_candidates))
                     weights.append(boredom)
                 if doubter_candidates:
-                    pools.append(doubter_candidates)
+                    pools.append(list(doubter_candidates))
                     weights.append(certainty)
 
                 if pools:
                     selected_pool = random.choices(pools, weights=weights, k=1)[0]
                     state_current = random.choice(selected_pool)
                 else:
-                    state_current = random.choice(candidates)
+                    state_current = random.choice(tuple(candidates_set))
 
             with agent_lock:
-                active_agents = [a for a in agents if a.active]
-            state_current = ensure_downstream(state_current, active_agents, candidates)
+                current_active = set(active_agents)
+            state_current = ensure_downstream(state_current, candidates_set)
 
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
