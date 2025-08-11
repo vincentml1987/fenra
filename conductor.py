@@ -664,9 +664,7 @@ def main() -> None:
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
-        consecutive_failures: defaultdict[str, int] = defaultdict(int)
-        backoff_secs: defaultdict[str, float] = defaultdict(lambda: 2.0)
-        MAX_CONSECUTIVE_FAILURES = 3
+        timeout_secs: defaultdict[str, float] = defaultdict(lambda: 900.0)
         def missing_downstream_roles(agent: Agent) -> List[str]:
             """Return a list of role names missing downstream from ``agent``."""
             S = set(agent.groups_out)
@@ -834,38 +832,28 @@ def main() -> None:
                     }
                 )
             try:
+                state_current.model.watchdog_timeout = timeout_secs[
+                    state_current.name
+                ]
                 reply = step_with_retry(
                     state_current, lambda: state_current.step(context)
                 )
             except Exception as exc:  # noqa: BLE001
                 name = state_current.name
-                consecutive_failures[name] += 1
-                if consecutive_failures[name] < MAX_CONSECUTIVE_FAILURES:
-                    delay = backoff_secs[name]
-                    logger.error(
-                        "Error from %s (attempt %d/%d): %s — retrying same agent after %.1fs",
-                        name,
-                        consecutive_failures[name],
-                        MAX_CONSECUTIVE_FAILURES,
-                        exc,
-                        delay,
-                    )
-                    time.sleep(delay)
-                    backoff_secs[name] = min(delay * 2, 30.0)
-                    continue
-                else:
-                    logger.error(
-                        "Giving up on %s after %d failed attempts: %s",
-                        name,
-                        MAX_CONSECUTIVE_FAILURES,
-                        exc,
-                    )
-                    consecutive_failures[name] = 0
-                    backoff_secs[name] = 2.0
-                    reply = ""
+                timeout_secs[name] *= 1.1
+                delay = 2.0
+                logger.error(
+                    "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
+                    name,
+                    exc,
+                    delay,
+                    timeout_secs[name],
+                )
+                time.sleep(delay)
+                continue
             else:
-                consecutive_failures[state_current.name] = 0
-                backoff_secs[state_current.name] = 2.0
+                timeout_secs[state_current.name] = 900.0
+                state_current.model.watchdog_timeout = 900.0
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             epoch += 1
