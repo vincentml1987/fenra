@@ -62,6 +62,10 @@ def create_object_logger(class_name: str) -> logging.Logger:
     return logger
 
 
+class TransientModelError(Exception):
+    """Raised when the model returns a transient server error."""
+
+
 class AITimeTracker:
     """Track recent successful generation times in AI Seconds."""
 
@@ -300,13 +304,21 @@ def generate_with_watchdog(
     payload: Dict,
     *,
     base_timeout: float = 900,
+    agent_name: str | None = None,
 ) -> str:
     """Call Ollama with a fixed watchdog timeout."""
-    logger.debug("Entering generate_with_watchdog base_timeout=%s", base_timeout)
+    logger.debug(
+        "Entering generate_with_watchdog base_timeout=%s agent_name=%s",
+        base_timeout,
+        agent_name,
+    )
 
     model_id = payload.get("model", "unknown")
     wd_logger = create_object_logger(f"Watchdog-{model_id}")
-    wd_logger.info("Starting generation with watchdog")
+    if agent_name:
+        wd_logger.info("Starting generation for %s with watchdog", agent_name)
+    else:
+        wd_logger.info("Starting generation with watchdog")
 
     start = time.time()
     timeout = base_timeout
@@ -324,8 +336,14 @@ def generate_with_watchdog(
             json=payload,
             timeout=timeout,
         )
+        if resp.status_code >= 500:
+            raise TransientModelError(
+                f"Ollama API error: {resp.status_code} {resp.text}"
+            )
         if resp.status_code != 200:
-            raise RuntimeError(f"Ollama API error: {resp.status_code} {resp.text}")
+            raise RuntimeError(
+                f"Ollama API error: {resp.status_code} {resp.text}"
+            )
         text = parse_response(resp)
         wd_logger.info("Generation complete")
         logger.debug("Exiting generate_with_watchdog")
