@@ -139,6 +139,7 @@ class AIModel:
             result_text = generate_with_watchdog(
                 payload,
                 base_timeout=self.watchdog_timeout,
+                agent_name=self.name,
             )
         except requests.Timeout:
             raise
@@ -220,6 +221,7 @@ class AIModel:
             result_text = generate_with_watchdog(
                 payload,
                 base_timeout=self.watchdog_timeout,
+                agent_name=self.name,
             )
         except requests.Timeout:
             raise
@@ -273,6 +275,7 @@ class AIModel:
             result_text = generate_with_watchdog(
                 payload,
                 base_timeout=self.watchdog_timeout,
+                agent_name=self.name,
             )
         except requests.Timeout:
             raise
@@ -403,8 +406,8 @@ class Tracer(Agent):
 
         text = generate_with_watchdog(
             payload,
-            self.model.model_size,
-            WATCHDOG_TRACKER,
+            base_timeout=self.model.watchdog_timeout,
+            agent_name=self.name,
         )
         text = strip_think_markup(text)
         cleaned = re.sub(r"[^a-zA-Z]", "", text).lower()
