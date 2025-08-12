@@ -48,6 +48,18 @@ def _parse_debug_level(path: str) -> int:
 
 logger = create_object_logger("Conductor")
 
+
+def _agent_to_ui(agent: Agent) -> dict:
+    role = getattr(agent, "role_prompt", "").strip().lower()
+    if not role:
+        role = agent.__class__.__name__.lower()
+    return {
+        "name": agent.name,
+        "role": role,
+        "groups_in": sorted(getattr(agent, "groups_in", [])),
+        "groups_out": sorted(getattr(agent, "groups_out", [])),
+    }
+
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
 
@@ -831,6 +843,13 @@ def main() -> None:
                         "groups": list(state_current.groups_in),
                     }
                 )
+            try:
+                if ui and hasattr(ui, "update_topology"):
+                    active = _agent_to_ui(state_current)
+                    roster = [_agent_to_ui(a) for a in list(active_agents) or agents]
+                    ui.update_topology(active, roster)
+            except Exception:  # noqa: BLE001
+                logger.exception("update_topology failed (non-fatal)")
             try:
                 state_current.model.watchdog_timeout = timeout_secs[
                     state_current.name
