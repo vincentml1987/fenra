@@ -661,12 +661,246 @@ def main() -> None:
     messages_to_humans: List[Dict[str, object]] = load_messages_to_humans()
     chat_lock = threading.Lock()
 
+
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
         timeout_secs: defaultdict[str, float] = defaultdict(lambda: 900.0)
-        def missing_downstream_roles(agent: Agent) -> List[str]:
-            """Return a list of role names missing downstream from ``agent``."""
+        topic_list: List[Dict[str, object]] = []
+        topic_lock = threading.Lock()
+
+        def update_topic_stats_ui() -> None:
+            """Update the UI with current topic statistics."""
+            with topic_lock:
+                count = len(topic_list)
+                oldest = (
+                    time.time() - min((t["created"] for t in topic_list), default=time.time())
+                )
+                avg_hops = (
+                    sum(t["hops"] for t in topic_list) / count if count else 0.0
+                )
+            if hasattr(ui, "update_topics"):
+                ui.root.after(0, ui.update_topics, count, oldest, avg_hops)
+
+        def save_topic_transcript(topic: Dict[str, object]) -> None:
+            """Persist a topic's transcript to disk for audit."""
+            os.makedirs("topics", exist_ok=True)
+            safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", topic["id"])
+            path = os.path.join("topics", f"{safe_id}.txt")
+            lines = [
+                f"[{hop['timestamp']}] {hop['agent']}: {hop['output']}\n"
+                for hop in topic.get("trail", [])
+            ]
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.writelines(lines)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to write topic transcript %s: %s", path, exc)
+
+        def run_archivists_after_speaker(entry: Dict[str, object], topic: Dict[str, object]) -> None:
+            """Run archivists that can see the speaker's output."""
+            speaker_groups = set(entry.get("groups", []))
+            archivists_to_run = [
+                a
+                for a in agents_by_role.get(Archivist, set())
+                if speaker_groups & set(a.groups_in)
+            ]
+            for archivist in archivists_to_run:
+                context = [
+                    m
+                    for m in chat_log
+                    if set(m.get("groups", ["general"])) & set(archivist.groups_in)
+                ]
+                context.append(
+                    {
+                        "sender": "Topic",
+                        "timestamp": "",
+                        "message": topic["topic_content"],
+                        "groups": list(archivist.groups_in),
+                    }
+                )
+                try:
+                    archivist.model.watchdog_timeout = timeout_secs[archivist.name]
+                    reply = step_with_retry(archivist, lambda: archivist.step(context))
+                except Exception as exc:  # noqa: BLE001
+                    name = archivist.name
+                    timeout_secs[name] *= 1.1
+                    delay = 2.0
+                    logger.error(
+                        "Error from %s: %s — retrying after %.1fs (timeout %.1fs)",
+                        name,
+                        exc,
+                        delay,
+                        timeout_secs[name],
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    timeout_secs[archivist.name] = 900.0
+                    archivist.model.watchdog_timeout = 900.0
+
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                groups_target = list(
+                    archivist.groups_out or archivist.groups_in or ["general"]
+                )
+                summary_dir = os.path.join("chatlogs", "summarized")
+                os.makedirs(summary_dir, exist_ok=True)
+                with chat_lock:
+                    chat_log[:] = [
+                        e
+                        for e in chat_log
+                        if not (set(e.get("groups", ["general"])) & set(groups_target))
+                    ]
+                text = f"[{ts}] {archivist.name}: {reply}\n{'-' * 80}\n\n"
+                for group in groups_target:
+                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    if os.path.exists(src):
+                        dest = os.path.join(
+                            summary_dir,
+                            f"chat_log_{group}_{ts.replace(' ', '_').replace(':', '-')}.txt",
+                        )
+                        try:
+                            shutil.move(src, dest)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "Failed to move %s to %s: %s", src, dest, exc
+                            )
+                    with open(src, "w", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                entry_arch = {
+                    "sender": archivist.name,
+                    "timestamp": ts,
+                    "message": reply,
+                    "groups": groups_target,
+                    "epoch": time.time(),
+                }
+                with chat_lock:
+                    chat_log.append(entry_arch)
+                ui.root.after(0, ui.log, entry_arch)
+                update_weights(archivist)
+
+        def remove_topic(topic: Dict[str, object]) -> None:
+            """Remove ``topic`` from the list and persist its transcript."""
+            with topic_lock:
+                if topic in topic_list:
+                    topic_list.remove(topic)
+            save_topic_transcript(topic)
+
+        def force_resolve_topic(topic: Dict[str, object]) -> None:
+            """Resolve a topic by forcing a speaker to respond when hop limit reached."""
+            nonlocal epoch
+            origin_groups = set(topic.get("origin_groups", []))
+            origin_in = set(topic.get("origin_listener_groups_in", []))
+            speaker_candidates = [
+                s
+                for s in agents_by_role.get(Speaker, set())
+                if set(s.groups_in) & origin_groups
+            ]
+            preferred = [
+                s
+                for s in speaker_candidates
+                if set(s.groups_out) & origin_in
+            ]
+            pool = preferred or speaker_candidates or list(agents_by_role.get(Speaker, set()))
+            if not pool:
+                remove_topic(topic)
+                return
+            speaker = random.choice(pool)
+            context = [
+                m
+                for m in chat_log
+                if set(m.get("groups", ["general"])) & set(speaker.groups_in)
+            ]
+            context.append(
+                {
+                    "sender": "Topic",
+                    "timestamp": "",
+                    "message": topic["topic_content"],
+                    "groups": list(speaker.groups_in),
+                }
+            )
+            context.append(
+                {
+                    "sender": "System",
+                    "timestamp": "",
+                    "message": (
+                        "You must focus on this message, specifically, when generating your response: "
+                        f"{topic['originating_message']}"
+                    ),
+                    "groups": list(speaker.groups_in),
+                }
+            )
+            try:
+                speaker.model.watchdog_timeout = timeout_secs[speaker.name]
+                reply = step_with_retry(speaker, lambda: speaker.step(context))
+            except Exception as exc:  # noqa: BLE001
+                name = speaker.name
+                timeout_secs[name] *= 1.1
+                delay = 2.0
+                logger.error(
+                    "Error from %s: %s — retrying after %.1fs (timeout %.1fs)",
+                    name,
+                    exc,
+                    delay,
+                    timeout_secs[name],
+                )
+                time.sleep(delay)
+                return
+            else:
+                timeout_secs[speaker.name] = 900.0
+                speaker.model.watchdog_timeout = 900.0
+
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            epoch += 1
+            groups_target = list(speaker.groups_out or speaker.groups_in or ["general"])
+            entry = {
+                "sender": speaker.name,
+                "timestamp": ts,
+                "message": reply,
+                "groups": groups_target,
+                "epoch": epoch,
+            }
+            with chat_lock:
+                chat_log.append(entry)
+            text = f"[{ts}] {speaker.name}: {reply}\n{'-' * 80}\n\n"
+            for group in groups_target:
+                fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                os.makedirs(os.path.dirname(fname), exist_ok=True)
+                with open(fname, "a", encoding="utf-8") as log_file:
+                    log_file.write(text)
+            logger.debug(text.strip())
+            ui.root.after(0, ui.log, entry)
+
+            topic["topic_content"] += f"\n{reply}"
+            topic["trail"].append({"agent": speaker.name, "output": reply, "timestamp": ts})
+            topic["hops"] += 1
+
+            messages_to_humans.append(entry)
+            save_messages_to_humans(messages_to_humans)
+            append_human_log(entry)
+            try:
+                post_to_discord(entry["message"])
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to post Speaker message to Discord: %s", exc)
+            ui.root.after(0, ui.update_sent, list(messages_to_humans))
+            remove_topic(topic)
+            update_weights(speaker)
+            run_archivists_after_speaker(entry, topic)
+
+        def missing_downstream_roles(
+            agent: Agent, *, require_archivist: bool = True
+        ) -> List[str]:
+            """Return a list of role names missing downstream from ``agent``.
+
+            Parameters
+            ----------
+            agent:
+                The agent to inspect.
+            require_archivist:
+                Whether an Archivist must appear downstream. Topic hops
+                exclude Archivists from their pool, so this can be disabled
+                to avoid an endless search when none are reachable.
+            """
             S = set(agent.groups_out)
             present: Set[type] = set()
             for grp in S:
@@ -674,13 +908,35 @@ def main() -> None:
                 if not agent.allow_self_consume and grp in agent.groups_in:
                     roles.discard(type(agent))
                 present |= roles
-            required = {Listener, Speaker, Ruminator, Archivist, Ponderer, Doubter}
+            required = {Listener, Speaker, Ruminator, Ponderer, Doubter}
+            if require_archivist:
+                required.add(Archivist)
             return [cls.__name__ for cls in required if cls not in present]
 
-        def ensure_downstream(candidate: Agent, pool: Set[Agent] | None = None) -> Agent:
-            """Return an agent that has all downstream role types."""
+        def ensure_downstream(
+            candidate: Agent,
+            pool: Set[Agent] | None = None,
+            *,
+            require_archivist: bool = True,
+        ) -> Agent:
+            """Return an agent that has all downstream role types.
+
+            Parameters
+            ----------
+            candidate:
+                Initial agent choice.
+            pool:
+                Set of agents to re-select from if downstream roles are
+                missing. When provided, re-selection stays within ``pool``.
+            require_archivist:
+                Whether an Archivist must be reachable downstream. Topic hops
+                pass ``require_archivist=False`` because they filter out
+                Archivists from their pool.
+            """
             while True:
-                missing = missing_downstream_roles(candidate)
+                missing = missing_downstream_roles(
+                    candidate, require_archivist=require_archivist
+                )
                 if not missing:
                     return candidate
                 logger.warning(
@@ -689,8 +945,96 @@ def main() -> None:
                     ", ".join(missing),
                 )
                 time.sleep(5)
-                choices = list((pool or active_agents) - {candidate}) or list(pool or active_agents)
+                choices = list((pool or active_agents) - {candidate}) or list(
+                    pool or active_agents
+                )
                 candidate = random.choice(choices)
+
+        def select_next_agent(current: Agent) -> Agent:
+            """Return the next agent using weighted role logic."""
+            S = set(current.groups_out)
+            raw_candidates: Set[Agent] = set()
+            for grp in S:
+                raw_candidates |= agents_by_group_in.get(grp, set())
+            if not current.allow_self_consume:
+                raw_candidates.discard(current)
+            if not raw_candidates:
+                raw_candidates = active_agents - {current}
+            candidates = {c for c in raw_candidates if not missing_downstream_roles(c)}
+            if not candidates:
+                candidates = raw_candidates
+            if len(candidates) > 1:
+                candidates.discard(current)
+
+            speaker_candidates = agents_by_role.get(Speaker, set()) & candidates
+            ruminator_candidates = (
+                agents_by_role.get(Ruminator, set())
+                - agents_by_role.get(Ponderer, set())
+                - agents_by_role.get(Doubter, set())
+            ) & candidates
+            archivist_candidates = agents_by_role.get(Archivist, set()) & candidates
+            ponderer_candidates = agents_by_role.get(Ponderer, set()) & candidates
+            doubter_candidates = agents_by_role.get(Doubter, set()) & candidates
+
+            pools: List[List[Agent]] = []
+            weights: List[float] = []
+            if speaker_candidates:
+                pools.append(list(speaker_candidates))
+                weights.append(talkativeness)
+            if ruminator_candidates:
+                pools.append(list(ruminator_candidates))
+                weights.append(rumination)
+            if archivist_candidates:
+                pools.append(list(archivist_candidates))
+                weights.append(forgetfulness)
+            if ponderer_candidates:
+                pools.append(list(ponderer_candidates))
+                weights.append(boredom)
+            if doubter_candidates:
+                pools.append(list(doubter_candidates))
+                weights.append(certainty)
+
+            if pools:
+                selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                candidate = random.choice(selected_pool)
+            else:
+                candidate = random.choice(list(candidates))
+
+            return ensure_downstream(candidate, candidates, require_archivist=True)
+
+        def update_weights(agent: Agent) -> None:
+            """Update global mood weights based on ``agent`` type."""
+            nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
+            if isinstance(agent, Speaker):
+                talkativeness *= max(0.0, 1 - attentiveness / 100.0)
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(agent, Listener):
+                talkativeness *= 1 + stimulation / 100.0
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(agent, Archivist):
+                forgetfulness *= max(0.0, 1 - focus / 100.0)
+                certainty *= 1 + doubting / 100.0
+            elif isinstance(agent, Ponderer):
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= max(0.0, 1 - fixation / 100.0)
+            elif isinstance(agent, Doubter):
+                forgetfulness *= 1 + distraction / 100.0
+                certainty *= max(0.0, 1 - uncertainty / 100.0)
+            else:
+                talkativeness *= 1 + excitement / 100.0
+                forgetfulness *= 1 + distraction / 100.0
+                boredom *= 1 + restlessness / 100.0
+            ui.root.after(
+                0,
+                ui.update_weights,
+                talkativeness,
+                rumination,
+                forgetfulness,
+                boredom,
+                certainty,
+            )
 
         if message_queue:
             candidate = next(iter(agents_by_role.get(Listener, set())), None)
@@ -700,6 +1044,8 @@ def main() -> None:
         if candidate is None and active_agents:
             candidate = random.choice(tuple(active_agents))
         state_current = ensure_downstream(candidate)
+        last_topic_index = 0
+        topic_turn = False
         epoch = 0
         ui.root.after(
             0,
@@ -721,19 +1067,14 @@ def main() -> None:
                 groups = msg.get("groups", ["general"])
                 entry = {
                     "sender": msg.get("sender", "Human"),
-                    "timestamp": msg.get(
-                        "timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ),
+                    "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                     "message": msg.get("message", ""),
                     "groups": groups,
                     "epoch": time.time(),
                 }
                 with chat_lock:
                     chat_log.append(entry)
-                text = (
-                    f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
-                    f"{'-' * 80}\n\n"
-                )
+                text = f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n{'-' * 80}\n\n"
                 for group in groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                     os.makedirs(os.path.dirname(fname), exist_ok=True)
@@ -742,312 +1083,378 @@ def main() -> None:
                 logger.debug(text.strip())
                 ui.root.after(0, ui.log, entry)
 
-            if not active_agents:
-                time.sleep(0.5)
-                continue
-            if state_current not in active_agents:
-                state_current = random.choice(tuple(active_agents))
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+            human_msg = None
             with chat_lock:
                 message_queue[:] = load_message_queue()
+                if message_queue:
+                    human_msg = message_queue.pop(0)
+                    save_message_queue(message_queue)
+                    ui.root.after(0, ui.update_queue, list(message_queue))
 
-            if message_queue and not isinstance(state_current, Listener):
-                S = set(state_current.groups_out)
-                listener_candidates: Set[Agent] = set()
-                for grp in S:
-                    listener_candidates |= (
-                        agents_by_group_in.get(grp, set())
-                        & agents_by_role.get(Listener, set())
-                    )
-                if not state_current.allow_self_consume:
-                    listener_candidates.discard(state_current)
-                if not listener_candidates:
-                    listener_candidates = set(agents_by_role.get(Listener, set()))
-                if listener_candidates:
-                    state_current = random.choice(tuple(listener_candidates))
-
-            if isinstance(state_current, Listener):
-                human_entry = None
-                with chat_lock:
-                    message_queue[:] = load_message_queue()
-                    if message_queue:
-                        msg = message_queue.pop(0)
-                        save_message_queue(message_queue)
-                        ui.root.after(0, ui.update_queue, list(message_queue))
-                        human_entry = {
-                            "sender": msg.get("sender", "Human"),
-                            "timestamp": msg.get("timestamp", timestamp),
-                            "message": msg.get("message", ""),
-                            "groups": msg.get(
-                                "groups",
-                                list(state_current.groups_in) or ["general"],
-                            ),
-                            "epoch": time.time(),
-                        }
-                        chat_log.append(human_entry)
-                if human_entry:
-                    text = (
-                        f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
-                        f"{'-' * 80}\n\n"
-                    )
-                    for group in human_entry["groups"]:
-                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                        os.makedirs(os.path.dirname(fname), exist_ok=True)
-                        with open(fname, "a", encoding="utf-8") as log_file:
-                            log_file.write(text)
-                    logger.debug(text.strip())
-                    ui.root.after(0, ui.log, human_entry)
-
-            with chat_lock:
-                context = [
-                    m
-                    for m in chat_log
-                    if set(m.get("groups", ["general"])) & set(state_current.groups_in)
-                ]
-
-            if isinstance(state_current, Ponderer):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Talk about anything except what was said above. "
-                            "Do not self-reference this instruction. Just bring up a new topic naturally."
-                        ),
-                        "groups": list(state_current.groups_in),
-                    }
-                )
-            elif isinstance(state_current, Doubter):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Argue against everything that was said above. "
-                            "Do not self-reference this instruction. Just debate against what has been said."
-                        ),
-                        "groups": list(state_current.groups_in),
-                    }
-                )
-            try:
-                state_current.model.watchdog_timeout = timeout_secs[
-                    state_current.name
-                ]
-                reply = step_with_retry(
-                    state_current, lambda: state_current.step(context)
-                )
-            except Exception as exc:  # noqa: BLE001
-                name = state_current.name
-                timeout_secs[name] *= 1.1
-                delay = 2.0
-                logger.error(
-                    "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
-                    name,
-                    exc,
-                    delay,
-                    timeout_secs[name],
-                )
-                time.sleep(delay)
-                continue
-            else:
-                timeout_secs[state_current.name] = 900.0
-                state_current.model.watchdog_timeout = 900.0
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            epoch += 1
-            groups_target = list(state_current.groups_out or state_current.groups_in or ["general"])
-            if isinstance(state_current, Archivist):
-                summary_dir = os.path.join("chatlogs", "summarized")
-                os.makedirs(summary_dir, exist_ok=True)
-
-                with chat_lock:
-                    chat_log[:] = [
-                        e
-                        for e in chat_log
-                        if not (set(e.get("groups", ["general"])) & set(groups_target))
-                    ]
-
-                text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
-                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    if os.path.exists(src):
-                        dest = os.path.join(
-                            summary_dir,
-                            f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
-                        )
-                        try:
-                            shutil.move(src, dest)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.error("Failed to move %s to %s: %s", src, dest, exc)
-                    with open(src, "w", encoding="utf-8") as log_file:
-                        log_file.write(text)
-
-                entry = {
-                    "sender": state_current.name,
+            if human_msg:
+                timestamp = human_msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                groups = human_msg.get("groups", ["general"])
+                human_entry = {
+                    "sender": human_msg.get("sender", "Human"),
                     "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
+                    "message": human_msg.get("message", ""),
+                    "groups": groups,
+                    "epoch": time.time(),
                 }
                 with chat_lock:
-                    chat_log.append(entry)
-                ui.root.after(0, ui.log, entry)
-            else:
-                entry = {
-                    "sender": state_current.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
-                }
-                with chat_lock:
-                    chat_log.append(entry)
-                text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
+                    chat_log.append(human_entry)
+                text = f"[{timestamp}] {human_entry['sender']}: {human_entry['message']}\n{'-' * 80}\n\n"
+                for group in groups:
                     fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
                     os.makedirs(os.path.dirname(fname), exist_ok=True)
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 logger.debug(text.strip())
-                ui.root.after(0, ui.log, entry)
-                if isinstance(state_current, Speaker):
-                    messages_to_humans.append(entry)
-                    save_messages_to_humans(messages_to_humans)
-                    append_human_log(entry)
-                    try:
-                        post_to_discord(entry["message"])
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("Failed to post Speaker message to Discord: %s", exc)
-                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
+                ui.root.after(0, ui.log, human_entry)
 
-            # Apply PTCD updates regardless of agent type
-            if isinstance(state_current, Speaker):
-                talkativeness *= max(0.0, 1 - attentiveness / 100.0)
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - extroversion / 100.0)
-            elif isinstance(state_current, Listener):
-                talkativeness *= 1 + stimulation / 100.0
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - extroversion / 100.0)
-            elif isinstance(state_current, Archivist):
-                forgetfulness *= max(0.0, 1 - focus / 100.0)
-                certainty *= 1 + doubting / 100.0
-            elif isinstance(state_current, Ponderer):
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - fixation / 100.0)
-            elif isinstance(state_current, Doubter):
-                forgetfulness *= 1 + distraction / 100.0
-                certainty *= max(0.0, 1 - uncertainty / 100.0)
-            else:
-                talkativeness *= 1 + excitement / 100.0
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= 1 + restlessness / 100.0
-            logger.debug(
-                "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
-                talkativeness,
-                forgetfulness,
-            )
-            ui.root.after(
-                0,
-                ui.update_weights,
-                talkativeness,
-                rumination,
-                forgetfulness,
-                boredom,
-                certainty,
-            )
-
-            while True:
-                S = set(state_current.groups_out)
-                raw_candidates_set: Set[Agent] = set()
-                for grp in S:
-                    raw_candidates_set |= agents_by_group_in.get(grp, set())
-                if not state_current.allow_self_consume:
-                    raw_candidates_set.discard(state_current)
-                candidates_set = {
-                    c for c in raw_candidates_set if not missing_downstream_roles(c)
-                }
-                if candidates_set:
-                    break
-                logger.warning(
-                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting in 5s",
-                    state_current.name,
-                    S,
-                )
-                time.sleep(5)
-                pool = (active_agents - {state_current}) or active_agents
-                state_current = random.choice(tuple(pool))
-
-            if message_queue:
-                listener_candidates = {c for c in candidates_set if isinstance(c, Listener)}
-                if not listener_candidates:
-                    listener_candidates = {
-                        l
-                        for l in agents_by_role.get(Listener, set())
-                        if (l.groups_in & S)
-                        and (l is not state_current or state_current.allow_self_consume)
-                    }
-                if len(listener_candidates) > 1:
-                    listener_candidates.discard(state_current)
+                listener_candidates = list(agents_by_role.get(Listener, set()))
                 if listener_candidates:
-                    state_current = random.choice(tuple(listener_candidates))
-                else:
-                    fallback = {
-                        l
-                        for l in agents_by_role.get(Listener, set())
-                        if l is not state_current
-                    }
-                    if not fallback:
-                        fallback = set(agents_by_role.get(Listener, set()))
-                    if fallback:
-                        state_current = random.choice(tuple(fallback))
+                    human_groups = set(groups)
+                    visible = [
+                        l for l in listener_candidates if human_groups & set(l.groups_in)
+                    ]
+                    listener = random.choice(visible or listener_candidates)
+                    context = [
+                        m
+                        for m in chat_log
+                        if set(m.get("groups", ["general"])) & set(listener.groups_in)
+                    ]
+                    try:
+                        listener.model.watchdog_timeout = timeout_secs[listener.name]
+                        reply = step_with_retry(listener, lambda: listener.step(context))
+                    except Exception as exc:  # noqa: BLE001
+                        name = listener.name
+                        timeout_secs[name] *= 1.1
+                        delay = 2.0
+                        logger.error(
+                            "Error from %s: %s — retrying after %.1fs (timeout %.1fs)",
+                            name,
+                            exc,
+                            delay,
+                            timeout_secs[name],
+                        )
+                        time.sleep(delay)
                     else:
-                        if len(candidates_set) > 1:
-                            candidates_set.discard(state_current)
-                        state_current = random.choice(tuple(candidates_set))
-            else:
-                if len(candidates_set) > 1:
-                    candidates_set.discard(state_current)
+                        timeout_secs[listener.name] = 900.0
+                        listener.model.watchdog_timeout = 900.0
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        epoch += 1
+                        groups_target = list(listener.groups_out or listener.groups_in or ["general"])
+                        entry = {
+                            "sender": listener.name,
+                            "timestamp": ts,
+                            "message": reply,
+                            "groups": groups_target,
+                            "epoch": epoch,
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                        text = f"[{ts}] {listener.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in groups_target:
+                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            os.makedirs(os.path.dirname(fname), exist_ok=True)
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                        logger.debug(text.strip())
+                        ui.root.after(0, ui.log, entry)
+                        with topic_lock:
+                            topic_list.append(
+                                {
+                                    "id": f"{ts.replace(' ', '_').replace(':', '-')}_{listener.name}",
+                                    "originating_message": human_entry["message"],
+                                    "topic_content": reply,
+                                    "current_agent": listener.name,
+                                    "origin_groups": groups_target,
+                                    "origin_listener_groups_in": list(listener.groups_in),
+                                    "trail": [
+                                        {
+                                            "agent": listener.name,
+                                            "output": reply,
+                                            "timestamp": ts,
+                                        }
+                                    ],
+                                    "hops": 0,
+                                    "max_hops": 20,
+                                    "created": time.time(),
+                                }
+                            )
+                        update_weights(listener)
 
-                speaker_candidates = agents_by_role.get(Speaker, set()) & candidates_set
-                ruminator_candidates = (
-                    agents_by_role.get(Ruminator, set())
-                    - agents_by_role.get(Ponderer, set())
-                    - agents_by_role.get(Doubter, set())
-                ) & candidates_set
-                archivist_candidates = agents_by_role.get(Archivist, set()) & candidates_set
-                ponderer_candidates = agents_by_role.get(Ponderer, set()) & candidates_set
-                doubter_candidates = agents_by_role.get(Doubter, set()) & candidates_set
+            process_topic_this_tick = topic_turn
+            topic_turn = not topic_turn
+            try:
+                with topic_lock:
+                    expired_topics = [
+                        t for t in topic_list if t["hops"] >= t.get("max_hops", 20)
+                    ]
+                for t in expired_topics:
+                    force_resolve_topic(t)
+                with topic_lock:
+                    active_topics = [
+                        t for t in topic_list if t["hops"] < t.get("max_hops", 20)
+                    ]
+                if process_topic_this_tick and active_topics:
+                    active_topics.sort(key=lambda t: (t["hops"], t["created"]))
+                    topic = active_topics[last_topic_index % len(active_topics)]
+                    prev_name = topic.get("current_agent")
+                    prev_agent = next((a for a in active_agents if a.name == prev_name), None)
+                    base_agent = prev_agent or random.choice(tuple(active_agents))
 
-                pools = []
-                weights = []
-                if speaker_candidates:
-                    pools.append(list(speaker_candidates))
-                    weights.append(talkativeness)
-                if ruminator_candidates:
-                    pools.append(list(ruminator_candidates))
-                    weights.append(rumination)
-                if archivist_candidates:
-                    pools.append(list(archivist_candidates))
-                    weights.append(forgetfulness)
-                if ponderer_candidates:
-                    pools.append(list(ponderer_candidates))
-                    weights.append(boredom)
-                if doubter_candidates:
-                    pools.append(list(doubter_candidates))
-                    weights.append(certainty)
+                    def select_next_agent_for_topic(agent: Agent) -> Agent | None:
+                        non_archivists: Set[Agent] = {
+                            a for a in active_agents if not isinstance(a, Archivist)
+                        }
+                        if not non_archivists:
+                            return None
 
-                if pools:
-                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
-                    state_current = random.choice(selected_pool)
+                        visible: Set[Agent] = {
+                            a
+                            for a in non_archivists
+                            if set(a.groups_in)
+                            & (set(topic["origin_groups"]) | set(topic.get("origin_listener_groups_in", [])))
+                        }
+                        pool: Set[Agent] = visible or non_archivists
+
+                        candidate = select_next_agent(agent)
+                        tries = 0
+                        while (
+                            isinstance(candidate, Archivist)
+                            or candidate not in pool
+                        ) and tries < 5:
+                            candidate = select_next_agent(candidate)
+                            tries += 1
+                        if isinstance(candidate, Archivist) or candidate not in pool:
+                            candidate = random.choice(list(pool))
+                        return ensure_downstream(candidate, pool, require_archivist=False)
+
+                    next_agent = select_next_agent_for_topic(base_agent)
+                    if next_agent is not None:
+                        context = [
+                            m
+                            for m in chat_log
+                            if set(m.get("groups", ["general"])) & set(next_agent.groups_in)
+                        ]
+                        context.append(
+                            {
+                                "sender": "Topic",
+                                "timestamp": "",
+                                "message": topic["topic_content"],
+                                "groups": list(next_agent.groups_in),
+                            }
+                        )
+                        context.append(
+                            {
+                                "sender": "System",
+                                "timestamp": "",
+                                "message": (
+                                    "You must focus on this message, specifically, when generating your response: "
+                                    f"{topic['originating_message']}"
+                                ),
+                                "groups": list(next_agent.groups_in),
+                            }
+                        )
+                        try:
+                            next_agent.model.watchdog_timeout = timeout_secs[next_agent.name]
+                            reply = step_with_retry(next_agent, lambda: next_agent.step(context))
+                        except Exception as exc:  # noqa: BLE001
+                            name = next_agent.name
+                            timeout_secs[name] *= 1.1
+                            delay = 2.0
+                            logger.error(
+                                "Error from %s: %s — retrying after %.1fs (timeout %.1fs)",
+                                name,
+                                exc,
+                                delay,
+                                timeout_secs[name],
+                            )
+                            time.sleep(delay)
+                            continue
+                        else:
+                            timeout_secs[next_agent.name] = 900.0
+                            next_agent.model.watchdog_timeout = 900.0
+
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        epoch += 1
+                        groups_target = list(
+                            next_agent.groups_out or next_agent.groups_in or ["general"]
+                        )
+                        entry = {
+                            "sender": next_agent.name,
+                            "timestamp": ts,
+                            "message": reply,
+                            "groups": groups_target,
+                            "epoch": epoch,
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                        text = f"[{ts}] {next_agent.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in groups_target:
+                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            os.makedirs(os.path.dirname(fname), exist_ok=True)
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                        logger.debug(text.strip())
+                        ui.root.after(0, ui.log, entry)
+
+                        topic["topic_content"] += f"\n{reply}"
+                        topic["trail"].append(
+                            {"agent": next_agent.name, "output": reply, "timestamp": ts}
+                        )
+                        topic["hops"] += 1
+
+                        if isinstance(next_agent, Speaker):
+                            messages_to_humans.append(entry)
+                            save_messages_to_humans(messages_to_humans)
+                            append_human_log(entry)
+                            try:
+                                post_to_discord(entry["message"])
+                            except Exception as exc:  # noqa: BLE001
+                                logger.error(
+                                    "Failed to post Speaker message to Discord: %s", exc
+                                )
+                            ui.root.after(0, ui.update_sent, list(messages_to_humans))
+                            remove_topic(topic)
+                            run_archivists_after_speaker(entry, topic)
+                        else:
+                            topic["current_agent"] = next_agent.name
+                        update_weights(next_agent)
+                        last_topic_index += 1
+
+                if not active_agents:
+                    continue
+                if state_current not in active_agents:
+                    state_current = random.choice(tuple(active_agents))
+
+                context = [
+                    m
+                    for m in chat_log
+                    if set(m.get("groups", ["general"])) & set(state_current.groups_in)
+                ]
+                if isinstance(state_current, Ponderer):
+                    context.append(
+                        {
+                            "sender": "System",
+                            "timestamp": "",
+                            "message": (
+                                "Instruction: Talk about anything except what was said above. "
+                                "Do not self-reference this instruction. Just bring up a new topic naturally."
+                            ),
+                            "groups": list(state_current.groups_in),
+                        }
+                    )
+                elif isinstance(state_current, Doubter):
+                    context.append(
+                        {
+                            "sender": "System",
+                            "timestamp": "",
+                            "message": (
+                                "Instruction: Argue against everything that was said above. "
+                                "Do not self-reference this instruction. Just debate against what has been said."
+                            ),
+                            "groups": list(state_current.groups_in),
+                        }
+                    )
+                try:
+                    state_current.model.watchdog_timeout = timeout_secs[state_current.name]
+                    reply = step_with_retry(state_current, lambda: state_current.step(context))
+                except Exception as exc:  # noqa: BLE001
+                    name = state_current.name
+                    timeout_secs[name] *= 1.1
+                    delay = 2.0
+                    logger.error(
+                        "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
+                        name,
+                        exc,
+                        delay,
+                        timeout_secs[name],
+                    )
+                    time.sleep(delay)
+                    continue
                 else:
-                    state_current = random.choice(list(candidates_set))
+                    timeout_secs[state_current.name] = 900.0
+                    state_current.model.watchdog_timeout = 900.0
 
-            state_current = ensure_downstream(state_current, candidates_set)
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                epoch += 1
+                groups_target = list(
+                    state_current.groups_out or state_current.groups_in or ["general"]
+                )
+                if isinstance(state_current, Archivist):
+                    summary_dir = os.path.join("chatlogs", "summarized")
+                    os.makedirs(summary_dir, exist_ok=True)
+                    with chat_lock:
+                        chat_log[:] = [
+                            e
+                            for e in chat_log
+                            if not (set(e.get("groups", ["general"])) & set(groups_target))
+                        ]
+                    text = f"[{ts}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
+                    for group in groups_target:
+                        src = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        if os.path.exists(src):
+                            dest = os.path.join(
+                                "chatlogs",
+                                "summarized",
+                                f"chat_log_{group}_{ts.replace(' ', '_').replace(':', '-')}.txt",
+                            )
+                            try:
+                                shutil.move(src, dest)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.error(
+                                    "Failed to move %s to %s: %s", src, dest, exc
+                                )
+                        with open(src, "w", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    entry = {
+                        "sender": state_current.name,
+                        "timestamp": ts,
+                        "message": reply,
+                        "groups": groups_target,
+                        "epoch": epoch,
+                    }
+                    with chat_lock:
+                        chat_log.append(entry)
+                    ui.root.after(0, ui.log, entry)
+                else:
+                    entry = {
+                        "sender": state_current.name,
+                        "timestamp": ts,
+                        "message": reply,
+                        "groups": groups_target,
+                        "epoch": epoch,
+                    }
+                    with chat_lock:
+                        chat_log.append(entry)
+                    text = f"[{ts}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
+                    for group in groups_target:
+                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        with open(fname, "a", encoding="utf-8") as log_file:
+                            log_file.write(text)
+                    logger.debug(text.strip())
+                    ui.root.after(0, ui.log, entry)
+                    if isinstance(state_current, Speaker):
+                        messages_to_humans.append(entry)
+                        save_messages_to_humans(messages_to_humans)
+                        append_human_log(entry)
+                        try:
+                            post_to_discord(entry["message"])
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "Failed to post Speaker message to Discord: %s", exc
+                            )
+                        ui.root.after(0, ui.update_sent, list(messages_to_humans))
 
-            time.sleep(0.5)
+                update_weights(state_current)
+                state_current = select_next_agent(state_current)
+            finally:
+                update_topic_stats_ui()
+                time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
     def send_message(message: str) -> None:

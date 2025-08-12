@@ -69,6 +69,8 @@ class FenraUI:
         self.boredom_label.pack(anchor="w")
         self.certainty_label = tk.Label(values_frame, text="Certainty: 0.00")
         self.certainty_label.pack(anchor="w")
+        self.topic_label = tk.Label(values_frame, text="Topics: 0 (oldest 0s, avg hops 0.0)")
+        self.topic_label.pack(anchor="w")
 
         # ----- Internal Thoughts Tab -----
         sys_tab = tk.Frame(self.notebook)
@@ -216,6 +218,17 @@ class FenraUI:
         self.boredom_label.config(text=f"Boredom: {boredom:.2f}")
         self.certainty_label.config(text=f"Certainty: {certainty:.2f}")
         logger.debug("Exiting update_weights")
+
+    def update_topics(self, count: int, oldest_age: float, avg_hops: float) -> None:
+        logger.debug(
+            "Entering update_topics count=%s oldest_age=%s avg_hops=%s",
+            count,
+            oldest_age,
+            avg_hops,
+        )
+        text = f"Topics: {count} (oldest {int(oldest_age)}s, avg hops {avg_hops:.1f})"
+        self.topic_label.config(text=text)
+        logger.debug("Exiting update_topics")
 
     def _expand_all(self):
         logger.debug("_expand_all called but tree view removed")
