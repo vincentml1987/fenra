@@ -704,6 +704,275 @@ def main() -> None:
                 choices = list((pool or active_agents) - {candidate}) or list(pool or active_agents)
                 candidate = random.choice(choices)
 
+        def simulate_ptcd(
+            agent: Agent | type,
+            t: float,
+            r: float,
+            f: float,
+            b: float,
+            c: float,
+        ) -> Tuple[float, float, float, float, float]:
+            """Return PTCD values after simulating ``agent`` execution."""
+            if isinstance(agent, Speaker) or agent == Speaker:
+                t *= max(0.0, 1 - attentiveness / 100.0)
+                f *= 1 + distraction / 100.0
+                b *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(agent, Listener) or agent == Listener:
+                t *= 1 + stimulation / 100.0
+                f *= 1 + distraction / 100.0
+                b *= max(0.0, 1 - extroversion / 100.0)
+            elif isinstance(agent, Archivist) or agent == Archivist:
+                f *= max(0.0, 1 - focus / 100.0)
+                c *= 1 + doubting / 100.0
+            elif isinstance(agent, Ponderer) or agent == Ponderer:
+                f *= 1 + distraction / 100.0
+                b *= max(0.0, 1 - fixation / 100.0)
+            elif isinstance(agent, Doubter) or agent == Doubter:
+                f *= 1 + distraction / 100.0
+                c *= max(0.0, 1 - uncertainty / 100.0)
+            else:
+                t *= 1 + excitement / 100.0
+                f *= 1 + distraction / 100.0
+                b *= 1 + restlessness / 100.0
+            return t, r, f, b, c
+
+        def _run_agent_once(agent: Agent) -> None:
+            """Execute ``agent`` one step and update logs/PTCD."""
+            nonlocal epoch, talkativeness, rumination, forgetfulness, boredom, certainty
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with chat_lock:
+                context = [
+                    m
+                    for m in chat_log
+                    if set(m.get("groups", ["general"])) & set(agent.groups_in)
+                ]
+
+            if isinstance(agent, Ponderer):
+                context.append(
+                    {
+                        "sender": "System",
+                        "timestamp": "",
+                        "message": (
+                            "Instruction: Talk about anything except what was said above. "
+                            "Do not self-reference this instruction. Just bring up a new topic naturally."
+                        ),
+                        "groups": list(agent.groups_in),
+                    }
+                )
+            elif isinstance(agent, Doubter):
+                context.append(
+                    {
+                        "sender": "System",
+                        "timestamp": "",
+                        "message": (
+                            "Instruction: Argue against everything that was said above. "
+                            "Do not self-reference this instruction. Just debate against what has been said."
+                        ),
+                        "groups": list(agent.groups_in),
+                    }
+                )
+            try:
+                if ui and hasattr(ui, "update_topology"):
+                    active = _agent_to_ui(agent)
+                    roster = [_agent_to_ui(a) for a in list(active_agents) or agents]
+                    ui.update_topology(active, roster)
+            except Exception:  # noqa: BLE001
+                logger.exception("update_topology failed (non-fatal)")
+            try:
+                agent.model.watchdog_timeout = timeout_secs[agent.name]
+                reply = step_with_retry(agent, lambda: agent.step(context))
+            except Exception as exc:  # noqa: BLE001
+                name = agent.name
+                timeout_secs[name] *= 1.1
+                delay = 2.0
+                logger.error(
+                    "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
+                    name,
+                    exc,
+                    delay,
+                    timeout_secs[name],
+                )
+                time.sleep(delay)
+                return
+            else:
+                timeout_secs[agent.name] = 900.0
+                agent.model.watchdog_timeout = 900.0
+
+            epoch += 1
+            groups_target = list(agent.groups_out or agent.groups_in or ["general"])
+            if isinstance(agent, Archivist):
+                summary_dir = os.path.join("chatlogs", "summarized")
+                os.makedirs(summary_dir, exist_ok=True)
+
+                with chat_lock:
+                    chat_log[:] = [
+                        e
+                        for e in chat_log
+                        if not (set(e.get("groups", ["general"])) & set(groups_target))
+                    ]
+
+                text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
+                for group in groups_target:
+                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    if os.path.exists(src):
+                        dest = os.path.join(
+                            summary_dir,
+                            f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
+                        )
+                        try:
+                            shutil.move(src, dest)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("Failed to move %s to %s: %s", src, dest, exc)
+                    with open(src, "w", encoding="utf-8") as log_file:
+                        log_file.write(text)
+
+                entry = {
+                    "sender": agent.name,
+                    "timestamp": timestamp,
+                    "message": reply,
+                    "groups": groups_target,
+                    "epoch": epoch,
+                }
+                with chat_lock:
+                    chat_log.append(entry)
+                ui.root.after(0, ui.log, entry)
+            else:
+                entry = {
+                    "sender": agent.name,
+                    "timestamp": timestamp,
+                    "message": reply,
+                    "groups": groups_target,
+                    "epoch": epoch,
+                }
+                with chat_lock:
+                    chat_log.append(entry)
+                text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
+                for group in groups_target:
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
+                    with open(fname, "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                logger.debug(text.strip())
+                ui.root.after(0, ui.log, entry)
+                if isinstance(agent, Speaker):
+                    messages_to_humans.append(entry)
+                    save_messages_to_humans(messages_to_humans)
+                    append_human_log(entry)
+                    try:
+                        post_to_discord(entry["message"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Failed to post Speaker message to Discord: %s", exc)
+                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
+
+            talkativeness, rumination, forgetfulness, boredom, certainty = simulate_ptcd(
+                agent, talkativeness, rumination, forgetfulness, boredom, certainty
+            )
+            logger.debug(
+                "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
+                talkativeness,
+                forgetfulness,
+            )
+            ui.root.after(
+                0,
+                ui.update_weights,
+                talkativeness,
+                rumination,
+                forgetfulness,
+                boredom,
+                certainty,
+            )
+
+        def plan_chain(human_groups: List[str]) -> List[Agent]:
+            """Plan a chain of agents in response to a human message."""
+            t_tmp = talkativeness
+            r_tmp = rumination
+            f_tmp = forgetfulness
+            b_tmp = boredom
+            c_tmp = certainty
+
+            listener_candidates = [
+                l
+                for l in agents_by_role.get(Listener, set())
+                if set(l.groups_in) & set(human_groups)
+                and not missing_downstream_roles(l)
+            ]
+            if not listener_candidates:
+                listener_candidates = [
+                    l
+                    for l in agents_by_role.get(Listener, set())
+                    if not missing_downstream_roles(l)
+                ]
+            if not listener_candidates:
+                return []
+            listener = ensure_downstream(random.choice(listener_candidates))
+            chain = [listener]
+            t_tmp, r_tmp, f_tmp, b_tmp, c_tmp = simulate_ptcd(
+                listener, t_tmp, r_tmp, f_tmp, b_tmp, c_tmp
+            )
+            current = listener
+            steps = 0
+            while steps < 20:
+                S = set(current.groups_out)
+                raw_candidates_set: Set[Agent] = set()
+                for grp in S:
+                    raw_candidates_set |= agents_by_group_in.get(grp, set())
+                if not current.allow_self_consume:
+                    raw_candidates_set.discard(current)
+                candidates_set = {
+                    c for c in raw_candidates_set if not missing_downstream_roles(c)
+                }
+                speaker_candidates = {c for c in candidates_set if isinstance(c, Speaker)}
+                ruminator_candidates = {
+                    c
+                    for c in candidates_set
+                    if isinstance(c, Ruminator)
+                    and not isinstance(c, (Ponderer, Doubter))
+                }
+                doubter_candidates = {c for c in candidates_set if isinstance(c, Doubter)}
+                pools: List[List[Agent]] = []
+                weights: List[float] = []
+                if speaker_candidates:
+                    pools.append(list(speaker_candidates))
+                    weights.append(t_tmp)
+                if ruminator_candidates:
+                    pools.append(list(ruminator_candidates))
+                    weights.append(r_tmp)
+                if doubter_candidates:
+                    pools.append(list(doubter_candidates))
+                    weights.append(c_tmp)
+                if pools:
+                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                    nxt = random.choice(selected_pool)
+                elif candidates_set:
+                    nxt = random.choice(list(candidates_set))
+                else:
+                    break
+                chain.append(nxt)
+                t_tmp, r_tmp, f_tmp, b_tmp, c_tmp = simulate_ptcd(
+                    nxt, t_tmp, r_tmp, f_tmp, b_tmp, c_tmp
+                )
+                current = nxt
+                if isinstance(nxt, Speaker):
+                    S = set(nxt.groups_out)
+                    arch_candidates: Set[Agent] = set()
+                    for grp in S:
+                        arch_candidates |= {
+                            a
+                            for a in agents_by_group_in.get(grp, set())
+                            if isinstance(a, Archivist)
+                        }
+                    if not nxt.allow_self_consume:
+                        arch_candidates.discard(nxt)
+                    if not arch_candidates:
+                        arch_candidates = set(agents_by_role.get(Archivist, set()))
+                    if arch_candidates:
+                        arch = random.choice(list(arch_candidates))
+                        chain.append(arch)
+                    break
+                steps += 1
+            return chain
+
         if message_queue:
             candidate = next(iter(agents_by_role.get(Listener, set())), None)
         else:
@@ -733,9 +1002,7 @@ def main() -> None:
                 groups = msg.get("groups", ["general"])
                 entry = {
                     "sender": msg.get("sender", "Human"),
-                    "timestamp": msg.get(
-                        "timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ),
+                    "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                     "message": msg.get("message", ""),
                     "groups": groups,
                     "epoch": time.time(),
@@ -754,229 +1021,63 @@ def main() -> None:
                 logger.debug(text.strip())
                 ui.root.after(0, ui.log, entry)
 
+            if message_queue:
+                with chat_lock:
+                    batch = list(message_queue)
+                    message_queue.clear()
+                    save_message_queue(message_queue)
+                ui.root.after(0, ui.update_queue, list(message_queue))
+
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                lines = []
+                groups_union: Set[str] = set()
+                for msg in batch:
+                    ts = msg.get("timestamp", timestamp)
+                    sender = msg.get("sender", "Human")
+                    text = msg.get("message", "")
+                    lines.append(f"[{ts}] {sender}: {text}")
+                    groups_union.update(msg.get("groups", ["general"]))
+                human_entry = {
+                    "sender": "Human",
+                    "timestamp": timestamp,
+                    "message": "\n".join(lines),
+                    "groups": sorted(groups_union) or ["general"],
+                    "epoch": time.time(),
+                }
+                with chat_lock:
+                    chat_log.append(human_entry)
+                text = (
+                    f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
+                    f"{'-' * 80}\n\n"
+                )
+                for group in human_entry["groups"]:
+                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                    os.makedirs(os.path.dirname(fname), exist_ok=True)
+                    with open(fname, "a", encoding="utf-8") as log_file:
+                        log_file.write(text)
+                logger.debug(text.strip())
+                ui.root.after(0, ui.log, human_entry)
+
+                chain = plan_chain(human_entry["groups"])
+                if chain:
+                    logger.info(
+                        "Planned chain: %s",
+                        " \u2192 ".join(
+                            f"{a.__class__.__name__}({a.name})" for a in chain
+                        ),
+                    )
+                    for ag in chain:
+                        _run_agent_once(ag)
+                    state_current = chain[-1]
+                continue
+
             if not active_agents:
                 time.sleep(0.5)
                 continue
             if state_current not in active_agents:
                 state_current = random.choice(tuple(active_agents))
 
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            with chat_lock:
-                message_queue[:] = load_message_queue()
-
-            if message_queue and not isinstance(state_current, Listener):
-                S = set(state_current.groups_out)
-                listener_candidates: Set[Agent] = set()
-                for grp in S:
-                    listener_candidates |= (
-                        agents_by_group_in.get(grp, set())
-                        & agents_by_role.get(Listener, set())
-                    )
-                if not state_current.allow_self_consume:
-                    listener_candidates.discard(state_current)
-                if not listener_candidates:
-                    listener_candidates = set(agents_by_role.get(Listener, set()))
-                if listener_candidates:
-                    state_current = random.choice(tuple(listener_candidates))
-
-            if isinstance(state_current, Listener):
-                human_entry = None
-                with chat_lock:
-                    message_queue[:] = load_message_queue()
-                    if message_queue:
-                        msg = message_queue.pop(0)
-                        save_message_queue(message_queue)
-                        ui.root.after(0, ui.update_queue, list(message_queue))
-                        human_entry = {
-                            "sender": msg.get("sender", "Human"),
-                            "timestamp": msg.get("timestamp", timestamp),
-                            "message": msg.get("message", ""),
-                            "groups": msg.get(
-                                "groups",
-                                list(state_current.groups_in) or ["general"],
-                            ),
-                            "epoch": time.time(),
-                        }
-                        chat_log.append(human_entry)
-                if human_entry:
-                    text = (
-                        f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
-                        f"{'-' * 80}\n\n"
-                    )
-                    for group in human_entry["groups"]:
-                        fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                        os.makedirs(os.path.dirname(fname), exist_ok=True)
-                        with open(fname, "a", encoding="utf-8") as log_file:
-                            log_file.write(text)
-                    logger.debug(text.strip())
-                    ui.root.after(0, ui.log, human_entry)
-
-            with chat_lock:
-                context = [
-                    m
-                    for m in chat_log
-                    if set(m.get("groups", ["general"])) & set(state_current.groups_in)
-                ]
-
-            if isinstance(state_current, Ponderer):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Talk about anything except what was said above. "
-                            "Do not self-reference this instruction. Just bring up a new topic naturally."
-                        ),
-                        "groups": list(state_current.groups_in),
-                    }
-                )
-            elif isinstance(state_current, Doubter):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Argue against everything that was said above. "
-                            "Do not self-reference this instruction. Just debate against what has been said."
-                        ),
-                        "groups": list(state_current.groups_in),
-                    }
-                )
-            try:
-                if ui and hasattr(ui, "update_topology"):
-                    active = _agent_to_ui(state_current)
-                    roster = [_agent_to_ui(a) for a in list(active_agents) or agents]
-                    ui.update_topology(active, roster)
-            except Exception:  # noqa: BLE001
-                logger.exception("update_topology failed (non-fatal)")
-            try:
-                state_current.model.watchdog_timeout = timeout_secs[
-                    state_current.name
-                ]
-                reply = step_with_retry(
-                    state_current, lambda: state_current.step(context)
-                )
-            except Exception as exc:  # noqa: BLE001
-                name = state_current.name
-                timeout_secs[name] *= 1.1
-                delay = 2.0
-                logger.error(
-                    "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
-                    name,
-                    exc,
-                    delay,
-                    timeout_secs[name],
-                )
-                time.sleep(delay)
-                continue
-            else:
-                timeout_secs[state_current.name] = 900.0
-                state_current.model.watchdog_timeout = 900.0
-
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            epoch += 1
-            groups_target = list(state_current.groups_out or state_current.groups_in or ["general"])
-            if isinstance(state_current, Archivist):
-                summary_dir = os.path.join("chatlogs", "summarized")
-                os.makedirs(summary_dir, exist_ok=True)
-
-                with chat_lock:
-                    chat_log[:] = [
-                        e
-                        for e in chat_log
-                        if not (set(e.get("groups", ["general"])) & set(groups_target))
-                    ]
-
-                text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
-                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    if os.path.exists(src):
-                        dest = os.path.join(
-                            summary_dir,
-                            f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
-                        )
-                        try:
-                            shutil.move(src, dest)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.error("Failed to move %s to %s: %s", src, dest, exc)
-                    with open(src, "w", encoding="utf-8") as log_file:
-                        log_file.write(text)
-
-                entry = {
-                    "sender": state_current.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
-                }
-                with chat_lock:
-                    chat_log.append(entry)
-                ui.root.after(0, ui.log, entry)
-            else:
-                entry = {
-                    "sender": state_current.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
-                }
-                with chat_lock:
-                    chat_log.append(entry)
-                text = f"[{timestamp}] {state_current.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    os.makedirs(os.path.dirname(fname), exist_ok=True)
-                    with open(fname, "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                logger.debug(text.strip())
-                ui.root.after(0, ui.log, entry)
-                if isinstance(state_current, Speaker):
-                    messages_to_humans.append(entry)
-                    save_messages_to_humans(messages_to_humans)
-                    append_human_log(entry)
-                    try:
-                        post_to_discord(entry["message"])
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("Failed to post Speaker message to Discord: %s", exc)
-                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
-
-            # Apply PTCD updates regardless of agent type
-            if isinstance(state_current, Speaker):
-                talkativeness *= max(0.0, 1 - attentiveness / 100.0)
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - extroversion / 100.0)
-            elif isinstance(state_current, Listener):
-                talkativeness *= 1 + stimulation / 100.0
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - extroversion / 100.0)
-            elif isinstance(state_current, Archivist):
-                forgetfulness *= max(0.0, 1 - focus / 100.0)
-                certainty *= 1 + doubting / 100.0
-            elif isinstance(state_current, Ponderer):
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= max(0.0, 1 - fixation / 100.0)
-            elif isinstance(state_current, Doubter):
-                forgetfulness *= 1 + distraction / 100.0
-                certainty *= max(0.0, 1 - uncertainty / 100.0)
-            else:
-                talkativeness *= 1 + excitement / 100.0
-                forgetfulness *= 1 + distraction / 100.0
-                boredom *= 1 + restlessness / 100.0
-            logger.debug(
-                "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
-                talkativeness,
-                forgetfulness,
-            )
-            ui.root.after(
-                0,
-                ui.update_weights,
-                talkativeness,
-                rumination,
-                forgetfulness,
-                boredom,
-                certainty,
-            )
+            _run_agent_once(state_current)
 
             while True:
                 S = set(state_current.groups_out)
@@ -999,70 +1100,42 @@ def main() -> None:
                 pool = (active_agents - {state_current}) or active_agents
                 state_current = random.choice(tuple(pool))
 
-            if message_queue:
-                listener_candidates = {c for c in candidates_set if isinstance(c, Listener)}
-                if not listener_candidates:
-                    listener_candidates = {
-                        l
-                        for l in agents_by_role.get(Listener, set())
-                        if (l.groups_in & S)
-                        and (l is not state_current or state_current.allow_self_consume)
-                    }
-                if len(listener_candidates) > 1:
-                    listener_candidates.discard(state_current)
-                if listener_candidates:
-                    state_current = random.choice(tuple(listener_candidates))
-                else:
-                    fallback = {
-                        l
-                        for l in agents_by_role.get(Listener, set())
-                        if l is not state_current
-                    }
-                    if not fallback:
-                        fallback = set(agents_by_role.get(Listener, set()))
-                    if fallback:
-                        state_current = random.choice(tuple(fallback))
-                    else:
-                        if len(candidates_set) > 1:
-                            candidates_set.discard(state_current)
-                        state_current = random.choice(tuple(candidates_set))
+            if len(candidates_set) > 1:
+                candidates_set.discard(state_current)
+
+            speaker_candidates = agents_by_role.get(Speaker, set()) & candidates_set
+            ruminator_candidates = (
+                agents_by_role.get(Ruminator, set())
+                - agents_by_role.get(Ponderer, set())
+                - agents_by_role.get(Doubter, set())
+            ) & candidates_set
+            archivist_candidates = agents_by_role.get(Archivist, set()) & candidates_set
+            ponderer_candidates = agents_by_role.get(Ponderer, set()) & candidates_set
+            doubter_candidates = agents_by_role.get(Doubter, set()) & candidates_set
+
+            pools = []
+            weights = []
+            if speaker_candidates:
+                pools.append(list(speaker_candidates))
+                weights.append(talkativeness)
+            if ruminator_candidates:
+                pools.append(list(ruminator_candidates))
+                weights.append(rumination)
+            if archivist_candidates:
+                pools.append(list(archivist_candidates))
+                weights.append(forgetfulness)
+            if ponderer_candidates:
+                pools.append(list(ponderer_candidates))
+                weights.append(boredom)
+            if doubter_candidates:
+                pools.append(list(doubter_candidates))
+                weights.append(certainty)
+
+            if pools:
+                selected_pool = random.choices(pools, weights=weights, k=1)[0]
+                state_current = random.choice(selected_pool)
             else:
-                if len(candidates_set) > 1:
-                    candidates_set.discard(state_current)
-
-                speaker_candidates = agents_by_role.get(Speaker, set()) & candidates_set
-                ruminator_candidates = (
-                    agents_by_role.get(Ruminator, set())
-                    - agents_by_role.get(Ponderer, set())
-                    - agents_by_role.get(Doubter, set())
-                ) & candidates_set
-                archivist_candidates = agents_by_role.get(Archivist, set()) & candidates_set
-                ponderer_candidates = agents_by_role.get(Ponderer, set()) & candidates_set
-                doubter_candidates = agents_by_role.get(Doubter, set()) & candidates_set
-
-                pools = []
-                weights = []
-                if speaker_candidates:
-                    pools.append(list(speaker_candidates))
-                    weights.append(talkativeness)
-                if ruminator_candidates:
-                    pools.append(list(ruminator_candidates))
-                    weights.append(rumination)
-                if archivist_candidates:
-                    pools.append(list(archivist_candidates))
-                    weights.append(forgetfulness)
-                if ponderer_candidates:
-                    pools.append(list(ponderer_candidates))
-                    weights.append(boredom)
-                if doubter_candidates:
-                    pools.append(list(doubter_candidates))
-                    weights.append(certainty)
-
-                if pools:
-                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
-                    state_current = random.choice(selected_pool)
-                else:
-                    state_current = random.choice(list(candidates_set))
+                state_current = random.choice(list(candidates_set))
 
             state_current = ensure_downstream(state_current, candidates_set)
 
