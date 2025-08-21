@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Optional
 import tkinter as tk
-from tkinter import scrolledtext, simpledialog
+from tkinter import scrolledtext, simpledialog, filedialog
 from tkinter import ttk
 import configparser
 
@@ -44,6 +44,9 @@ class FenraUI:
 
         self.sent_messages = []
         self.log_messages = []
+        self._agent_payloads: dict[str, str] = {}
+        self._active_agent: Optional[str] = None
+        self._group_contexts: dict[str, str] = {}
 
         parser = configparser.ConfigParser()
         try:
@@ -176,6 +179,49 @@ class FenraUI:
         self._topology_agents = []
         self._topology_node_items = {}
         self._topology_tooltip = None
+
+        # ----- Agent Context Tab -----
+        agent_tab = ttk.Frame(self.notebook)
+        self.notebook.add(agent_tab, text="Agent Context")
+
+        self.agent_header = ttk.Label(agent_tab, text="Current Agent: None")
+        self.agent_header.pack(anchor="w", padx=4, pady=2)
+
+        agent_toolbar = ttk.Frame(agent_tab)
+        agent_toolbar.pack(anchor="w", padx=4, pady=2)
+        ttk.Button(agent_toolbar, text="Copy JSON", command=self._copy_agent_payload).pack(
+            side=tk.LEFT, padx=2
+        )
+        ttk.Button(agent_toolbar, text="Save…", command=self._save_agent_payload).pack(
+            side=tk.LEFT, padx=2
+        )
+        ttk.Button(agent_toolbar, text="Clear", command=self._clear_agent_payload).pack(
+            side=tk.LEFT, padx=2
+        )
+
+        self.agent_payload_view = scrolledtext.ScrolledText(
+            agent_tab, state="disabled"
+        )
+        self.agent_payload_view.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+
+        # ----- Group Context Tab -----
+        group_tab = ttk.Frame(self.notebook)
+        self.notebook.add(group_tab, text="Group Context")
+
+        group_paned = ttk.Panedwindow(group_tab, orient=tk.HORIZONTAL)
+        group_paned.pack(fill=tk.BOTH, expand=True)
+
+        list_frame = ttk.Frame(group_paned)
+        text_frame = ttk.Frame(group_paned)
+        group_paned.add(list_frame, weight=1)
+        group_paned.add(text_frame, weight=3)
+
+        self.group_list = tk.Listbox(list_frame, exportselection=False)
+        self.group_list.pack(fill=tk.BOTH, expand=True)
+        self.group_list.bind("<<ListboxSelect>>", self._on_group_select)
+
+        self.group_text = scrolledtext.ScrolledText(text_frame, state="disabled")
+        self.group_text.pack(fill=tk.BOTH, expand=True)
 
         logger.debug(
             "Seeding UI with config weights: talkativeness=%s, rumination=%s, "
@@ -441,6 +487,138 @@ class FenraUI:
 
         self._threadsafe(_open)
         logger.debug("Exiting open_config_editor_dialog")
+
+    def set_active_agent(self, name: str) -> None:
+        logger.debug("Entering set_active_agent name=%s", name)
+
+        def _update():
+            self._active_agent = name or None
+            display = name or "None"
+            self.agent_header.config(text=f"Current Agent: {display}")
+            payload = self._agent_payloads.get(name) if name else ""
+            self._render_agent_payload(payload)
+
+        self._threadsafe(_update)
+        logger.debug("Exiting set_active_agent")
+
+    def update_agent_payload(self, agent: str, payload: dict) -> None:
+        logger.debug(
+            "Entering update_agent_payload agent=%s keys=%s",
+            agent,
+            list(payload.keys()),
+        )
+        text = json.dumps(payload, indent=2, ensure_ascii=False)
+        self._agent_payloads[agent] = text
+
+        def _update():
+            if self._active_agent == agent:
+                self._render_agent_payload(text)
+
+        self._threadsafe(_update)
+        logger.debug("Exiting update_agent_payload")
+
+    def set_group_contexts(self, context_by_group: dict[str, str]) -> None:
+        logger.debug(
+            "Entering set_group_contexts context_by_group_keys=%s",
+            list(context_by_group.keys()),
+        )
+
+        def _update():
+            current = None
+            sel = self.group_list.curselection()
+            if sel:
+                current = self.group_list.get(sel[0])
+            self._group_contexts = dict(context_by_group)
+            self.group_list.delete(0, tk.END)
+            for grp in self._group_contexts:
+                self.group_list.insert(tk.END, grp)
+            target = current if current in self._group_contexts else None
+            if not target and self._group_contexts:
+                target = next(iter(self._group_contexts))
+                idx = list(self._group_contexts).index(target)
+                self.group_list.selection_set(idx)
+            if target:
+                self._render_group_text(self._group_contexts.get(target, ""))
+            else:
+                self._render_group_text("")
+
+        self._threadsafe(_update)
+        logger.debug("Exiting set_group_contexts")
+
+    def update_group_context(self, group: str, text: str) -> None:
+        logger.debug("Entering update_group_context group=%s", group)
+
+        def _update():
+            self._group_contexts[group] = text
+            names = list(self.group_list.get(0, tk.END))
+            if group not in names:
+                self.group_list.insert(tk.END, group)
+            sel = self.group_list.curselection()
+            if sel and self.group_list.get(sel[0]) == group:
+                self._render_group_text(text)
+
+        self._threadsafe(_update)
+        logger.debug("Exiting update_group_context")
+
+    def _on_group_select(self, _event=None):
+        sel = self.group_list.curselection()
+        if not sel:
+            return
+        group = self.group_list.get(sel[0])
+        text = self._group_contexts.get(group, "")
+        self._render_group_text(text)
+
+    def _render_agent_payload(self, text: str | None) -> None:
+        self.agent_payload_view.configure(state="normal")
+        self.agent_payload_view.delete("1.0", tk.END)
+        if text:
+            self.agent_payload_view.insert(tk.END, text)
+            lines = self.agent_payload_view.get("1.0", tk.END).splitlines()
+            if len(lines) > 2000:
+                trimmed = "\n".join(lines[-2000:])
+                self.agent_payload_view.delete("1.0", tk.END)
+                self.agent_payload_view.insert(tk.END, trimmed)
+        self.agent_payload_view.configure(state="disabled")
+        self.agent_payload_view.see(tk.END)
+
+    def _render_group_text(self, text: str) -> None:
+        self.group_text.configure(state="normal")
+        self.group_text.delete("1.0", tk.END)
+        if text:
+            self.group_text.insert(tk.END, text)
+        self.group_text.configure(state="disabled")
+        self.group_text.see(tk.END)
+
+    def _copy_agent_payload(self) -> None:
+        logger.debug("Entering _copy_agent_payload")
+        text = self.agent_payload_view.get("1.0", tk.END).strip()
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        logger.debug("Exiting _copy_agent_payload")
+
+    def _save_agent_payload(self) -> None:
+        logger.debug("Entering _save_agent_payload")
+        text = self.agent_payload_view.get("1.0", tk.END)
+        if not text.strip():
+            logger.debug("_save_agent_payload called with empty text")
+            return
+        fname = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+        )
+        if fname:
+            try:
+                with open(fname, "w", encoding="utf-8") as f:
+                    f.write(text)
+            except OSError as exc:  # noqa: BLE001
+                logger.error("Failed to save JSON payload: %s", exc)
+        logger.debug("Exiting _save_agent_payload")
+
+    def _clear_agent_payload(self) -> None:
+        logger.debug("Entering _clear_agent_payload")
+        self._render_agent_payload("")
+        logger.debug("Exiting _clear_agent_payload")
 
     def update_topology(self, active_agent: dict, agents: list[dict]) -> None:
         logger.debug("Entering update_topology active_agent=%s agents=%s", active_agent, agents)

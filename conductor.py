@@ -48,6 +48,9 @@ def _parse_debug_level(path: str) -> int:
 
 logger = create_object_logger("Conductor")
 
+_ACTIVE_AGENT = threading.local()
+_ACTIVE_AGENT.name = None
+
 
 def _agent_to_ui(agent: Agent) -> dict:
     role = getattr(agent, "role_prompt", "").strip().lower()
@@ -631,6 +634,15 @@ def main() -> None:
     fenra_ui_logger.setLevel(level)
     ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
 
+    def _ui_json_watcher(payload: Dict) -> None:
+        name = getattr(_ACTIVE_AGENT, "name", None) or payload.get("model") or "Unknown"
+        try:
+            ui.update_agent_payload(str(name), payload)
+        except Exception:  # noqa: BLE001
+            logger.exception("UI watcher failed")
+
+    add_json_watcher(_ui_json_watcher)
+
     agent_lock = threading.Lock()
     ready_event = threading.Event()
 
@@ -672,6 +684,23 @@ def main() -> None:
     message_queue: List[Dict[str, object]] = load_message_queue()
     messages_to_humans: List[Dict[str, object]] = load_messages_to_humans()
     chat_lock = threading.Lock()
+
+    group_contexts: Dict[str, str] = defaultdict(str)
+    for entry in chat_log:
+        text = (
+            f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
+            f"{'-' * 80}\n\n"
+        )
+        for grp in entry.get("groups", ["general"]):
+            group_contexts[grp] += text
+
+    ordered_contexts: Dict[str, str] = {}
+    for g in all_groups:
+        ordered_contexts[g] = group_contexts.get(g, "")
+    for g, txt in group_contexts.items():
+        if g not in ordered_contexts:
+            ordered_contexts[g] = txt
+    ui.set_group_contexts(ordered_contexts)
 
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
@@ -740,148 +769,162 @@ def main() -> None:
             """Execute ``agent`` one step and update logs/PTCD."""
             nonlocal epoch, talkativeness, rumination, forgetfulness, boredom, certainty
 
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with chat_lock:
-                context = [
-                    m
-                    for m in chat_log
-                    if set(m.get("groups", ["general"])) & set(agent.groups_in)
-                ]
-
-            if isinstance(agent, Ponderer):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Talk about anything except what was said above. "
-                            "Do not self-reference this instruction. Just bring up a new topic naturally."
-                        ),
-                        "groups": list(agent.groups_in),
-                    }
-                )
-            elif isinstance(agent, Doubter):
-                context.append(
-                    {
-                        "sender": "System",
-                        "timestamp": "",
-                        "message": (
-                            "Instruction: Argue against everything that was said above. "
-                            "Do not self-reference this instruction. Just debate against what has been said."
-                        ),
-                        "groups": list(agent.groups_in),
-                    }
-                )
+            _ACTIVE_AGENT.name = agent.name
+            ui.set_active_agent(agent.name)
             try:
-                if ui and hasattr(ui, "update_topology"):
-                    active = _agent_to_ui(agent)
-                    roster = [_agent_to_ui(a) for a in list(active_agents) or agents]
-                    ui.update_topology(active, roster)
-            except Exception:  # noqa: BLE001
-                logger.exception("update_topology failed (non-fatal)")
-            try:
-                agent.model.watchdog_timeout = timeout_secs[agent.name]
-                reply = step_with_retry(agent, lambda: agent.step(context))
-            except Exception as exc:  # noqa: BLE001
-                name = agent.name
-                timeout_secs[name] *= 1.1
-                delay = 2.0
-                logger.error(
-                    "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
-                    name,
-                    exc,
-                    delay,
-                    timeout_secs[name],
-                )
-                time.sleep(delay)
-                return
-            else:
-                timeout_secs[agent.name] = 900.0
-                agent.model.watchdog_timeout = 900.0
-
-            epoch += 1
-            groups_target = list(agent.groups_out or agent.groups_in or ["general"])
-            if isinstance(agent, Archivist):
-                summary_dir = os.path.join("chatlogs", "summarized")
-                os.makedirs(summary_dir, exist_ok=True)
-
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 with chat_lock:
-                    chat_log[:] = [
-                        e
-                        for e in chat_log
-                        if not (set(e.get("groups", ["general"])) & set(groups_target))
+                    context = [
+                        m
+                        for m in chat_log
+                        if set(m.get("groups", ["general"])) & set(agent.groups_in)
                     ]
 
-                text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
-                    src = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    if os.path.exists(src):
-                        dest = os.path.join(
-                            summary_dir,
-                            f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
-                        )
-                        try:
-                            shutil.move(src, dest)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.error("Failed to move %s to %s: %s", src, dest, exc)
-                    with open(src, "w", encoding="utf-8") as log_file:
-                        log_file.write(text)
+                if isinstance(agent, Ponderer):
+                    context.append(
+                        {
+                            "sender": "System",
+                            "timestamp": "",
+                            "message": (
+                                "Instruction: Talk about anything except what was said above. "
+                                "Do not self-reference this instruction. Just bring up a new topic naturally."
+                            ),
+                            "groups": list(agent.groups_in),
+                        }
+                    )
+                elif isinstance(agent, Doubter):
+                    context.append(
+                        {
+                            "sender": "System",
+                            "timestamp": "",
+                            "message": (
+                                "Instruction: Argue against everything that was said above. "
+                                "Do not self-reference this instruction. Just debate against what has been said."
+                            ),
+                            "groups": list(agent.groups_in),
+                        }
+                    )
+                try:
+                    if ui and hasattr(ui, "update_topology"):
+                        active = _agent_to_ui(agent)
+                        roster = [_agent_to_ui(a) for a in list(active_agents) or agents]
+                        ui.update_topology(active, roster)
+                except Exception:  # noqa: BLE001
+                    logger.exception("update_topology failed (non-fatal)")
 
-                entry = {
-                    "sender": agent.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
-                }
-                with chat_lock:
-                    chat_log.append(entry)
-                ui.root.after(0, ui.log, entry)
-            else:
-                entry = {
-                    "sender": agent.name,
-                    "timestamp": timestamp,
-                    "message": reply,
-                    "groups": groups_target,
-                    "epoch": epoch,
-                }
-                with chat_lock:
-                    chat_log.append(entry)
-                text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
-                for group in groups_target:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    os.makedirs(os.path.dirname(fname), exist_ok=True)
-                    with open(fname, "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                logger.debug(text.strip())
-                ui.root.after(0, ui.log, entry)
-                if isinstance(agent, Speaker):
-                    messages_to_humans.append(entry)
-                    save_messages_to_humans(messages_to_humans)
-                    append_human_log(entry)
-                    try:
-                        post_to_discord(entry["message"])
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("Failed to post Speaker message to Discord: %s", exc)
-                    ui.root.after(0, ui.update_sent, list(messages_to_humans))
+                try:
+                    agent.model.watchdog_timeout = timeout_secs[agent.name]
+                    reply = step_with_retry(agent, lambda: agent.step(context))
+                except Exception as exc:  # noqa: BLE001
+                    name = agent.name
+                    timeout_secs[name] *= 1.1
+                    delay = 2.0
+                    logger.error(
+                        "Error from %s: %s — retrying same agent after %.1fs (timeout %.1fs)",
+                        name,
+                        exc,
+                        delay,
+                        timeout_secs[name],
+                    )
+                    time.sleep(delay)
+                    return
+                else:
+                    timeout_secs[agent.name] = 900.0
+                    agent.model.watchdog_timeout = 900.0
 
-            talkativeness, rumination, forgetfulness, boredom, certainty = simulate_ptcd(
-                agent, talkativeness, rumination, forgetfulness, boredom, certainty
-            )
-            logger.debug(
-                "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
-                talkativeness,
-                forgetfulness,
-            )
-            ui.root.after(
-                0,
-                ui.update_weights,
-                talkativeness,
-                rumination,
-                forgetfulness,
-                boredom,
-                certainty,
-            )
+                    epoch += 1
+                    groups_target = list(agent.groups_out or agent.groups_in or ["general"])
+                    if isinstance(agent, Archivist):
+                        summary_dir = os.path.join("chatlogs", "summarized")
+                        os.makedirs(summary_dir, exist_ok=True)
+
+                        with chat_lock:
+                            chat_log[:] = [
+                                e
+                                for e in chat_log
+                                if not (set(e.get("groups", ["general"])) & set(groups_target))
+                            ]
+
+                        text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in groups_target:
+                            group_contexts[group] = ""
+                            src = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            if os.path.exists(src):
+                                dest = os.path.join(
+                                    summary_dir,
+                                    f"chat_log_{group}_{timestamp.replace(' ', '_').replace(':', '-')}.txt",
+                                )
+                                try:
+                                    shutil.move(src, dest)
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.error("Failed to move %s to %s: %s", src, dest, exc)
+                            with open(src, "w", encoding="utf-8") as log_file:
+                                log_file.write(text)
+
+                        entry = {
+                            "sender": agent.name,
+                            "timestamp": timestamp,
+                            "message": reply,
+                            "groups": groups_target,
+                            "epoch": epoch,
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                        ui.root.after(0, ui.log, entry)
+                        for group in groups_target:
+                            group_contexts[group] += text
+                            ui.update_group_context(group, group_contexts[group])
+                    else:
+                        entry = {
+                            "sender": agent.name,
+                            "timestamp": timestamp,
+                            "message": reply,
+                            "groups": groups_target,
+                            "epoch": epoch,
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                        text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
+                        for group in groups_target:
+                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            os.makedirs(os.path.dirname(fname), exist_ok=True)
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                        logger.debug(text.strip())
+                        ui.root.after(0, ui.log, entry)
+                        if isinstance(agent, Speaker):
+                            messages_to_humans.append(entry)
+                            save_messages_to_humans(messages_to_humans)
+                            append_human_log(entry)
+                            try:
+                                post_to_discord(entry["message"])
+                            except Exception as exc:  # noqa: BLE001
+                                logger.error("Failed to post Speaker message to Discord: %s", exc)
+                            ui.root.after(0, ui.update_sent, list(messages_to_humans))
+                        for group in groups_target:
+                            group_contexts[group] = group_contexts.get(group, "") + text
+                            ui.update_group_context(group, group_contexts[group])
+
+                    talkativeness, rumination, forgetfulness, boredom, certainty = simulate_ptcd(
+                        agent, talkativeness, rumination, forgetfulness, boredom, certainty
+                    )
+                    logger.debug(
+                        "Weights updated: talkativeness=%.3f forgetfulness=%.3f",
+                        talkativeness,
+                        forgetfulness,
+                    )
+                    ui.root.after(
+                        0,
+                        ui.update_weights,
+                        talkativeness,
+                        rumination,
+                        forgetfulness,
+                        boredom,
+                        certainty,
+                    )
+            finally:
+                _ACTIVE_AGENT.name = None
+                ui.set_active_agent("")
 
         def plan_chain(human_groups: List[str]) -> List[Agent]:
             """Plan a chain of agents in response to a human message."""
@@ -1020,6 +1063,9 @@ def main() -> None:
                         log_file.write(text)
                 logger.debug(text.strip())
                 ui.root.after(0, ui.log, entry)
+                for group in groups:
+                    group_contexts[group] = group_contexts.get(group, "") + text
+                    ui.update_group_context(group, group_contexts[group])
 
             if message_queue:
                 with chat_lock:
@@ -1057,6 +1103,9 @@ def main() -> None:
                         log_file.write(text)
                 logger.debug(text.strip())
                 ui.root.after(0, ui.log, human_entry)
+                for group in human_entry["groups"]:
+                    group_contexts[group] = group_contexts.get(group, "") + text
+                    ui.update_group_context(group, group_contexts[group])
 
                 chain = plan_chain(human_entry["groups"])
                 if chain:
