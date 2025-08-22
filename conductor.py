@@ -1031,26 +1031,43 @@ def main() -> None:
             with chat_lock:
                 base_ctx = [m for m in all_history if visible_to(listener, m)]
             ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            synthetic: List[Dict[str, object]] = []
+
+            # Merge all queued items (oldest → newest) into one readable block
+            parts = []
             for msg in queue:
-                synthetic.append(
-                    {
-                        "sender": "Human",
-                        "timestamp": msg.get("timestamp") or ts_now,
-                        "message": msg.get("message", ""),
-                        "groups": sorted(listener.groups_in),
-                    }
+                ts = msg.get("timestamp") or ts_now
+                body = (msg.get("message") or "").strip()
+                if body:
+                    parts.append(f"[{ts}] {body}")
+                else:
+                    parts.append(f"[{ts}]")  # keep placeholder if empty
+
+            combined_text = (
+                f"-----Messages from Users ({len(queue)})-----\n\n" + "\n\n".join(parts)
+            )
+
+            synthetic = {
+                "sender": "Human",
+                "timestamp": ts_now,
+                "message": combined_text,
+                "groups": sorted(listener.groups_in),
+            }
+
+            full_ctx = base_ctx + [synthetic]
+
+            try:
+                _run_agent_once(listener, context_override=full_ctx)
+            except Exception:
+                logger.exception(
+                    "Listener failed while consuming queue; leaving messages on disk"
                 )
-            full_ctx = base_ctx + synthetic
-
-            _run_agent_once(listener, context_override=full_ctx)
-
-            with chat_lock:
-                message_queue.clear()
-                save_message_queue(message_queue)
-            ui.update_queue([])
-            ui.root.after(0, ui.update_queue, [])
-            return listener
+                return None
+            else:
+                with chat_lock:
+                    message_queue.clear()
+                    save_message_queue(message_queue)
+                ui.update_queue([])
+                return listener
 
         while True:
             with chat_lock:
