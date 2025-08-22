@@ -433,12 +433,7 @@ def load_message_queue() -> List[Dict[str, object]]:
         else:
             cleaned: List[Dict[str, object]] = []
             for entry in data:
-                groups = entry.get("groups")
-                if not groups or "general" in groups:
-                    logger.warning(
-                        "Dropping queued message with invalid groups: %s", entry
-                    )
-                    continue
+                # No group requirement for inbound queue; keep as-is.
                 cleaned.append(entry)
             return cleaned
     return []
@@ -823,7 +818,9 @@ def main() -> None:
                 b *= 1 + restlessness / 100.0
             return t, r, f, b, c
 
-        def _run_agent_once(agent: Agent) -> None:
+        def _run_agent_once(
+            agent: Agent, context_override: List[Dict[str, object]] | None = None
+        ) -> None:
             """Execute ``agent`` one step and update logs/PTCD."""
             nonlocal epoch, talkativeness, rumination, forgetfulness, boredom, certainty
 
@@ -831,8 +828,11 @@ def main() -> None:
             ui.set_active_agent(agent.name)
             try:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                with chat_lock:
-                    context = [m for m in chat_log if visible_to(agent, m)]
+                if context_override is None:
+                    with chat_lock:
+                        context = [m for m in chat_log if visible_to(agent, m)]
+                else:
+                    context = context_override
 
                 if isinstance(agent, Ponderer):
                     context.append(
@@ -999,6 +999,56 @@ def main() -> None:
             boredom,
             certainty,
         )
+
+        def _consume_human_queue_if_any(
+            agents: List[Agent],
+            all_history: List[Dict[str, object]],
+            ui: "FenraUI",
+        ) -> None:
+            nonlocal state_current
+            with chat_lock:
+                message_queue[:] = load_message_queue()
+                queue = list(message_queue)
+            ui.root.after(0, ui.update_queue, queue)
+            if not queue:
+                return
+
+            listener_candidates = [
+                a
+                for a in agents
+                if isinstance(a, Listener) and getattr(a, "active", True)
+            ]
+            if not listener_candidates:
+                logger.warning(
+                    "No active listeners available to consume human queue; leaving messages in queue"
+                )
+                return
+            listener = random.choice(listener_candidates)
+
+            with chat_lock:
+                base_ctx = [m for m in all_history if visible_to(listener, m)]
+            ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            synthetic: List[Dict[str, object]] = []
+            for msg in queue:
+                synthetic.append(
+                    {
+                        "sender": "human",
+                        "timestamp": msg.get("timestamp") or ts_now,
+                        "message": msg.get("message", ""),
+                        "groups": sorted(listener.groups_in),
+                    }
+                )
+            full_ctx = base_ctx + synthetic
+
+            _run_agent_once(listener, context_override=full_ctx)
+
+            with chat_lock:
+                message_queue.clear()
+                save_message_queue(message_queue)
+            ui.update_queue([])
+            ui.root.after(0, ui.update_queue, [])
+            state_current = listener
+
         while True:
             with chat_lock:
                 message_queue[:] = load_message_queue()
@@ -1043,66 +1093,7 @@ def main() -> None:
                 state_current = random.choice(tuple(active_agents))
 
             _run_agent_once(state_current)
-
-            with chat_lock:
-                message_queue[:] = load_message_queue()
-            ui.root.after(0, ui.update_queue, list(message_queue))
-
-            valid_messages: List[Dict[str, object]] = []
-            for msg in message_queue:
-                groups = msg.get("groups")
-                if not groups:
-                    logger.warning("Queued message missing groups: %s", msg)
-                    continue
-                valid_messages.append(msg)
-
-            if len(valid_messages) != len(message_queue):
-                with chat_lock:
-                    message_queue[:] = valid_messages
-                    save_message_queue(message_queue)
-                ui.root.after(0, ui.update_queue, list(message_queue))
-
-            if valid_messages:
-                message_groups = sorted(
-                    {g for m in valid_messages for g in m.get("groups", [])}
-                )
-                try:
-                    listener = pick_listener(
-                        list(active_agents), state_current.groups_out, message_groups
-                    )
-                except RuntimeError as exc:
-                    logger.warning("%s", exc)
-                else:
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    for msg in valid_messages:
-                        ts = msg.get("timestamp", timestamp)
-                        entry = {
-                            "timestamp": ts,
-                            "sender": "human",
-                            "message": msg.get("message", ""),
-                            "groups": msg.get("groups", []),
-                            "epoch": time.time(),
-                        }
-                        with chat_lock:
-                            chat_log.append(entry)
-                        text = f"[{ts}] human: {entry['message']}\n{'-' * 80}\n\n"
-                        for group in entry["groups"]:
-                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                            os.makedirs(os.path.dirname(fname), exist_ok=True)
-                            with open(fname, "a", encoding="utf-8") as log_file:
-                                log_file.write(text)
-                            group_contexts[group] = group_contexts.get(group, "") + text
-                            ui.update_group_context(group, group_contexts[group])
-                        ui.root.after(0, ui.log, entry)
-                        append_human_log(entry)
-
-                    with chat_lock:
-                        message_queue.clear()
-                        save_message_queue(message_queue)
-                    ui.update_queue([])
-                    ui.root.after(0, ui.update_queue, [])
-                    _run_agent_once(listener)
-                    state_current = listener
+            _consume_human_queue_if_any(agents, chat_log, ui)
 
             while True:
                 S = set(state_current.groups_out)
