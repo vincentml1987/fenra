@@ -455,6 +455,21 @@ def save_message_queue(queue: List[Dict[str, object]]) -> None:
         logger.error("Failed to save queued messages: %s", exc)
 
 
+def pick_listener(
+    agents: List[Agent], groups_out: List[str], message_groups: List[str]
+) -> Agent:
+    """Return a Listener subscribed to the relevant groups."""
+    candidates = [
+        a
+        for a in agents
+        if isinstance(a, Listener)
+        and (set(a.groups_in) & set(groups_out) & set(message_groups))
+    ]
+    if not candidates:
+        raise RuntimeError(f"No listener available for groups {message_groups}")
+    return random.choice(candidates)
+
+
 def load_messages_to_humans() -> List[Dict[str, object]]:
     """Return past messages sent to humans from disk."""
     path = os.path.join("chatlogs", "messages_to_humans.json")
@@ -969,103 +984,10 @@ def main() -> None:
                 _ACTIVE_AGENT.name = None
                 ui.set_active_agent("")
 
-        def plan_chain(human_groups: List[str]) -> List[Agent]:
-            """Plan a chain of agents in response to a human message."""
-            t_tmp = talkativeness
-            r_tmp = rumination
-            f_tmp = forgetfulness
-            b_tmp = boredom
-            c_tmp = certainty
-
-            listener_candidates = [
-                l
-                for l in agents_by_role.get(Listener, set())
-                if set(l.groups_in) & set(human_groups)
-                and not missing_downstream_roles(l)
-            ]
-            if not listener_candidates:
-                listener_candidates = [
-                    l
-                    for l in agents_by_role.get(Listener, set())
-                    if not missing_downstream_roles(l)
-                ]
-            if not listener_candidates:
-                return []
-            listener = ensure_downstream(random.choice(listener_candidates))
-            chain = [listener]
-            t_tmp, r_tmp, f_tmp, b_tmp, c_tmp = simulate_ptcd(
-                listener, t_tmp, r_tmp, f_tmp, b_tmp, c_tmp
-            )
-            current = listener
-            steps = 0
-            while steps < 20:
-                S = set(current.groups_out)
-                raw_candidates_set: Set[Agent] = set()
-                for grp in S:
-                    raw_candidates_set |= agents_by_group_in.get(grp, set())
-                if not current.allow_self_consume:
-                    raw_candidates_set.discard(current)
-                candidates_set = {
-                    c for c in raw_candidates_set if not missing_downstream_roles(c)
-                }
-                speaker_candidates = {c for c in candidates_set if isinstance(c, Speaker)}
-                ruminator_candidates = {
-                    c
-                    for c in candidates_set
-                    if isinstance(c, Ruminator)
-                    and not isinstance(c, (Ponderer, Doubter))
-                }
-                doubter_candidates = {c for c in candidates_set if isinstance(c, Doubter)}
-                pools: List[List[Agent]] = []
-                weights: List[float] = []
-                if speaker_candidates:
-                    pools.append(list(speaker_candidates))
-                    weights.append(t_tmp)
-                if ruminator_candidates:
-                    pools.append(list(ruminator_candidates))
-                    weights.append(r_tmp)
-                if doubter_candidates:
-                    pools.append(list(doubter_candidates))
-                    weights.append(c_tmp)
-                if pools:
-                    selected_pool = random.choices(pools, weights=weights, k=1)[0]
-                    nxt = random.choice(selected_pool)
-                elif candidates_set:
-                    nxt = random.choice(list(candidates_set))
-                else:
-                    break
-                chain.append(nxt)
-                t_tmp, r_tmp, f_tmp, b_tmp, c_tmp = simulate_ptcd(
-                    nxt, t_tmp, r_tmp, f_tmp, b_tmp, c_tmp
-                )
-                current = nxt
-                if isinstance(nxt, Speaker):
-                    S = set(nxt.groups_out)
-                    arch_candidates: Set[Agent] = set()
-                    for grp in S:
-                        arch_candidates |= {
-                            a
-                            for a in agents_by_group_in.get(grp, set())
-                            if isinstance(a, Archivist)
-                        }
-                    if not nxt.allow_self_consume:
-                        arch_candidates.discard(nxt)
-                    if not arch_candidates:
-                        arch_candidates = set(agents_by_role.get(Archivist, set()))
-                    if arch_candidates:
-                        arch = random.choice(list(arch_candidates))
-                        chain.append(arch)
-                    break
-                steps += 1
-            return chain
-
-        if message_queue:
-            candidate = next(iter(agents_by_role.get(Listener, set())), None)
-        else:
-            non_listeners = active_agents - agents_by_role.get(Listener, set())
-            candidate = next(iter(non_listeners), None)
-        if candidate is None and active_agents:
-            candidate = random.choice(tuple(active_agents))
+        candidate = random.choice(tuple(active_agents)) if active_agents else None
+        if candidate is None:
+            logger.warning("No active agents available to start conversation_loop")
+            return
         state_current = ensure_downstream(candidate)
         epoch = 0
         ui.root.after(
@@ -1112,63 +1034,7 @@ def main() -> None:
                     group_contexts[group] = group_contexts.get(group, "") + text
                     ui.update_group_context(group, group_contexts[group])
 
-            if message_queue:
-                with chat_lock:
-                    batch = list(message_queue)
-                    message_queue.clear()
-                    save_message_queue(message_queue)
-                ui.root.after(0, ui.update_queue, list(message_queue))
-
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                lines = []
-                groups_union: Set[str] = set()
-                for msg in batch:
-                    ts = msg.get("timestamp", timestamp)
-                    sender = msg.get("sender", "Human")
-                    text = msg.get("message", "")
-                    lines.append(f"[{ts}] {sender}: {text}")
-                    groups_val = msg.get("groups")
-                    if not groups_val:
-                        raise ValueError("Message missing required groups")
-                    groups_union.update(groups_val)
-                if not groups_union:
-                    raise ValueError("Batch message missing required groups")
-                human_entry = {
-                    "sender": "Human",
-                    "timestamp": timestamp,
-                    "message": "\n".join(lines),
-                    "groups": sorted(groups_union),
-                    "epoch": time.time(),
-                }
-                with chat_lock:
-                    chat_log.append(human_entry)
-                text = (
-                    f"[{human_entry['timestamp']}] {human_entry['sender']}: {human_entry['message']}\n"
-                    f"{'-' * 80}\n\n"
-                )
-                for group in human_entry["groups"]:
-                    fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
-                    os.makedirs(os.path.dirname(fname), exist_ok=True)
-                    with open(fname, "a", encoding="utf-8") as log_file:
-                        log_file.write(text)
-                logger.debug(text.strip())
-                ui.root.after(0, ui.log, human_entry)
-                for group in human_entry["groups"]:
-                    group_contexts[group] = group_contexts.get(group, "") + text
-                    ui.update_group_context(group, group_contexts[group])
-
-                chain = plan_chain(human_entry["groups"])
-                if chain:
-                    logger.info(
-                        "Planned chain: %s",
-                        " \u2192 ".join(
-                            f"{a.__class__.__name__}({a.name})" for a in chain
-                        ),
-                    )
-                    for ag in chain:
-                        _run_agent_once(ag)
-                    state_current = chain[-1]
-                continue
+            # message_queue handling is now performed immediately after agent execution
 
             if not active_agents:
                 time.sleep(0.5)
@@ -1177,6 +1043,66 @@ def main() -> None:
                 state_current = random.choice(tuple(active_agents))
 
             _run_agent_once(state_current)
+
+            with chat_lock:
+                message_queue[:] = load_message_queue()
+            ui.root.after(0, ui.update_queue, list(message_queue))
+
+            valid_messages: List[Dict[str, object]] = []
+            for msg in message_queue:
+                groups = msg.get("groups")
+                if not groups:
+                    logger.warning("Queued message missing groups: %s", msg)
+                    continue
+                valid_messages.append(msg)
+
+            if len(valid_messages) != len(message_queue):
+                with chat_lock:
+                    message_queue[:] = valid_messages
+                    save_message_queue(message_queue)
+                ui.root.after(0, ui.update_queue, list(message_queue))
+
+            if valid_messages:
+                message_groups = sorted(
+                    {g for m in valid_messages for g in m.get("groups", [])}
+                )
+                try:
+                    listener = pick_listener(
+                        list(active_agents), state_current.groups_out, message_groups
+                    )
+                except RuntimeError as exc:
+                    logger.warning("%s", exc)
+                else:
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for msg in valid_messages:
+                        ts = msg.get("timestamp", timestamp)
+                        entry = {
+                            "timestamp": ts,
+                            "sender": "human",
+                            "message": msg.get("message", ""),
+                            "groups": msg.get("groups", []),
+                            "epoch": time.time(),
+                        }
+                        with chat_lock:
+                            chat_log.append(entry)
+                        text = f"[{ts}] human: {entry['message']}\n{'-' * 80}\n\n"
+                        for group in entry["groups"]:
+                            fname = os.path.join("chatlogs", f"chat_log_{group}.txt")
+                            os.makedirs(os.path.dirname(fname), exist_ok=True)
+                            with open(fname, "a", encoding="utf-8") as log_file:
+                                log_file.write(text)
+                            group_contexts[group] = group_contexts.get(group, "") + text
+                            ui.update_group_context(group, group_contexts[group])
+                        ui.root.after(0, ui.log, entry)
+                        append_human_log(entry)
+
+                    with chat_lock:
+                        message_queue.clear()
+                        save_message_queue(message_queue)
+                    ui.update_queue([])
+                    ui.root.after(0, ui.update_queue, [])
+                    _run_agent_once(listener)
+                    state_current = listener
 
             while True:
                 S = set(state_current.groups_out)
