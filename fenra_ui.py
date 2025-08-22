@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Optional
 import tkinter as tk
-from tkinter import scrolledtext, simpledialog, filedialog
+from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
 import configparser
 
@@ -279,6 +279,9 @@ class FenraUI:
             tk.Label(master, text="Message to user:").grid(row=0, column=0, sticky="w")
             self.text = scrolledtext.ScrolledText(master, width=40, height=10)
             self.text.grid(row=1, column=0, sticky="nsew")
+            tk.Label(master, text="Groups (comma-separated):").grid(row=2, column=0, sticky="w")
+            self.groups_entry = tk.Entry(master)
+            self.groups_entry.grid(row=3, column=0, sticky="ew")
             master.grid_rowconfigure(1, weight=1)
             master.grid_columnconfigure(0, weight=1)
             logger.debug("Exiting _SendDialog.body")
@@ -296,7 +299,9 @@ class FenraUI:
         def apply(self):
             logger.debug("Entering _SendDialog.apply")
             self.message = self.text.get("1.0", tk.END).rstrip()
-            self.result = self.message
+            groups_text = self.groups_entry.get().strip()
+            groups = [g.strip() for g in groups_text.split(",") if g.strip()]
+            self.result = {"message": self.message, "groups": groups}
             logger.debug("Exiting _SendDialog.apply")
 
     def _inject_message(self):
@@ -319,7 +324,11 @@ class FenraUI:
         dialog = self._SendDialog(self.root)
         result = dialog.result
         if result:
-            self.send_callback(result)
+            groups = result.get("groups") if isinstance(result, dict) else []
+            if not groups:
+                messagebox.showerror("Error", "Please specify at least one group")
+            else:
+                self.send_callback(result["message"], groups)
         logger.debug("Exiting _send_message")
 
     def update_queue(self, messages):

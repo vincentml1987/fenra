@@ -63,6 +63,11 @@ def _agent_to_ui(agent: Agent) -> dict:
         "groups_out": sorted(getattr(agent, "groups_out", [])),
     }
 
+
+def visible_to(agent: Agent, entry: Dict[str, object]) -> bool:
+    """Return True if ``entry`` is visible to ``agent`` based on groups."""
+    return bool(set(agent.groups_in) & set(entry.get("groups", [])))
+
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
 
@@ -398,16 +403,22 @@ def load_all_chat_histories() -> List[Dict[str, str]]:
             group = m.group(1)
             history.extend(_load_chat_history_for_group(fname, group))
 
-    if os.path.exists(os.path.join(log_dir, "chat_log.txt")):
-        history.extend(
-            _load_chat_history_for_group(os.path.join(log_dir, "chat_log.txt"), "general")
-        )
-
+    legacy_path = os.path.join(log_dir, "chat_log.txt")
+    if os.path.exists(legacy_path):
+        logger.warning("Skipping legacy general chat log %s", legacy_path)
     if os.path.exists("chat_log.txt"):
-        history.extend(_load_chat_history_for_group("chat_log.txt", "general"))
+        logger.warning("Skipping legacy general chat log chat_log.txt")
+
+    filtered: List[Dict[str, str]] = []
+    for entry in history:
+        groups = entry.get("groups", [])
+        if "general" in groups:
+            logger.warning("Dropping legacy entry with 'general' group: %s", entry)
+            continue
+        filtered.append(entry)
 
     logger.debug("Exiting load_all_chat_histories")
-    return history
+    return filtered
 
 
 def load_message_queue() -> List[Dict[str, object]]:
@@ -416,9 +427,20 @@ def load_message_queue() -> List[Dict[str, object]]:
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load queued messages: %s", exc)
+        else:
+            cleaned: List[Dict[str, object]] = []
+            for entry in data:
+                groups = entry.get("groups")
+                if not groups or "general" in groups:
+                    logger.warning(
+                        "Dropping queued message with invalid groups: %s", entry
+                    )
+                    continue
+                cleaned.append(entry)
+            return cleaned
     return []
 
 
@@ -439,9 +461,20 @@ def load_messages_to_humans() -> List[Dict[str, object]]:
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load messages to humans: %s", exc)
+        else:
+            cleaned: List[Dict[str, object]] = []
+            for entry in data:
+                groups = entry.get("groups")
+                if not groups or "general" in groups:
+                    logger.warning(
+                        "Dropping legacy sent message with invalid groups: %s", entry
+                    )
+                    continue
+                cleaned.append(entry)
+            return cleaned
     return []
 
 
@@ -670,12 +703,22 @@ def main() -> None:
                     ready_event.set()
 
 
-    threading.Thread(target=loader, daemon=True).start()
+    loader_thread = threading.Thread(target=loader, daemon=True)
+    loader_thread.start()
     logger.info("Loading agents in background...")
 
     while not ready_event.is_set():
         ui.root.update()
         time.sleep(0.1)
+    loader_thread.join()
+
+    for a in agents:
+        if not a.groups_in:
+            raise ValueError(f"Agent {a.name} missing groups_in")
+        if not a.groups_out:
+            raise ValueError(f"Agent {a.name} missing groups_out")
+        if "general" in a.groups_in or "general" in a.groups_out:
+            raise ValueError(f"Agent {a.name} has invalid group 'general'")
 
     # At least one of each agent type loaded
 
@@ -691,7 +734,7 @@ def main() -> None:
             f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n"
             f"{'-' * 80}\n\n"
         )
-        for grp in entry.get("groups", ["general"]):
+        for grp in entry.get("groups", []):
             group_contexts[grp] += text
 
     ordered_contexts: Dict[str, str] = {}
@@ -774,11 +817,7 @@ def main() -> None:
             try:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 with chat_lock:
-                    context = [
-                        m
-                        for m in chat_log
-                        if set(m.get("groups", ["general"])) & set(agent.groups_in)
-                    ]
+                    context = [m for m in chat_log if visible_to(agent, m)]
 
                 if isinstance(agent, Ponderer):
                     context.append(
@@ -833,7 +872,11 @@ def main() -> None:
                     agent.model.watchdog_timeout = 900.0
 
                     epoch += 1
-                    groups_target = list(agent.groups_out or agent.groups_in or ["general"])
+                    groups_target = list(agent.groups_out or agent.groups_in)
+                    if not groups_target:
+                        raise ValueError(
+                            f"Agent {agent.name} has no groups_out or groups_in"
+                        )
                     if isinstance(agent, Archivist):
                         summary_dir = os.path.join("chatlogs", "summarized")
                         os.makedirs(summary_dir, exist_ok=True)
@@ -842,7 +885,7 @@ def main() -> None:
                             chat_log[:] = [
                                 e
                                 for e in chat_log
-                                if not (set(e.get("groups", ["general"])) & set(groups_target))
+                                if not (set(e.get("groups", [])) & set(groups_target))
                             ]
 
                         text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
@@ -1042,7 +1085,9 @@ def main() -> None:
                 inject_queue.clear()
 
             for msg in pending_inject:
-                groups = msg.get("groups", ["general"])
+                groups = msg.get("groups")
+                if not groups:
+                    raise ValueError("Message missing required groups")
                 entry = {
                     "sender": msg.get("sender", "Human"),
                     "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -1082,12 +1127,17 @@ def main() -> None:
                     sender = msg.get("sender", "Human")
                     text = msg.get("message", "")
                     lines.append(f"[{ts}] {sender}: {text}")
-                    groups_union.update(msg.get("groups", ["general"]))
+                    groups_val = msg.get("groups")
+                    if not groups_val:
+                        raise ValueError("Message missing required groups")
+                    groups_union.update(groups_val)
+                if not groups_union:
+                    raise ValueError("Batch message missing required groups")
                 human_entry = {
                     "sender": "Human",
                     "timestamp": timestamp,
                     "message": "\n".join(lines),
-                    "groups": sorted(groups_union) or ["general"],
+                    "groups": sorted(groups_union),
                     "epoch": time.time(),
                 }
                 with chat_lock:
@@ -1191,10 +1241,12 @@ def main() -> None:
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
-    def send_message(message: str) -> None:
-        logger.debug("Entering send_message message=%s", message)
+    def send_message(message: str, groups: List[str]) -> None:
+        logger.debug("Entering send_message message=%s groups=%s", message, groups)
+        if not groups:
+            raise ValueError("Message missing required groups")
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = {"message": message, "timestamp": ts, "epoch": time.time()}
+        entry = {"message": message, "timestamp": ts, "groups": groups, "epoch": time.time()}
         with chat_lock:
             message_queue.append(entry)
             save_message_queue(message_queue)
@@ -1205,6 +1257,8 @@ def main() -> None:
         logger.debug("Entering inject_message group=%s message=%s", group, message)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         target_groups = all_groups if group == "All Groups" else [group]
+        if not target_groups:
+            raise ValueError("Message missing required groups")
         with chat_lock:
             inject_queue.append(
                 {

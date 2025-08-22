@@ -326,9 +326,10 @@ class Agent:
             g_set = set(groups)
             groups_in_set |= g_set
             groups_out_set |= g_set
-        if not groups_in_set and not groups_out_set:
-            groups_in_set.add("general")
-            groups_out_set.add("general")
+        if not groups_in_set:
+            raise ValueError(f"Agent {self.name} missing groups_in")
+        if not groups_out_set:
+            raise ValueError(f"Agent {self.name} missing groups_out")
         self.groups_in = groups_in_set
         self.groups_out = groups_out_set
         self.groups = sorted(groups_in_set | groups_out_set)
