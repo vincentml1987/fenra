@@ -1004,25 +1004,28 @@ def main() -> None:
             agents: List[Agent],
             all_history: List[Dict[str, object]],
             ui: "FenraUI",
-        ) -> None:
-            nonlocal state_current
+            state_current: Agent,
+        ) -> Agent | None:
             with chat_lock:
                 message_queue[:] = load_message_queue()
                 queue = list(message_queue)
             ui.root.after(0, ui.update_queue, queue)
             if not queue:
-                return
+                return None
 
             listener_candidates = [
                 a
                 for a in agents
-                if isinstance(a, Listener) and getattr(a, "active", True)
+                if isinstance(a, Listener)
+                and getattr(a, "active", True)
+                and (set(a.groups_in) & set(state_current.groups_out))
             ]
             if not listener_candidates:
                 logger.warning(
-                    "No active listeners available to consume human queue; leaving messages in queue"
+                    "No active listeners available for groups %s; leaving messages in queue",
+                    state_current.groups_out,
                 )
-                return
+                return None
             listener = random.choice(listener_candidates)
 
             with chat_lock:
@@ -1032,7 +1035,7 @@ def main() -> None:
             for msg in queue:
                 synthetic.append(
                     {
-                        "sender": "human",
+                        "sender": "Human",
                         "timestamp": msg.get("timestamp") or ts_now,
                         "message": msg.get("message", ""),
                         "groups": sorted(listener.groups_in),
@@ -1047,7 +1050,7 @@ def main() -> None:
                 save_message_queue(message_queue)
             ui.update_queue([])
             ui.root.after(0, ui.update_queue, [])
-            state_current = listener
+            return listener
 
         while True:
             with chat_lock:
@@ -1093,7 +1096,12 @@ def main() -> None:
                 state_current = random.choice(tuple(active_agents))
 
             _run_agent_once(state_current)
-            _consume_human_queue_if_any(agents, chat_log, ui)
+            state_current = (
+                _consume_human_queue_if_any(
+                    agents, chat_log, ui, state_current=state_current
+                )
+                or state_current
+            )
 
             while True:
                 S = set(state_current.groups_out)
