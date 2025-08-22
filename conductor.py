@@ -78,6 +78,12 @@ def start_ollama_server() -> Popen:
 # Current running Ollama process
 server_proc: Popen | None = None
 
+# Track current agent per thread for UI attribution
+_ACTIVE_AGENT = threading.local()
+_ACTIVE_AGENT.name = None
+
+_DEPRECATED_GROUP = "gen" + "eral"
+
 # Discord integration (outbound only)
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID")
@@ -395,14 +401,6 @@ def load_all_chat_histories() -> List[Dict[str, str]]:
             group = m.group(1)
             history.extend(_load_chat_history_for_group(fname, group))
 
-    if os.path.exists(os.path.join(log_dir, "chat_log.txt")):
-        history.extend(
-            _load_chat_history_for_group(os.path.join(log_dir, "chat_log.txt"), "general")
-        )
-
-    if os.path.exists("chat_log.txt"):
-        history.extend(_load_chat_history_for_group("chat_log.txt", "general"))
-
     logger.debug("Exiting load_all_chat_histories")
     return history
 
@@ -624,12 +622,20 @@ def main() -> None:
     # Efficient lookup structures
     active_agents: Set[Agent] = set()
     agents_by_role: Dict[type, Set[Agent]] = {}
-    agents_by_group_in: Dict[str, Set[Agent]] = {}
     roles_by_group: Dict[str, Set[type]] = {}
 
     fenra_ui_logger = logging.getLogger("fenra_ui")
     fenra_ui_logger.setLevel(level)
     ui = FenraUI(agents, inject_callback=None, send_callback=None, config_path=config_path)
+
+    def _ui_json_watcher(payload: Dict) -> None:
+        name = getattr(_ACTIVE_AGENT, "name", None) or payload.get("model") or "Unknown"
+        try:
+            ui.update_agent_payload(str(name), payload)
+        except Exception:
+            logger.exception("UI watcher failed")
+
+    add_json_watcher(_ui_json_watcher)
 
     agent_lock = threading.Lock()
     ready_event = threading.Event()
@@ -652,7 +658,6 @@ def main() -> None:
                     active_agents.add(agent)
                     agents_by_role.setdefault(type(agent), set()).add(agent)
                     for g in agent.groups_in:
-                        agents_by_group_in.setdefault(g, set()).add(agent)
                         roles_by_group.setdefault(g, set()).add(type(agent))
                 if archivists and listeners and speakers and ruminators:
                     ready_event.set()
@@ -665,6 +670,12 @@ def main() -> None:
         ui.root.update()
         time.sleep(0.1)
 
+    for ag in agents:
+        if not getattr(ag, "groups_in", None):
+            raise ValueError(f"Agent {ag.name} has no groups_in")
+        if _DEPRECATED_GROUP in ag.groups_in or _DEPRECATED_GROUP in getattr(ag, "groups_out", []):
+            raise ValueError(f"Agent {ag.name} references deprecated group '{_DEPRECATED_GROUP}'")
+
     # At least one of each agent type loaded
 
     chat_log: List[Dict[str, str]] = load_all_chat_histories()
@@ -673,17 +684,40 @@ def main() -> None:
     messages_to_humans: List[Dict[str, object]] = load_messages_to_humans()
     chat_lock = threading.Lock()
 
+    def _format_entry(entry: Dict[str, str]) -> str:
+        return f"[{entry['timestamp']}] {entry['sender']}: {entry['message']}\n{'-' * 80}\n\n"
+
+    def _build_group_contexts(history: List[Dict[str, str]]) -> Dict[str, str]:
+        ctx: Dict[str, str] = {}
+        for e in history:
+            groups = e.get("groups")
+            if not groups:
+                raise ValueError("Log entry missing 'groups'")
+            if _DEPRECATED_GROUP in groups:
+                raise ValueError(f"Log entry references deprecated group '{_DEPRECATED_GROUP}'")
+            text = _format_entry(e)
+            for g in groups:
+                ctx[g] = ctx.get(g, "") + text
+        return ctx
+
+    group_contexts: Dict[str, str] = _build_group_contexts(chat_log)
+    ordered_gc: Dict[str, str] = {g: group_contexts.get(g, "") for g in (all_groups or [])}
+    for g, txt in group_contexts.items():
+        if g not in ordered_gc:
+            ordered_gc[g] = txt
+    ui.set_group_contexts(ordered_gc)
+
     def conversation_loop() -> None:
         nonlocal talkativeness, forgetfulness, rumination, boredom, certainty
         logger.debug("Entering conversation_loop")
         timeout_secs: defaultdict[str, float] = defaultdict(lambda: 900.0)
         def missing_downstream_roles(agent: Agent) -> List[str]:
             """Return a list of role names missing downstream from ``agent``."""
-            S = set(agent.groups_out)
+            S = set(agent.groups_in)
             present: Set[type] = set()
             for grp in S:
                 roles = roles_by_group.get(grp, set()).copy()
-                if not agent.allow_self_consume and grp in agent.groups_in:
+                if not agent.allow_self_consume:
                     roles.discard(type(agent))
                 present |= roles
             required = {Listener, Speaker, Ruminator, Archivist, Ponderer, Doubter}
@@ -745,7 +779,7 @@ def main() -> None:
                 context = [
                     m
                     for m in chat_log
-                    if set(m.get("groups", ["general"])) & set(agent.groups_in)
+                    if set(m.get("groups", ())) & set(agent.groups_in)
                 ]
 
             if isinstance(agent, Ponderer):
@@ -780,6 +814,9 @@ def main() -> None:
             except Exception:  # noqa: BLE001
                 logger.exception("update_topology failed (non-fatal)")
             try:
+                _ACTIVE_AGENT.name = agent.name
+                if ui:
+                    ui.set_active_agent(agent.name)
                 agent.model.watchdog_timeout = timeout_secs[agent.name]
                 reply = step_with_retry(agent, lambda: agent.step(context))
             except Exception as exc:  # noqa: BLE001
@@ -798,9 +835,15 @@ def main() -> None:
             else:
                 timeout_secs[agent.name] = 900.0
                 agent.model.watchdog_timeout = 900.0
+            finally:
+                _ACTIVE_AGENT.name = None
+                if ui:
+                    ui.set_active_agent("None")
 
             epoch += 1
-            groups_target = list(agent.groups_out or agent.groups_in or ["general"])
+            if not agent.groups_in:
+                raise ValueError(f"{agent.name} has no groups_in; cannot route context")
+            groups_target = list(agent.groups_in)
             if isinstance(agent, Archivist):
                 summary_dir = os.path.join("chatlogs", "summarized")
                 os.makedirs(summary_dir, exist_ok=True)
@@ -809,7 +852,7 @@ def main() -> None:
                     chat_log[:] = [
                         e
                         for e in chat_log
-                        if not (set(e.get("groups", ["general"])) & set(groups_target))
+                        if not (set(e.get("groups", ())) & set(groups_target))
                     ]
 
                 text = f"[{timestamp}] {agent.name}: {reply}\n{'-' * 80}\n\n"
@@ -836,6 +879,9 @@ def main() -> None:
                 }
                 with chat_lock:
                     chat_log.append(entry)
+                for group in groups_target:
+                    group_contexts[group] = text
+                    ui.update_group_context(group, text)
                 ui.root.after(0, ui.log, entry)
             else:
                 entry = {
@@ -854,6 +900,9 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 logger.debug(text.strip())
+                for group in groups_target:
+                    group_contexts[group] = group_contexts.get(group, "") + text
+                    ui.update_group_context(group, group_contexts[group])
                 ui.root.after(0, ui.log, entry)
                 if isinstance(agent, Speaker):
                     messages_to_humans.append(entry)
@@ -913,10 +962,15 @@ def main() -> None:
             current = listener
             steps = 0
             while steps < 20:
-                S = set(current.groups_out)
+                S = set(current.groups_in)
                 raw_candidates_set: Set[Agent] = set()
-                for grp in S:
-                    raw_candidates_set |= agents_by_group_in.get(grp, set())
+                for agent2 in active_agents:
+                    if agent2 is current:
+                        continue
+                    if not getattr(agent2, "groups_out", None):
+                        continue
+                    if set(agent2.groups_out) & S:
+                        raw_candidates_set.add(agent2)
                 if not current.allow_self_consume:
                     raw_candidates_set.discard(current)
                 candidates_set = {
@@ -954,14 +1008,15 @@ def main() -> None:
                 )
                 current = nxt
                 if isinstance(nxt, Speaker):
-                    S = set(nxt.groups_out)
+                    S = set(nxt.groups_in)
                     arch_candidates: Set[Agent] = set()
-                    for grp in S:
-                        arch_candidates |= {
-                            a
-                            for a in agents_by_group_in.get(grp, set())
-                            if isinstance(a, Archivist)
-                        }
+                    for agent2 in active_agents:
+                        if not isinstance(agent2, Archivist):
+                            continue
+                        if not getattr(agent2, "groups_out", None):
+                            continue
+                        if set(agent2.groups_out) & S:
+                            arch_candidates.add(agent2)
                     if not nxt.allow_self_consume:
                         arch_candidates.discard(nxt)
                     if not arch_candidates:
@@ -999,7 +1054,11 @@ def main() -> None:
                 inject_queue.clear()
 
             for msg in pending_inject:
-                groups = msg.get("groups", ["general"])
+                groups = msg.get("groups")
+                if not groups:
+                    raise ValueError("Injected message missing 'groups'")
+                if _DEPRECATED_GROUP in groups:
+                    raise ValueError(f"Injected message references deprecated group '{_DEPRECATED_GROUP}'")
                 entry = {
                     "sender": msg.get("sender", "Human"),
                     "timestamp": msg.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -1019,6 +1078,9 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 logger.debug(text.strip())
+                for group in groups:
+                    group_contexts[group] = group_contexts.get(group, "") + text
+                    ui.update_group_context(group, group_contexts[group])
                 ui.root.after(0, ui.log, entry)
 
             if message_queue:
@@ -1036,12 +1098,19 @@ def main() -> None:
                     sender = msg.get("sender", "Human")
                     text = msg.get("message", "")
                     lines.append(f"[{ts}] {sender}: {text}")
-                    groups_union.update(msg.get("groups", ["general"]))
+                    groups = msg.get("groups")
+                    if not groups:
+                        raise ValueError("Queued message missing 'groups'")
+                    if _DEPRECATED_GROUP in groups:
+                        raise ValueError(f"Queued message references deprecated group '{_DEPRECATED_GROUP}'")
+                    groups_union.update(groups)
+                if not groups_union:
+                    raise ValueError("Batch has no groups")
                 human_entry = {
                     "sender": "Human",
                     "timestamp": timestamp,
                     "message": "\n".join(lines),
-                    "groups": sorted(groups_union) or ["general"],
+                    "groups": sorted(groups_union),
                     "epoch": time.time(),
                 }
                 with chat_lock:
@@ -1056,6 +1125,9 @@ def main() -> None:
                     with open(fname, "a", encoding="utf-8") as log_file:
                         log_file.write(text)
                 logger.debug(text.strip())
+                for group in human_entry["groups"]:
+                    group_contexts[group] = group_contexts.get(group, "") + text
+                    ui.update_group_context(group, group_contexts[group])
                 ui.root.after(0, ui.log, human_entry)
 
                 chain = plan_chain(human_entry["groups"])
@@ -1080,10 +1152,15 @@ def main() -> None:
             _run_agent_once(state_current)
 
             while True:
-                S = set(state_current.groups_out)
+                S = set(state_current.groups_in)
                 raw_candidates_set: Set[Agent] = set()
-                for grp in S:
-                    raw_candidates_set |= agents_by_group_in.get(grp, set())
+                for agent2 in active_agents:
+                    if agent2 is state_current:
+                        continue
+                    if not getattr(agent2, "groups_out", None):
+                        continue
+                    if set(agent2.groups_out) & S:
+                        raw_candidates_set.add(agent2)
                 if not state_current.allow_self_consume:
                     raw_candidates_set.discard(state_current)
                 candidates_set = {
@@ -1092,7 +1169,7 @@ def main() -> None:
                 if candidates_set:
                     break
                 logger.warning(
-                    "No downstream chain covering all roles from %s (groups_out=%s); re-selecting in 5s",
+                    "No downstream chain covering all roles from %s (groups_in=%s); re-selecting in 5s",
                     state_current.name,
                     S,
                 )
@@ -1142,10 +1219,14 @@ def main() -> None:
             time.sleep(0.5)
         logger.debug("Exiting conversation_loop")
 
-    def send_message(message: str) -> None:
-        logger.debug("Entering send_message message=%s", message)
+    def send_message(message: str, groups: List[str]) -> None:
+        logger.debug("Entering send_message message=%s groups=%s", message, groups)
+        if not groups:
+            raise ValueError("send_message requires at least one group")
+        if _DEPRECATED_GROUP in groups:
+            raise ValueError(f"send_message references deprecated group '{_DEPRECATED_GROUP}'")
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = {"message": message, "timestamp": ts, "epoch": time.time()}
+        entry = {"message": message, "timestamp": ts, "epoch": time.time(), "groups": list(groups)}
         with chat_lock:
             message_queue.append(entry)
             save_message_queue(message_queue)
