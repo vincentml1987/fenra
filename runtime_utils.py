@@ -22,6 +22,39 @@ logger = logging.getLogger(__name__)
 # Registered callbacks to inspect JSON payloads sent to Ollama
 JSON_WATCHERS: List[Callable[[Dict], None]] = []
 
+_WORDLIKE_RE = re.compile(r"\w+|[^\s\w]", re.UNICODE)
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=256)
+def _tokenize_cached(model: str, snippet: str) -> List[str]:
+    return _WORDLIKE_RE.findall(snippet)
+
+
+def tokenize_text(model: str, text: str) -> List[str]:
+    """Very lightweight tokenization used only for budgeting/tracking.
+
+    Returns a list so callers can ``len(...)`` it. This heuristic tokenizer is
+    dependency-free and does not reflect model-specific tokenization. A small
+    LRU cache avoids repeated tokenization of the same prefix.
+    """
+
+    if not text:
+        return []
+    snippet = text[:4096]
+    try:
+        tokens = _tokenize_cached(model, snippet)
+        if len(text) > 4096:
+            tokens += _WORDLIKE_RE.findall(text[4096:])
+        return tokens
+    except Exception:
+        # Fallback: whitespace split so callers still get a length
+        try:
+            return (text or "").split()
+        except Exception:
+            return []
+
 
 def add_json_watcher(func: Callable[[Dict], None]) -> None:
     """Register a callback for outgoing Ollama payloads."""
@@ -241,30 +274,6 @@ def parse_model_size(model_id: str, max_retries: int = 3) -> float:
     )
     logger.debug("Exiting parse_model_size")
     return 7.0
-
-
-def tokenize_text(model: str, text: str) -> List[int]:
-    """Return token IDs for the given text using Ollama's tokenize API."""
-    logger.debug("Entering tokenize_text model=%s text=%s", model, text)
-    try:
-        resp = requests.post(
-            "http://localhost:11434/api/tokenize",
-            json={"model": model, "prompt": text},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        tokens = data.get("tokens")
-        if isinstance(tokens, list):
-            result = [int(t) for t in tokens]
-            logger.debug("Exiting tokenize_text with %s", result)
-            return result
-    except Exception as exc:  # noqa: BLE001
-        logger.error("tokenize_text failed for %s: %s", text, exc)
-    logger.debug("Exiting tokenize_text with empty list")
-    return []
-
-
 def parse_response(resp: requests.Response) -> str:
     """Parse a non-streaming Ollama response into text."""
     logger.debug("Entering parse_response")

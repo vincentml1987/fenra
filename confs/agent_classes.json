@@ -1,0 +1,32 @@
+{
+  "classes": [
+    {
+      "name": "ruminator",
+      "description": "",
+      "triggering_pdv": "rumination",
+      "pdv_adjustments": [ { "name": "rumination", "delta": 0.02 } ],
+      "reads_message_queue": false,
+      "outputs_to_discord": false,
+      "is_archivist": false,
+      "model": null,
+      "temperature": null,
+      "system_prompt": "",
+      "pre_context_message": "",
+      "post_context_message": ""
+    },
+    {
+      "name": "speaker",
+      "description": "",
+      "triggering_pdv": "talkativeness",
+      "pdv_adjustments": [ { "name": "talkativeness", "delta": 0.02 } ],
+      "reads_message_queue": false,
+      "outputs_to_discord": true,
+      "is_archivist": false,
+      "model": null,
+      "temperature": null,
+      "system_prompt": "",
+      "pre_context_message": "",
+      "post_context_message": ""
+    }
+  ]
+}

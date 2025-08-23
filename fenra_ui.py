@@ -3,11 +3,25 @@ import logging
 import os
 import threading
 import time
+import hashlib
+import colorsys
 from typing import Optional
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
-import configparser
+
+import requests
+
+from config_loader import (
+    load_globals,
+    load_pdvs,
+    load_classes,
+    load_agents,
+    save_globals,
+    save_pdvs,
+    save_classes,
+    save_agents,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,20 +29,21 @@ CHATLOG_DIR = "chatlogs"
 QUEUED_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "queued_messages.json")
 SENT_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "messages_to_humans.json")
 
-ROLE_COLORS = {
-    "listener":  "#ff4d4d",  # red
-    "ruminator": "#ff8c1a",  # orange
-    "doubter":   "#ffd11a",  # yellow
-    "ponderer":  "#2ecc71",  # green
-    "archivist": "#3498db",  # blue
-    "speaker":   "#8e44ad",  # violet
-}
+
+def hsl_to_hex(h: int, s: float, l: float) -> str:
+    r, g, b = colorsys.hls_to_rgb(h / 360.0, l, s)
+    return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
+
+
+def pastel_for_class(name: str) -> str:
+    h = int(hashlib.sha1(name.encode("utf-8")).hexdigest(), 16) % 360
+    return hsl_to_hex(h, 0.45, 0.82)
 
 
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="fenra_config.txt"):
+    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="confs/globals.json"):
         logger.debug(
             "Entering FenraUI.__init__ with agents=%s inject_callback=%s send_callback=%s",
             agents,
@@ -48,55 +63,50 @@ class FenraUI:
         self._active_agent: Optional[str] = None
         self._group_contexts: dict[str, str] = {}
 
-        parser = configparser.ConfigParser()
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                parser.read_file(f)
-        except Exception:  # noqa: BLE001
-            parser.read(config_path)
-        self.global_config = dict(parser.items("global")) if parser.has_section("global") else {}
+        self._model_cache: list[str] = []
 
-        # Extract initial weights so the UI reflects configured values immediately
-        tv = float(self.global_config.get("talkativeness", 0.0))
-        rum = float(self.global_config.get("rumination", 0.0))
-        fg = float(self.global_config.get("forgetfulness", 0.0))
-        bd = float(self.global_config.get("boredom", 0.0))
-        ct = float(self.global_config.get("certainty", 0.0))
+        self.global_config = load_globals()
+
+        pdv_cfg = load_pdvs()
+        self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # ----- Configuration Tab -----
-        config_tab = ttk.Frame(self.notebook)
-        self.notebook.add(config_tab, text="Configuration")
+        # ----- Configurations Tab -----
+        configs_tab = ttk.Frame(self.notebook)
+        self.notebook.add(configs_tab, text="Configurations")
 
-        cfg_top = ttk.Frame(config_tab)
-        cfg_top.pack(fill=tk.X, pady=2)
-        ttk.Button(cfg_top, text="Reload", command=self.reload_config_snapshot).pack(
-            side=tk.RIGHT, padx=2
-        )
-        ttk.Button(cfg_top, text="Edit…", command=self.open_config_editor_dialog).pack(
-            side=tk.RIGHT, padx=2
-        )
+        self.config_nb = ttk.Notebook(configs_tab)
+        self.config_nb.pack(fill=tk.BOTH, expand=True)
 
-        self.config_output = scrolledtext.ScrolledText(config_tab, state="disabled", height=12)
-        self.config_output.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
-        self.reload_config_snapshot()
+        # Globals sub-tab
+        self.globals_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.globals_tab, text="Globals")
+        self._build_globals_tab()
+
+        # PDVs sub-tab
+        self.pdvs_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.pdvs_tab, text="PDVs")
+        self._build_pdvs_tab()
+
+        # Agent Classes sub-tab
+        self.classes_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.classes_tab, text="Agent Classes")
+        self._build_classes_tab()
+
+        # Agents sub-tab
+        self.agents_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.agents_tab, text="Agents")
+        self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
         metrics_tab = ttk.Frame(self.notebook)
         self.notebook.add(metrics_tab, text="Live Metrics")
 
-        self.metric_bars = {}
-        self.metric_labels = {}
-        metric_names = [
-            "Talkativeness",
-            "Rumination",
-            "Forgetfulness",
-            "Boredom",
-            "Certainty",
-        ]
-        for name in metric_names:
+        self.metric_bars: dict[str, ttk.Progressbar] = {}
+        self.metric_labels: dict[str, tk.Label] = {}
+        for name in self.pdv_values.keys():
             frame = ttk.Frame(metrics_tab)
             frame.pack(fill=tk.X, padx=4, pady=2)
             ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
@@ -106,6 +116,10 @@ class FenraUI:
             val.pack(side=tk.LEFT, padx=4)
             self.metric_bars[name] = bar
             self.metric_labels[name] = val
+
+        limit = self.global_config.get("max_context_tokens", 8192)
+        self.token_usage_var = tk.StringVar(value=f"Tokens: 0 / {limit}")
+        tk.Label(metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
 
         # ----- Internal Thoughts Tab -----
         thoughts_tab = ttk.Frame(self.notebook)
@@ -169,12 +183,6 @@ class FenraUI:
         self.topology_canvas.pack(fill=tk.BOTH, expand=True)
         self.topology_canvas.bind("<Configure>", lambda e: self._redraw_topology())
 
-        legend = ttk.Frame(topology_tab)
-        legend.pack(anchor="e", padx=4, pady=2)
-        for role, color in ROLE_COLORS.items():
-            tk.Label(legend, bg=color, width=2).pack(side=tk.LEFT, padx=2)
-            ttk.Label(legend, text=role.title()).pack(side=tk.LEFT, padx=2)
-
         self._topology_active = None
         self._topology_agents = []
         self._topology_node_items = {}
@@ -223,16 +231,9 @@ class FenraUI:
         self.group_text = scrolledtext.ScrolledText(text_frame, state="disabled")
         self.group_text.pack(fill=tk.BOTH, expand=True)
 
-        logger.debug(
-            "Seeding UI with config weights: talkativeness=%s, rumination=%s, "
-            "forgetfulness=%s, boredom=%s, certainty=%s",
-            tv,
-            rum,
-            fg,
-            bd,
-            ct,
-        )
-        self.update_weights(tv, rum, fg, bd, ct)
+        self.update_pdvs(self.pdv_values)
+        self._start_metrics_poll()
+        self._ensure_globals_set()
         logger.debug("Exiting FenraUI.__init__")
 
 
@@ -302,25 +303,23 @@ class FenraUI:
             groups_text = self.groups_entry.get().strip()
             groups = [g.strip() for g in groups_text.split(",") if g.strip()]
             self.result = {"message": self.message, "groups": groups}
-            logger.debug("Exiting _SendDialog.apply")
+        logger.debug("Exiting _SendDialog.apply")
 
     def _inject_message(self):
         logger.debug("Entering _inject_message")
-        if not self.inject_callback:
-            logger.debug("Exiting _inject_message: no callback")
-            return
         group_name = "All Groups"
         dialog = self._InjectDialog(self.root, group_name)
         result = dialog.result
         if result:
-            self.inject_callback(group_name, result)
+            if self.inject_callback:
+                self.inject_callback(group_name, result)
+            else:
+                items = self._enqueue_message("system", result)
+                self.update_queue(items)
         logger.debug("Exiting _inject_message")
 
     def _send_message(self):
         logger.debug("Entering _send_message")
-        if not self.send_callback:
-            logger.debug("Exiting _send_message: no callback")
-            return
         dialog = self._SendDialog(self.root)
         result = dialog.result
         if result:
@@ -328,7 +327,11 @@ class FenraUI:
             if not groups:
                 messagebox.showerror("Error", "Please specify at least one group")
             else:
-                self.send_callback(result["message"], groups)
+                if self.send_callback:
+                    self.send_callback(result["message"], groups)
+                else:
+                    items = self._enqueue_message("user", result["message"])
+                    self.update_queue(items)
         logger.debug("Exiting _send_message")
 
     def update_queue(self, messages):
@@ -336,38 +339,34 @@ class FenraUI:
         self.update_queue_and_sent(queued=messages)
         logger.debug("Exiting update_queue")
 
+    def _enqueue_message(self, sender: str, message: str):
+        os.makedirs(CHATLOG_DIR, exist_ok=True)
+        try:
+            with open(QUEUED_MESSAGES_PATH, "r", encoding="utf-8") as f:
+                items = json.load(f)
+        except Exception:
+            items = []
+        item = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "sender": sender,
+            "message": message,
+        }
+        items.append(item)
+        with open(QUEUED_MESSAGES_PATH, "w", encoding="utf-8") as f:
+            json.dump(items, f, indent=2)
+        return items
+
     def update_sent(self, messages):
         logger.debug("Entering update_sent messages=%s", messages)
         self.sent_messages = list(messages)
         self.update_queue_and_sent(sent=messages)
         logger.debug("Exiting update_sent")
 
-    def update_weights(
-        self,
-        talkativeness: float,
-        rumination: float,
-        forgetfulness: float,
-        boredom: float = 0.0,
-        certainty: float = 0.0,
-    ) -> None:
-        logger.debug(
-            "Entering update_weights talkativeness=%s rumination=%s forgetfulness=%s boredom=%s certainty=%s",
-            talkativeness,
-            rumination,
-            forgetfulness,
-            boredom,
-            certainty,
-        )
+    def update_pdvs(self, pdv_values: dict[str, float]) -> None:
+        logger.debug("Entering update_pdvs pdv_values=%s", pdv_values)
 
         def _update():
-            metrics = [
-                ("Talkativeness", talkativeness),
-                ("Rumination", rumination),
-                ("Forgetfulness", forgetfulness),
-                ("Boredom", boredom),
-                ("Certainty", certainty),
-            ]
-            for name, value in metrics:
+            for name, value in pdv_values.items():
                 bar = self.metric_bars.get(name)
                 label = self.metric_labels.get(name)
                 if bar and label:
@@ -376,7 +375,12 @@ class FenraUI:
                     label.config(text=f"{value:.2f}")
 
         self._threadsafe(_update)
-        logger.debug("Exiting update_weights")
+        logger.debug("Exiting update_pdvs")
+
+    def set_token_usage(self, used: int, limit: int) -> None:
+        def _update():
+            self.token_usage_var.set(f"Tokens: {used} / {limit}")
+        self._threadsafe(_update)
 
     def append_thought(self, text: str, timestamp: Optional[str] = None) -> None:
         logger.debug("Entering append_thought text=%s timestamp=%s", text, timestamp)
@@ -453,49 +457,405 @@ class FenraUI:
         self._threadsafe(_render)
         logger.debug("Exiting update_queue_and_sent")
 
-    def reload_config_snapshot(self) -> None:
-        logger.debug("Entering reload_config_snapshot")
-        parser = configparser.ConfigParser()
+    # ------------------------------------------------------------------
+    # Configuration tab builders
+    # ------------------------------------------------------------------
+
+    def _build_globals_tab(self) -> None:
+        for child in self.globals_tab.winfo_children():
+            child.destroy()
+        models = self._fetch_models()
+        self._globals_vars = {
+            "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
+            "model": tk.StringVar(value=self.global_config.get("model", "")),
+            "temperature": tk.StringVar(value=str(self.global_config.get("temperature", ""))),
+            "system_prompt": tk.StringVar(value=self.global_config.get("system_prompt", "")),
+            "pre_context_message": tk.StringVar(value=self.global_config.get("pre_context_message", "")),
+            "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
+            "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
+            "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+        }
+        row = 0
+        for label, key in [
+            ("Debug Level", "debug_level"),
+            ("Model", "model"),
+            ("Temperature", "temperature"),
+            ("System Prompt", "system_prompt"),
+            ("Pre Context", "pre_context_message"),
+            ("Post Context", "post_context_message"),
+            ("Max Tokens", "max_context_tokens"),
+            ("PDV Gamma", "pdv_gamma"),
+        ]:
+            tk.Label(self.globals_tab, text=label).grid(row=row, column=0, sticky="w")
+            if key == "model":
+                box = ttk.Combobox(
+                    self.globals_tab,
+                    textvariable=self._globals_vars[key],
+                    values=models,
+                    state="readonly",
+                )
+                box.grid(row=row, column=1, sticky="ew")
+            else:
+                entry = ttk.Entry(self.globals_tab, textvariable=self._globals_vars[key])
+                entry.grid(row=row, column=1, sticky="ew")
+            row += 1
+        self.globals_tab.columnconfigure(1, weight=1)
+        btn_frame = ttk.Frame(self.globals_tab)
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=4)
+        ttk.Button(btn_frame, text="Refresh Models", command=self._refresh_models).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Save", command=self._save_globals).pack(side=tk.LEFT, padx=2)
+
+    def _refresh_models(self) -> None:
+        models = self._fetch_models()
+        box = None
+        for child in self.globals_tab.grid_slaves():
+            if isinstance(child, ttk.Combobox):
+                box = child
+                break
+        if box is not None:
+            box.configure(values=models)
+
+    def _save_globals(self) -> None:
+        for k, var in self._globals_vars.items():
+            val = var.get()
+            if k in {"temperature", "max_context_tokens", "pdv_gamma"}:
+                try:
+                    self.global_config[k] = float(val) if k != "max_context_tokens" else int(val)
+                except ValueError:
+                    self.global_config[k] = None
+            else:
+                self.global_config[k] = val
+        save_globals(self.global_config)
+
+    def _build_pdvs_tab(self) -> None:
+        for child in self.pdvs_tab.winfo_children():
+            child.destroy()
+        self._pdv_rows = []
+        pdvs = load_pdvs()
+        frame = self.pdvs_tab
+        for name, cfg in pdvs.items():
+            self._add_pdv_row(frame, name, cfg)
+        btn = ttk.Frame(frame)
+        btn.pack(fill=tk.X, pady=4)
+        ttk.Button(btn, text="Add", command=lambda: self._add_pdv_row(frame, "new", {"description": "", "value": 0.0})).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn, text="Save", command=self._save_pdvs).pack(side=tk.LEFT, padx=2)
+
+    def _add_pdv_row(self, parent, name, cfg):
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, padx=4, pady=2)
+        name_var = tk.StringVar(value=name)
+        desc_var = tk.StringVar(value=cfg.get("description", ""))
+        val_var = tk.DoubleVar(value=cfg.get("value", 0.0))
+        ttk.Entry(row, textvariable=name_var, width=15).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=desc_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Scale(row, from_=0.0, to=1.0, variable=val_var, orient=tk.HORIZONTAL).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(row, text="Remove", command=lambda r=row: r.destroy()).pack(side=tk.LEFT, padx=2)
+        self._pdv_rows.append((row, name_var, desc_var, val_var))
+
+    def _save_pdvs(self) -> None:
+        data = {}
+        for row, name_var, desc_var, val_var in self._pdv_rows:
+            if not row.winfo_exists():
+                continue
+            name = name_var.get().strip()
+            if not name:
+                continue
+            data[name] = {
+                "name": name,
+                "description": desc_var.get(),
+                "value": float(val_var.get()),
+            }
+        save_pdvs(data)
+        self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        self.update_pdvs(self.pdv_values)
+
+    def _build_classes_tab(self) -> None:
+        for child in self.classes_tab.winfo_children():
+            child.destroy()
+        classes = load_classes()
+        text = scrolledtext.ScrolledText(self.classes_tab)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", json.dumps(list(classes.values()), indent=2))
+        btn = ttk.Frame(self.classes_tab)
+        btn.pack(fill=tk.X)
+        def _save():
+            try:
+                data = json.loads(text.get("1.0", tk.END))
+                cls_map = {c["name"]: c for c in data}
+                save_classes(cls_map)
+            except Exception:
+                messagebox.showerror("Error", "Invalid JSON")
+        ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
+
+    def _build_agents_tab(self) -> None:
+        for child in self.agents_tab.winfo_children():
+            child.destroy()
+        agents = load_agents()
+        self._agents_cache = agents
+        flagged = [a for a in agents if a.get("flag_no_downstream")]
+        if flagged:
+            banner = ttk.Frame(self.agents_tab, relief=tk.RIDGE, borderwidth=1)
+            banner.pack(fill=tk.X, pady=2)
+            top = ttk.Frame(banner)
+            top.pack(fill=tk.X)
+            ttk.Label(top, text="Agents with no downstream:", foreground="red").pack(side=tk.LEFT)
+            ttk.Button(top, text="Dismiss", command=banner.destroy).pack(side=tk.RIGHT)
+            self._flag_list = tk.Listbox(banner, height=min(5, len(flagged)), exportselection=False)
+            for a in flagged:
+                self._flag_list.insert(tk.END, a["name"])
+            self._flag_list.pack(fill=tk.X)
+            self._flag_list.bind("<<ListboxSelect>>", self._on_flag_select)
+            self._flag_info = tk.Label(banner, justify="left")
+            self._flag_info.pack(fill=tk.X, padx=4, pady=2)
+            btns = ttk.Frame(banner)
+            btns.pack(fill=tk.X, pady=4)
+            ttk.Button(btns, text="Batch Wiring", command=self._batch_wiring).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btns, text="Repair Dead-Ends", command=self._repair_dead_ends).pack(side=tk.LEFT, padx=2)
+
+        text = scrolledtext.ScrolledText(self.agents_tab)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", json.dumps(agents, indent=2))
+        btn = ttk.Frame(self.agents_tab)
+        btn.pack(fill=tk.X)
+
+        def _save() -> None:
+            try:
+                data = json.loads(text.get("1.0", tk.END))
+                save_agents(data)
+                self._build_agents_tab()
+            except Exception:
+                messagebox.showerror("Error", "Invalid JSON")
+
+        ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
+
+    def _on_flag_select(self, _event=None) -> None:
+        sel = getattr(self, "_flag_list", None)
+        if not sel:
+            return
+        idx = sel.curselection()
+        if not idx:
+            return
+        name = sel.get(idx[0])
+        agent = next((a for a in self._agents_cache if a["name"] == name), None)
+        if not agent:
+            return
+        lines = []
+        for g in agent.get("groups_out", []):
+            consumers = [b["name"] for b in self._agents_cache if b["name"] != name and g in b.get("groups_in", [])]
+            if consumers:
+                lines.append(f"{g} -> {', '.join(consumers)}")
+            else:
+                lines.append(f"{g} -> (no consumers)")
+        self._flag_info.config(text="\n".join(lines))
+
+    def _batch_wiring(self) -> None:
+        if not hasattr(self, "_flag_list"):
+            return
+        idx = self._flag_list.curselection()
+        if not idx:
+            messagebox.showinfo("Batch Wiring", "Select a flagged agent first")
+            return
+        name = self._flag_list.get(idx[0])
+        agent = next(a for a in self._agents_cache if a["name"] == name)
+        missing = agent.get("missing_out_groups") or [
+            g for g in agent.get("groups_out", [])
+            if not any(g in b.get("groups_in", []) for b in self._agents_cache if b["name"] != name)
+        ]
+        if not missing:
+            messagebox.showinfo("Batch Wiring", "No missing groups")
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Batch Wiring")
+        selections = []
+        for g in missing:
+            ttk.Label(dialog, text=f"{g}:").pack(anchor="w")
+            cands = [b for b in self._agents_cache if b["name"] != name and g not in b.get("groups_in", [])]
+            for cand in cands:
+                var = tk.BooleanVar()
+                chk = tk.Checkbutton(dialog, text=cand["name"], variable=var)
+                chk.pack(anchor="w", padx=20)
+                selections.append((var, cand["name"], g))
+        def _apply() -> None:
+            import copy, json
+            new_agents = copy.deepcopy(self._agents_cache)
+            affected = set()
+            for var, cand_name, grp in selections:
+                if var.get():
+                    targ = next(a for a in new_agents if a["name"] == cand_name)
+                    targ.setdefault("groups_in", [])
+                    if grp not in targ["groups_in"]:
+                        targ["groups_in"].append(grp)
+                        affected.add(cand_name)
+            if not affected:
+                dialog.destroy()
+                return
+            targ_agent = next(a for a in new_agents if a["name"] == name)
+            targ_agent["flag_no_downstream"] = False
+            targ_agent["missing_out_groups"] = []
+            affected.add(name)
+            preview = {a["name"]: a for a in new_agents if a["name"] in affected}
+            prev_win = tk.Toplevel(dialog)
+            prev_win.title("Preview Changes")
+            txt = scrolledtext.ScrolledText(prev_win)
+            txt.pack(fill=tk.BOTH, expand=True)
+            txt.insert("1.0", json.dumps(preview, indent=2))
+            def _confirm() -> None:
+                save_agents(new_agents)
+                prev_win.destroy()
+                dialog.destroy()
+                self._build_agents_tab()
+            ttk.Button(prev_win, text="Apply", command=_confirm).pack()
+        ttk.Button(dialog, text="Apply", command=_apply).pack(pady=4)
+
+    def _repair_dead_ends(self) -> None:
+        import copy, json
+        new_agents = copy.deepcopy(self._agents_cache)
+        affected = set()
+        for agent in new_agents:
+            if agent.get("flag_no_downstream"):
+                missing = agent.get("missing_out_groups") or [
+                    g for g in agent.get("groups_out", [])
+                    if not any(g in b.get("groups_in", []) for b in new_agents if b["name"] != agent["name"])
+                ]
+                for g in missing:
+                    cands = [b for b in new_agents if b["name"] != agent["name"] and g not in b.get("groups_in", [])]
+                    if not cands:
+                        continue
+                    targ = sorted(cands, key=lambda x: x["name"])[0]
+                    targ.setdefault("groups_in", [])
+                    if g not in targ["groups_in"]:
+                        targ["groups_in"].append(g)
+                        affected.add(targ["name"])
+                agent["flag_no_downstream"] = False
+                agent["missing_out_groups"] = []
+                affected.add(agent["name"])
+        if not affected:
+            messagebox.showinfo("Repair Dead-Ends", "No changes proposed")
+            return
+        preview = {a["name"]: a for a in new_agents if a["name"] in affected}
+        win = tk.Toplevel(self.root)
+        win.title("Preview Repair")
+        txt = scrolledtext.ScrolledText(win)
+        txt.pack(fill=tk.BOTH, expand=True)
+        txt.insert("1.0", json.dumps(preview, indent=2))
+        def _apply() -> None:
+            save_agents(new_agents)
+            win.destroy()
+            self._build_agents_tab()
+        ttk.Button(win, text="Apply", command=_apply).pack()
+
+    def _fetch_models(self) -> list[str]:
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                parser.read_file(f)
-        except Exception:  # noqa: BLE001
-            parser.read(self.config_path)
-        self.global_config = dict(parser.items("global")) if parser.has_section("global") else {}
+            resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+            resp.raise_for_status()
+            models = [m.get("name") for m in resp.json().get("models", [])]
+            self._model_cache = sorted([m for m in models if m])
+        except Exception as exc:
+            logger.exception("Model list fetch failed")
+            messagebox.showwarning("Models", f"Failed to fetch models: {exc}")
+        return list(self._model_cache)
 
-        def _update():
-            self.config_output.configure(state="normal")
-            self.config_output.delete("1.0", tk.END)
-            self.config_output.insert(tk.END, "Global Configuration:\n")
-            for k, v in self.global_config.items():
-                self.config_output.insert(tk.END, f"{k} = {v}\n")
-            self.config_output.configure(state="disabled")
-            self.config_output.see(tk.END)
+    def _ensure_globals_set(self) -> None:
+        need = not self.global_config.get("model") or (
+            self.global_config.get("temperature") is None
+        )
+        if need:
+            self._open_globals_dialog_blocking()
 
-        self._threadsafe(_update)
-        logger.debug("Exiting reload_config_snapshot")
+    def _open_globals_dialog_blocking(self) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Set Globals")
+        dlg.transient(self.root)
+        vars = {
+            "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
+            "model": tk.StringVar(value=self.global_config.get("model", "")),
+            "temperature": tk.StringVar(value=str(self.global_config.get("temperature", ""))),
+            "system_prompt": tk.StringVar(value=self.global_config.get("system_prompt", "")),
+            "pre_context_message": tk.StringVar(value=self.global_config.get("pre_context_message", "")),
+            "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
+            "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
+            "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+        }
+        models = self._fetch_models()
+        row = 0
+        for label, key in [
+            ("Debug Level", "debug_level"),
+            ("Model", "model"),
+            ("Temperature", "temperature"),
+            ("System Prompt", "system_prompt"),
+            ("Pre Context", "pre_context_message"),
+            ("Post Context", "post_context_message"),
+            ("Max Tokens", "max_context_tokens"),
+            ("PDV Gamma", "pdv_gamma"),
+        ]:
+            tk.Label(dlg, text=label).grid(row=row, column=0, sticky="w")
+            if key == "model":
+                box = ttk.Combobox(dlg, textvariable=vars[key], values=models, state="readonly")
+                box.grid(row=row, column=1, sticky="ew")
+            else:
+                entry = ttk.Entry(dlg, textvariable=vars[key])
+                entry.grid(row=row, column=1, sticky="ew")
+            row += 1
+        dlg.columnconfigure(1, weight=1)
+        btn = ttk.Frame(dlg)
+        btn.grid(row=row, column=0, columnspan=2, pady=4)
 
-    def open_config_editor_dialog(self) -> None:
-        logger.debug("Entering open_config_editor_dialog")
+        def _refresh() -> None:
+            box.configure(values=self._fetch_models())
 
-        def _open():
-            dialog = tk.Toplevel(self.root)
-            dialog.title("Edit Configuration")
-            text = tk.Text(dialog, width=60, height=15)
-            text.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-            content = "[global]\n" + "\n".join(
-                f"{k} = {v}" for k, v in self.global_config.items()
-            )
-            text.insert("1.0", content)
-            btn_frame = ttk.Frame(dialog)
-            btn_frame.pack(fill=tk.X, padx=4, pady=4)
-            ttk.Button(btn_frame, text="Save", state=tk.DISABLED).pack(side=tk.RIGHT, padx=2)
-            ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(
-                side=tk.RIGHT, padx=2
-            )
+        def _save() -> None:
+            temp_cfg = {}
+            for k, var in vars.items():
+                val = var.get()
+                if k in {"temperature", "max_context_tokens", "pdv_gamma"}:
+                    try:
+                        temp_cfg[k] = float(val) if k != "max_context_tokens" else int(val)
+                    except ValueError:
+                        messagebox.showerror("Globals", f"Invalid value for {k}")
+                        return
+                else:
+                    temp_cfg[k] = val
+            if not temp_cfg.get("model") or temp_cfg.get("temperature") is None:
+                messagebox.showerror(
+                    "Globals", "Model and temperature are required and must be valid"
+                )
+                return
+            self.global_config.update(temp_cfg)
+            save_globals(self.global_config)
+            self.global_config = load_globals()
+            self._build_globals_tab()
+            dlg.grab_release()
+            dlg.destroy()
 
-        self._threadsafe(_open)
-        logger.debug("Exiting open_config_editor_dialog")
+        ttk.Button(btn, text="Refresh Models", command=_refresh).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn, text="Save", command=_save).pack(side=tk.LEFT, padx=2)
+
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+
+    def _start_metrics_poll(self):
+        def _tick():
+            try:
+                with open(
+                    os.path.join("chatlogs", "pdvs_live.json"), "r", encoding="utf-8"
+                ) as f:
+                    pdv_vals = json.load(f)
+                if isinstance(pdv_vals, dict):
+                    self.update_pdvs(pdv_vals)
+            except Exception:
+                pass
+            try:
+                with open(
+                    os.path.join("chatlogs", "token_usage.json"), "r", encoding="utf-8"
+                ) as f:
+                    info = json.load(f)
+                self.set_token_usage(int(info.get("used", 0)), int(info.get("limit", 0)))
+            except Exception:
+                pass
+            self.root.after(2000, _tick)
+
+        self.root.after(2000, _tick)
+
 
     def set_active_agent(self, name: str) -> None:
         logger.debug("Entering set_active_agent name=%s", name)
@@ -665,8 +1025,9 @@ class FenraUI:
         if not active:
             self.topology_header.config(text="Active Agent: None")
             return
+        cls = active.get('agent_class') or active.get('role', '')
         self.topology_header.config(
-            text=f"Active Agent: {active.get('name')} ({active.get('role', '').title()})"
+            text=f"Active Agent: {active.get('name')} ({cls.title()})"
         )
         agents = self._topology_agents
         upstream, downstream, extra_up, extra_down = self._compute_neighbors(active, agents)
@@ -709,8 +1070,8 @@ class FenraUI:
         self._draw_node(cx_act, active_y, active, 24)
 
     def _draw_node(self, x: float, y: float, agent: dict, radius: int) -> None:
-        role = (agent.get("role") or "").lower()
-        color = ROLE_COLORS.get(role, "#cccccc")
+        cls_name = agent.get("agent_class") or agent.get("role", "")
+        color = pastel_for_class(cls_name)
         circle = self.topology_canvas.create_oval(
             x - radius,
             y - radius,
