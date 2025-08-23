@@ -1,0 +1,9 @@
+{
+  "pdvs": [
+    { "name": "talkativeness", "description": "", "value": 0.5 },
+    { "name": "rumination", "description": "", "value": 0.5 },
+    { "name": "forgetfulness", "description": "", "value": 0.5 },
+    { "name": "boredom", "description": "", "value": 0.5 },
+    { "name": "certainty", "description": "", "value": 0.5 }
+  ]
+}
