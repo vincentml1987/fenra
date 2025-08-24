@@ -302,14 +302,18 @@ def _append_human_log(entry: Dict[str, object], path: str = os.path.join("chatlo
 def _read_group_contexts() -> Dict[str, str]:
     ctxs: Dict[str, str] = {}
     os.makedirs("chatlogs", exist_ok=True)
+    seen_groups = set()
     for a in AGENTS:
-        for g in set((a.get("groups_in") or []) + (a.get("groups_out") or [])):
-            path = os.path.join("chatlogs", f"chat_log_{g}.txt")
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    ctxs[g] = f.read()
-            except Exception:
-                ctxs[g] = ""
+        for g in (a.get("groups_in") or []) + (a.get("groups_out") or []):
+            if g:
+                seen_groups.add(g)
+    for g in sorted(seen_groups):
+        path = os.path.join("chatlogs", f"chat_log_{g}.txt")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                ctxs[g] = f.read()
+        except Exception:
+            ctxs[g] = ""
     return ctxs
 
 
@@ -415,6 +419,22 @@ def step_agent(agent_name: str) -> Optional[str]:
         GLOBALS.get("max_context_tokens", 8192),
     )
     prompt = "\n".join(filter(None, [pre, msg, post]))
+    if UI is not None:
+        try:
+            UI.set_active_agent(agent["name"])
+            UI.update_agent_payload(
+                agent["name"],
+                {
+                    "model": model_id,
+                    "temperature": temp,
+                    "system_text": system_text,
+                    "pre_text": pre,
+                    "post_text": post,
+                    "message_preview": (msg or "")[-2000:],
+                },
+            )
+        except Exception:
+            logger.exception("UI payload pre-gen update failed")
     reply = MODEL.generate_from_prompt(
         prompt,
         override_model=model_id,
@@ -475,8 +495,8 @@ def step_agent(agent_name: str) -> Optional[str]:
         json.dump({"used": used, "limit": GLOBALS.get("max_context_tokens", 8192)}, f)
     if UI is not None:
         try:
-            UI.set_active_agent(agent["name"])
-            UI.update_topology(agent, AGENTS)
+            UI.log({"timestamp": timestamp, "sender": agent["name"], "message": reply})
+            full_prompt = "\n".join(filter(None, [system_text, pre, CONTEXT, post]))
             UI.update_agent_payload(
                 agent["name"],
                 {
@@ -485,12 +505,12 @@ def step_agent(agent_name: str) -> Optional[str]:
                     "system_text": system_text,
                     "pre_text": pre,
                     "post_text": post,
-                    "prompt_preview": prompt[-4000:],
+                    "prompt_tail": full_prompt[-4000:],
                 },
             )
             UI.set_group_contexts(_read_group_contexts())
         except Exception:
-            logger.exception("Failed to push UI updates")
+            logger.exception("UI post-gen update failed")
     if used > GLOBALS.get("max_context_tokens", 8192):
         arch_cand = find_archivist_downstream(agent)
         if arch_cand:
@@ -508,8 +528,9 @@ def run_loop(steps: Optional[int] = None) -> None:
             try:
                 UI.set_active_agent(cur)
                 UI.update_topology(AGENTS_BY_NAME[cur], AGENTS)
+                UI.set_group_contexts(_read_group_contexts())
             except Exception:
-                logger.exception("UI update failed (pre-step)")
+                logger.exception("UI pre-step update failed")
         logger.info("Running agent %s", cur)
         nxt = step_agent(cur)
         logger.info("Next agent: %s", nxt)
@@ -559,9 +580,11 @@ if __name__ == "__main__":
         t.start()
         try:
             UI = FenraUI(agents=AGENTS)
-            UI.update_topology(AGENTS_BY_NAME.get(STATE.get("current_agent")), AGENTS)
+            cur = STATE.get("current_agent")
+            if isinstance(cur, str) and cur in AGENTS_BY_NAME:
+                UI.set_active_agent(cur)
+                UI.update_topology(AGENTS_BY_NAME[cur], AGENTS)
             UI.set_group_contexts(_read_group_contexts())
-            UI.set_active_agent(STATE.get("current_agent"))
             UI.start()
         finally:
             UI = None
