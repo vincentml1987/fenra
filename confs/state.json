@@ -1,4 +1,4 @@
 {
-  "current_agent": "Ava",
-  "pdv_history_path": "chatlogs/pdv_history.jsonl"
+  "current_agent": "NotSpeakerNotListenerNotArchivist-BothInOut",
+  "pdv_history_path": "chatlogs\\pdv_history.jsonl"
 }
