@@ -4,10 +4,12 @@ import time
 import random
 import shutil
 import argparse
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 
 import requests
+from fenra_ui import FenraUI
 
 from ai_model import AIModel
 from config_loader import (
@@ -46,6 +48,8 @@ AGENTS_BY_NAME: Dict[str, dict] = {}
 AGENTS_BY_GROUP_IN: Dict[str, set] = {}
 STATE: Dict[str, object] = {}
 CONTEXT: str = ""
+
+UI: Optional[FenraUI] = None
 
 
 def load_all_configs() -> None:
@@ -295,6 +299,20 @@ def _append_human_log(entry: Dict[str, object], path: str = os.path.join("chatlo
         f.write(line)
 
 
+def _read_group_contexts() -> Dict[str, str]:
+    ctxs: Dict[str, str] = {}
+    os.makedirs("chatlogs", exist_ok=True)
+    for a in AGENTS:
+        for g in set((a.get("groups_in") or []) + (a.get("groups_out") or [])):
+            path = os.path.join("chatlogs", f"chat_log_{g}.txt")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    ctxs[g] = f.read()
+            except Exception:
+                ctxs[g] = ""
+    return ctxs
+
+
 def find_archivist_downstream(agent: dict) -> Optional[dict]:
     for cand in downstream_candidates(agent["name"]):
         if CLASSES[cand["agent_class"]].get("is_archivist"):
@@ -455,6 +473,24 @@ def step_agent(agent_name: str) -> Optional[str]:
         used = len((full_prompt or "").split())
     with open(os.path.join("chatlogs", "token_usage.json"), "w", encoding="utf-8") as f:
         json.dump({"used": used, "limit": GLOBALS.get("max_context_tokens", 8192)}, f)
+    if UI is not None:
+        try:
+            UI.set_active_agent(agent["name"])
+            UI.update_topology(agent, AGENTS)
+            UI.update_agent_payload(
+                agent["name"],
+                {
+                    "model": model_id,
+                    "temperature": temp,
+                    "system_text": system_text,
+                    "pre_text": pre,
+                    "post_text": post,
+                    "prompt_preview": prompt[-4000:],
+                },
+            )
+            UI.set_group_contexts(_read_group_contexts())
+        except Exception:
+            logger.exception("Failed to push UI updates")
     if used > GLOBALS.get("max_context_tokens", 8192):
         arch_cand = find_archivist_downstream(agent)
         if arch_cand:
@@ -468,6 +504,12 @@ def run_loop(steps: Optional[int] = None) -> None:
     hist: List[str] = [cur]
     count = 0
     while steps is None or count < steps:
+        if UI is not None:
+            try:
+                UI.set_active_agent(cur)
+                UI.update_topology(AGENTS_BY_NAME[cur], AGENTS)
+            except Exception:
+                logger.exception("UI update failed (pre-step)")
         logger.info("Running agent %s", cur)
         nxt = step_agent(cur)
         logger.info("Next agent: %s", nxt)
@@ -502,7 +544,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Run a single agent step")
     parser.add_argument("--steps", type=int, default=None, help="Run N steps then exit")
+    parser.add_argument("--ui", action="store_true", help="Launch Tk UI")
     args = parser.parse_args()
     setup()
     steps = 1 if args.once else args.steps
-    run_loop(steps)
+    if args.ui:
+        def _loop() -> None:
+            try:
+                run_loop(steps)
+            except Exception:
+                logger.exception("Agent loop crashed")
+
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+        try:
+            UI = FenraUI(agents=AGENTS)
+            UI.update_topology(AGENTS_BY_NAME.get(STATE.get("current_agent")), AGENTS)
+            UI.set_group_contexts(_read_group_contexts())
+            UI.set_active_agent(STATE.get("current_agent"))
+            UI.start()
+        finally:
+            UI = None
+    else:
+        run_loop(steps)
