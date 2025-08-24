@@ -1,34 +1,284 @@
 {
   "agents": [
     {
-      "name": "Ava",
-      "description": "",
-      "agent_class": "ruminator",
-      "groups_in": ["Core"],
-      "groups_out": ["Reasoning"],
-      "model": null,
-      "temperature": null,
-      "system_prompt": "",
-      "pre_context_message": "",
-      "post_context_message": "",
-      "created_at": "2025-08-23T00:00:00Z",
-      "flag_no_downstream": false,
-      "missing_out_groups": []
+      "agent_class": "IsSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "IsSpeakerIsListenerIsArchivist-AinBout"
     },
     {
-      "name": "Echo",
-      "description": "",
-      "agent_class": "speaker",
-      "groups_in": ["Reasoning"],
-      "groups_out": ["Core"],
-      "model": null,
-      "temperature": null,
-      "system_prompt": "",
-      "pre_context_message": "",
-      "post_context_message": "",
-      "created_at": "2025-08-24T00:00:00Z",
-      "flag_no_downstream": false,
-      "missing_out_groups": []
+      "agent_class": "IsSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "IsSpeakerIsListenerIsArchivist-BinAout"
+    },
+    {
+      "agent_class": "IsSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "IsSpeakerIsListenerIsArchivist-BothInOut"
+    },
+    {
+      "agent_class": "IsSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "IsSpeakerIsListenerNotArchivist-AinBout"
+    },
+    {
+      "agent_class": "IsSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "IsSpeakerIsListenerNotArchivist-BinAout"
+    },
+    {
+      "agent_class": "IsSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "IsSpeakerIsListenerNotArchivist-BothInOut"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "IsSpeakerNotListenerIsArchivist-AinBout"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "IsSpeakerNotListenerIsArchivist-BinAout"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "IsSpeakerNotListenerIsArchivist-BothInOut"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "IsSpeakerNotListenerNotArchivist-AinBout"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "IsSpeakerNotListenerNotArchivist-BinAout"
+    },
+    {
+      "agent_class": "IsSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "IsSpeakerNotListenerNotArchivist-BothInOut"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "NotSpeakerIsListenerIsArchivist-AinBout"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "NotSpeakerIsListenerIsArchivist-BinAout"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "NotSpeakerIsListenerIsArchivist-BothInOut"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "NotSpeakerIsListenerNotArchivist-AinBout"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "NotSpeakerIsListenerNotArchivist-BinAout"
+    },
+    {
+      "agent_class": "NotSpeakerIsListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "NotSpeakerIsListenerNotArchivist-BothInOut"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "NotSpeakerNotListenerIsArchivist-AinBout"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "NotSpeakerNotListenerIsArchivist-BinAout"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerIsArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "NotSpeakerNotListenerIsArchivist-BothInOut"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA"
+      ],
+      "groups_out": [
+        "GroupB"
+      ],
+      "name": "NotSpeakerNotListenerNotArchivist-AinBout"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA"
+      ],
+      "name": "NotSpeakerNotListenerNotArchivist-BinAout"
+    },
+    {
+      "agent_class": "NotSpeakerNotListenerNotArchivist",
+      "created_at": "2025-08-24T10:11:27.457726Z",
+      "groups_in": [
+        "GroupA",
+        "GroupB"
+      ],
+      "groups_out": [
+        "GroupA",
+        "GroupB"
+      ],
+      "name": "NotSpeakerNotListenerNotArchivist-BothInOut"
     }
   ]
 }
