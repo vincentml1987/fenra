@@ -1,0 +1,15 @@
+{
+  "debug_level": "INFO",
+  "model": "mistral",
+  "temperature": 0.7,
+  "system_prompt": "",
+  "pre_context_message": "",
+  "post_context_message": "",
+  "max_context_tokens": 8192,
+  "pdv_gamma": 2.0,
+  "incoming_message_pdvms": [
+    { "name": "Attentiveness", "delta_pct": 25 },
+    { "name": "Talkativeness", "delta_pct": 15 },
+    { "name": "Rumination", "delta_pct": 20 }
+  ]
+}
