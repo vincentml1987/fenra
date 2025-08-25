@@ -1,4 +1,4 @@
 {
-  "current_agent": "IsSpeakerIsListenerIsArchivist-BothInOut",
+  "current_agent": "IsSpeakerIsListenerIsArchivist-BinAout",
   "pdv_history_path": "chatlogs\\pdv_history.jsonl"
 }

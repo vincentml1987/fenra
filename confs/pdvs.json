@@ -1,44 +1,9 @@
 {
-  "pdvs": [
-    {
-      "description": "PDV for IsSpeakerIsListenerIsArchivist",
-      "name": "PDV_IsSpeakerIsListenerIsArchivist",
-      "value": 0.5755565770015677
-    },
-    {
-      "description": "PDV for IsSpeakerIsListenerNotArchivist",
-      "name": "PDV_IsSpeakerIsListenerNotArchivist",
-      "value": 0.49674979379091566
-    },
-    {
-      "description": "PDV for IsSpeakerNotListenerIsArchivist",
-      "name": "PDV_IsSpeakerNotListenerIsArchivist",
-      "value": 0.4975742244342772
-    },
-    {
-      "description": "PDV for IsSpeakerNotListenerNotArchivist",
-      "name": "PDV_IsSpeakerNotListenerNotArchivist",
-      "value": 0.4983635243383382
-    },
-    {
-      "description": "PDV for NotSpeakerIsListenerIsArchivist",
-      "name": "PDV_NotSpeakerIsListenerIsArchivist",
-      "value": 0.4963128616070639
-    },
-    {
-      "description": "PDV for NotSpeakerIsListenerNotArchivist",
-      "name": "PDV_NotSpeakerIsListenerNotArchivist",
-      "value": 0.4979941809782198
-    },
-    {
-      "description": "PDV for NotSpeakerNotListenerIsArchivist",
-      "name": "PDV_NotSpeakerNotListenerIsArchivist",
-      "value": 0.4958696664295239
-    },
-    {
-      "description": "PDV for NotSpeakerNotListenerNotArchivist",
-      "name": "PDV_NotSpeakerNotListenerNotArchivist",
-      "value": 0.49719024673609385
-    }
+	"pdvs": [
+	{ 
+		"name": "Reciprocity",
+		"value": 0.50,
+		"description": "Social drive to reply when engaged. Rises when ."
+	}
   ]
 }
