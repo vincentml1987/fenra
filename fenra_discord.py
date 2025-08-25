@@ -4,6 +4,9 @@ import json
 from datetime import datetime
 import discord
 
+from config_loader import load_globals
+from pdv_utils import apply_and_persist_pdv_adjustments
+
 # ─── configuration ────────────────────────────────────────────────────────────
 # your bot token (you said you set fenra_token as a system variable)
 DISCORD_TOKEN = os.getenv("fenra_token")
@@ -57,6 +60,16 @@ class DiscordToFenra(discord.Client):
         queue.append(entry)
         save_queue(queue)
         print(f"[Discord→Fenra] Queued message at {entry['timestamp']}")
+
+        # After enqueueing, apply any configured DPVMs for incoming messages.
+        try:
+            g = load_globals()
+            adjs = g.get("incoming_message_dpvms") or []
+            if isinstance(adjs, list) and adjs:
+                apply_and_persist_pdv_adjustments(adjs)
+        except Exception as e:
+            # Non-fatal: log-visible but do not crash the client
+            print(f"[Discord→Fenra] DPVM apply failed: {e}")
 
 
 # ─── run ─────────────────────────────────────────────────────────────────────
