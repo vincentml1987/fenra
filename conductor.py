@@ -239,9 +239,18 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
         cur = AGENTS_BY_NAME[curr_name]
         _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
-    pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in D}
+    # If there are queued messages, prefer candidates that can read the queue.
+    C0 = D
+    if has_queued_messages():
+        listener_candidates = [
+            a for a in D if CLASSES[a["agent_class"]].get("reads_message_queue")
+        ]
+        if listener_candidates:
+            C0 = listener_candidates
+    # PDV-trigger selection among the chosen candidate set (listener subset if any; otherwise all downstream)
+    pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in C0}
     target = max(pdvs, key=lambda p: PDVS.get(p, 0.0))
-    C = [a for a in D if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or D
+    C = [a for a in C0 if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or C0
     random.shuffle(C)
     for cand in C:
         outs = set(cand.get("groups_out", []))
@@ -276,6 +285,18 @@ def merge_and_clear_queue(path: str = QUEUE_PATH) -> str:
         except Exception:
             pass
     return "\n".join(lines)
+
+
+def has_queued_messages(path: str = QUEUE_PATH) -> bool:
+    """Return True if there are pending messages in the Discord/user queue.
+    This MUST NOT mutate or clear the queue. Only listeners drain it inside step_agent().
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            items = json.load(f) or []
+        return bool(items)
+    except Exception:
+        return False
 
 
 def _load_messages_to_humans(path: str = os.path.join("chatlogs", "messages_to_humans.json")) -> List[Dict[str, object]]:
