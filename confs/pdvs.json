@@ -1,9 +1,0 @@
-{
-	"pdvs": [
-	{ 
-		"name": "Reciprocity",
-		"value": 0.50,
-		"description": "Social drive to reply when engaged. Rises when ."
-	}
-  ]
-}
