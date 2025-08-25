@@ -1,9 +1,24 @@
 {
-	"pdvs": [
-	{ 
-		"name": "Reciprocity",
-		"value": 0.50,
-		"description": "Social drive to reply when engaged. Rises when ."
-	}
+  "pdvs": [
+    {
+      "name": "Attentiveness",
+      "value": 0.50,
+      "description": "Social drive to pay attention to conversations; triggers listeners that consume the message queue."
+    },
+    {
+      "name": "Talkativeness",
+      "value": 0.50,
+      "description": "Desire to output what Fenra is thinking about; triggers speakers."
+    },
+    {
+      "name": "Rumination",
+      "value": 1.0,
+      "description": "Desire to think internally; triggers ruminators."
+    },
+    {
+      "name": "MemoryPressure",
+      "value": 0.30,
+      "description": "Internal pressure to compress and consolidate context; triggers archivists."
+    }
   ]
 }
