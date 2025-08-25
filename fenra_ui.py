@@ -26,7 +26,6 @@ from config_loader import (
     save_agents,
 )
 from pdv_utils import apply_and_persist_pdv_adjustments
-import conductor  # to inject messages into the system
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,10 @@ _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
 _discord_consumer_task: asyncio.Task | None = None
 
+
+def _get_conductor():
+    import importlib
+    return importlib.import_module("conductor")
 
 def get_discord_queue() -> asyncio.Queue:
     global _discord_queue
@@ -96,14 +99,16 @@ async def _discord_consumer_loop():
     while True:
         item = await q.get()
         try:
-            if hasattr(conductor, "inject_external_message"):
-                await conductor.inject_external_message(item.get("text", ""), item)
+            c = _get_conductor()
+            if hasattr(c, "inject_external_message"):
+                await c.inject_external_message(item.get("text", ""), item)
             else:
-                await conductor.handle_user_message(item.get("text", ""), meta=item)
+                await c.handle_user_message(item.get("text", ""), meta=item)
         except Exception as e:
             print(f"[UI/Discord] Consumer error: {e}")
         finally:
             q.task_done()
+
 
 
 async def start_discord_in_ui():
@@ -430,9 +435,14 @@ class FenraUI:
             if self.inject_callback:
                 self.inject_callback(group_name, result)
             else:
-                asyncio.run(
-                    conductor.inject_external_message(result, {"author": "system"})
-                )
+                items = self._enqueue_message("system", result)
+                self.update_queue(items)
+                try:
+                    c = _get_conductor()
+                    import asyncio
+                    asyncio.run(c.inject_external_message(result, {"author": "system"}))
+                except Exception as e:
+                    print(f"[UI] inject_external_message failed: {e}")
         logger.debug("Exiting _inject_message")
 
     def _send_message(self):
@@ -447,11 +457,16 @@ class FenraUI:
                 if self.send_callback:
                     self.send_callback(result["message"], groups)
                 else:
-                    asyncio.run(
-                        conductor.inject_external_message(
-                            result["message"], {"author": "user", "groups": groups}
+                    items = self._enqueue_message("user", result["message"])
+                    self.update_queue(items)
+                    try:
+                        c = _get_conductor()
+                        import asyncio
+                        asyncio.run(
+                            c.inject_external_message(result["message"], {"author": "user", "groups": groups})
                         )
-                    )
+                    except Exception as e:
+                        print(f"[UI] inject_external_message failed: {e}")
         logger.debug("Exiting _send_message")
 
     def update_queue(self, messages):
@@ -517,7 +532,8 @@ class FenraUI:
 
         if queued is None:
             try:
-                queued = getattr(conductor, "_INCOMING_QUEUE", [])
+                c = _get_conductor()
+                queued = getattr(c, "_INCOMING_QUEUE", [])
             except Exception:
                 queued = []
         if sent is None:
