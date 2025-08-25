@@ -7,6 +7,7 @@
       "is_archivist": true,
       "triggering_pdv": "PDV_IsSpeakerIsListenerIsArchivist",
       "reads_message_queue": true,
+      "outputs_to_discord": true,
       "pdv_adjustments": [
         { "name": "PDV_IsSpeakerIsListenerIsArchivist", "delta": -0.07 },
         { "name": "PDV_IsSpeakerIsListenerNotArchivist", "delta": 0.01 },
@@ -25,6 +26,7 @@
       "is_archivist": false,
       "triggering_pdv": "PDV_IsSpeakerIsListenerNotArchivist",
       "reads_message_queue": true,
+      "outputs_to_discord": true,
       "pdv_adjustments": [
         { "name": "PDV_IsSpeakerIsListenerNotArchivist", "delta": -0.07 },
         { "name": "PDV_IsSpeakerIsListenerIsArchivist", "delta": 0.01 },
@@ -43,6 +45,7 @@
       "is_archivist": true,
       "triggering_pdv": "PDV_IsSpeakerNotListenerIsArchivist",
       "reads_message_queue": false,
+      "outputs_to_discord": true,
       "pdv_adjustments": [
         { "name": "PDV_IsSpeakerNotListenerIsArchivist", "delta": -0.07 },
         { "name": "PDV_IsSpeakerIsListenerIsArchivist", "delta": 0.01 },
@@ -61,6 +64,7 @@
       "is_archivist": false,
       "triggering_pdv": "PDV_IsSpeakerNotListenerNotArchivist",
       "reads_message_queue": false,
+      "outputs_to_discord": true,
       "pdv_adjustments": [
         { "name": "PDV_IsSpeakerNotListenerNotArchivist", "delta": -0.07 },
         { "name": "PDV_IsSpeakerIsListenerIsArchivist", "delta": 0.01 },

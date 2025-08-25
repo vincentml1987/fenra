@@ -444,18 +444,23 @@ def step_agent(agent_name: str) -> Optional[str]:
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    if cls.get("outputs_to_discord"):
+
+    # Always record the message to the “humans” log so the UI shows it.
+    entry = {
+        "sender": agent["name"],
+        "timestamp": timestamp,
+        "message": reply,
+        "groups": groups_target,
+    }
+    msgs = _load_messages_to_humans()
+    msgs.append(entry)
+    _save_messages_to_humans(msgs)
+    _append_human_log(entry)
+
+    # Only post to Discord if the class (or agent) opts in AND the webhook is configured.
+    should_post = bool(cls.get("outputs_to_discord") or agent.get("outputs_to_discord"))
+    if should_post and os.getenv("DISCORD_WEBHOOK_URL"):
         post_to_discord_via_webhook(reply)
-        entry = {
-            "sender": agent["name"],
-            "timestamp": timestamp,
-            "message": reply,
-            "groups": groups_target,
-        }
-        msgs = _load_messages_to_humans()
-        msgs.append(entry)
-        _save_messages_to_humans(msgs)
-        _append_human_log(entry)
     CONTEXT = "\n".join(filter(None, [msg, f"{agent['name']}: {reply}"]))
     text_block = f"[{timestamp}] {agent['name']}: {reply}\n{'-'*80}\n\n"
     for group in groups_target:
