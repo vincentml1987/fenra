@@ -60,15 +60,17 @@ class DiscordToFenra(discord.Client):
         queue.append(entry)
         save_queue(queue)
 
-        # After enqueueing, apply any configured DPVMs for incoming messages.
+        # After enqueueing, apply any configured PDVMs for incoming messages.
         try:
             g = load_globals()
-            adjs = g.get("incoming_message_dpvms") or []
-            if isinstance(adjs, list) and adjs:
+            adjs = g.get("incoming_message_pdvms")
+            if not isinstance(adjs, list) or not adjs:
+                adjs = g.get("incoming_message_dpvms") or []
+            if adjs:
                 apply_and_persist_pdv_adjustments(adjs)
         except Exception as e:
             # Non-fatal: log-visible but do not crash the client
-            print(f"[Discord→Fenra] DPVM apply failed: {e}")
+            print(f"[Discord→Fenra] PDVM apply failed: {e}")
 
         print(f"[Discord→Fenra] Queued message at {entry['timestamp']}")
 
