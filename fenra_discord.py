@@ -1,3 +1,4 @@
+# DEPRECATED: Discord is now embedded in fenra_ui.py (in-memory only, no file queue).
 #!/usr/bin/env python3
 import os
 import json

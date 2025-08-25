@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import asyncio
+from datetime import datetime
 import threading
 import time
 import hashlib
@@ -10,6 +12,7 @@ import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
 
+import discord
 import requests
 
 from config_loader import (
@@ -22,12 +25,125 @@ from config_loader import (
     save_classes,
     save_agents,
 )
+from pdv_utils import apply_and_persist_pdv_adjustments
+import conductor  # to inject messages into the system
 
 logger = logging.getLogger(__name__)
 
 CHATLOG_DIR = "chatlogs"
-QUEUED_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "queued_messages.json")
 SENT_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "messages_to_humans.json")
+
+_discord_queue: asyncio.Queue | None = None
+_discord_client: discord.Client | None = None
+_discord_task: asyncio.Task | None = None
+_discord_consumer_task: asyncio.Task | None = None
+
+
+def get_discord_queue() -> asyncio.Queue:
+    global _discord_queue
+    if _discord_queue is None:
+        _discord_queue = asyncio.Queue()
+    return _discord_queue
+
+
+class _DiscordInUI(discord.Client):
+    async def on_ready(self):
+        print(f"[UI/Discord] Logged in as {self.user}")
+
+    async def on_message(self, msg):
+        channel_id_env = os.getenv("DISCORD_CHANNEL_ID")
+        try:
+            target_channel = int(channel_id_env) if channel_id_env else 0
+        except Exception:
+            target_channel = 0
+
+        if msg.author.bot or (target_channel and msg.channel.id != target_channel):
+            return
+
+        author = getattr(msg.author, "display_name", str(msg.author))
+        entry = {
+            "source": "discord",
+            "author": author,
+            "text": msg.content,
+            "timestamp": msg.created_at.isoformat(),
+        }
+
+        await get_discord_queue().put(entry)
+
+        try:
+            g = load_globals() or {}
+            adjs = g.get("incoming_message_pdvms") or g.get("incoming_message_dpvms") or []
+            if isinstance(adjs, list) and adjs:
+                norm = []
+                for item in adjs:
+                    if "delta_pct" in item and "delta" not in item:
+                        try:
+                            pct = float(item["delta_pct"])
+                            item = {**item, "delta": pct / 100.0}
+                            item.pop("delta_pct", None)
+                        except Exception:
+                            continue
+                    norm.append(item)
+                if norm:
+                    apply_and_persist_pdv_adjustments(norm)
+                    print("[PDVM] Applied incoming_message_pdvms on Discord message.")
+        except Exception as e:
+            print(f"[PDVM] Failed applying incoming_message_pdvms: {e}")
+
+
+async def _discord_consumer_loop():
+    q = get_discord_queue()
+    while True:
+        item = await q.get()
+        try:
+            if hasattr(conductor, "inject_external_message"):
+                await conductor.inject_external_message(item.get("text", ""), item)
+            else:
+                await conductor.handle_user_message(item.get("text", ""), meta=item)
+        except Exception as e:
+            print(f"[UI/Discord] Consumer error: {e}")
+        finally:
+            q.task_done()
+
+
+async def start_discord_in_ui():
+    global _discord_client, _discord_task, _discord_consumer_task
+
+    token = os.getenv("fenra_token")
+    channel_id = os.getenv("DISCORD_CHANNEL_ID")
+    if not token or not channel_id:
+        print("[UI/Discord] Disabled (missing fenra_token or DISCORD_CHANNEL_ID).")
+        return
+
+    intents = discord.Intents.default()
+    intents.message_content = True
+    _discord_client = _DiscordInUI(intents=intents)
+
+    loop = asyncio.get_running_loop()
+    _discord_consumer_task = loop.create_task(_discord_consumer_loop())
+
+    async def _runner():
+        try:
+            await _discord_client.start(token)
+        except Exception as e:
+            print(f"[UI/Discord] Client stopped: {e}")
+
+    _discord_task = loop.create_task(_runner())
+    print("[UI/Discord] Listening started.")
+
+
+async def stop_discord_in_ui():
+    global _discord_client, _discord_task, _discord_consumer_task
+    if _discord_client:
+        try:
+            await _discord_client.close()
+        except Exception:
+            pass
+    if _discord_task:
+        _discord_task.cancel()
+    if _discord_consumer_task:
+        _discord_consumer_task.cancel()
+    print("[UI/Discord] Listening stopped.")
 
 
 def hsl_to_hex(h: int, s: float, l: float) -> str:
@@ -314,8 +430,9 @@ class FenraUI:
             if self.inject_callback:
                 self.inject_callback(group_name, result)
             else:
-                items = self._enqueue_message("system", result)
-                self.update_queue(items)
+                asyncio.run(
+                    conductor.inject_external_message(result, {"author": "system"})
+                )
         logger.debug("Exiting _inject_message")
 
     def _send_message(self):
@@ -330,31 +447,17 @@ class FenraUI:
                 if self.send_callback:
                     self.send_callback(result["message"], groups)
                 else:
-                    items = self._enqueue_message("user", result["message"])
-                    self.update_queue(items)
+                    asyncio.run(
+                        conductor.inject_external_message(
+                            result["message"], {"author": "user", "groups": groups}
+                        )
+                    )
         logger.debug("Exiting _send_message")
 
     def update_queue(self, messages):
         logger.debug("Entering update_queue messages=%s", messages)
         self.update_queue_and_sent(queued=messages)
         logger.debug("Exiting update_queue")
-
-    def _enqueue_message(self, sender: str, message: str):
-        os.makedirs(CHATLOG_DIR, exist_ok=True)
-        try:
-            with open(QUEUED_MESSAGES_PATH, "r", encoding="utf-8") as f:
-                items = json.load(f)
-        except Exception:
-            items = []
-        item = {
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": sender,
-            "message": message,
-        }
-        items.append(item)
-        with open(QUEUED_MESSAGES_PATH, "w", encoding="utf-8") as f:
-            json.dump(items, f, indent=2)
-        return items
 
     def update_sent(self, messages):
         logger.debug("Entering update_sent messages=%s", messages)
@@ -413,7 +516,10 @@ class FenraUI:
                 return None
 
         if queued is None:
-            queued = _load(QUEUED_MESSAGES_PATH)
+            try:
+                queued = getattr(conductor, "_INCOMING_QUEUE", [])
+            except Exception:
+                queued = []
         if sent is None:
             sent = _load(SENT_MESSAGES_PATH)
 
@@ -1165,5 +1271,20 @@ class FenraUI:
 
     def start(self):
         logger.debug("Entering start")
-        self.root.mainloop()
+        loop = asyncio.new_event_loop()
+
+        def _run_loop():
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(start_discord_in_ui())
+            loop.run_forever()
+
+        t = threading.Thread(target=_run_loop, daemon=True)
+        t.start()
+        try:
+            self.root.mainloop()
+        finally:
+            if loop.is_running():
+                loop.call_soon_threadsafe(lambda: asyncio.create_task(stop_discord_in_ui()))
+                loop.call_soon_threadsafe(loop.stop)
+            t.join()
         logger.debug("Exiting start")

@@ -33,7 +33,6 @@ logger = create_object_logger("Conductor")
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
-QUEUE_PATH = os.path.join("chatlogs", "queued_messages.json")
 
 # ----------------------------------------------------------------------------
 # Config loading and precedence helpers
@@ -50,6 +49,27 @@ STATE: Dict[str, object] = {}
 CONTEXT: str = ""
 
 UI: Optional[FenraUI] = None
+
+# In-memory queue for externally sourced messages (e.g., Discord)
+_INCOMING_QUEUE: List[Dict[str, object]] = []
+
+
+async def inject_external_message(text: str, meta: dict | None = None):
+    """Accept an externally sourced message and enqueue it for processing."""
+    meta = meta or {}
+    entry = {
+        "timestamp": meta.get("timestamp")
+        or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "sender": meta.get("author") or meta.get("sender") or "user",
+        "message": text,
+        "raw_message": text,
+    }
+    _INCOMING_QUEUE.append(entry)
+    if UI is not None:
+        try:
+            UI.update_queue(_INCOMING_QUEUE)
+        except Exception:
+            pass
 
 
 def load_all_configs() -> None:
@@ -254,25 +274,20 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
     return None
 
 
-def merge_and_clear_queue(path: str = QUEUE_PATH) -> str:
-    """Merge queued messages into newline text and clear the queue."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            items = json.load(f)
-    except Exception:
-        items = []
-    items = items or []
+def merge_and_clear_queue() -> str:
+    """Merge queued messages into newline text and clear the in-memory queue."""
+    global _INCOMING_QUEUE
+    items = list(_INCOMING_QUEUE)
+    _INCOMING_QUEUE = []
     lines: List[str] = []
     for it in sorted(items, key=lambda x: x.get("timestamp", "")):
         sender = it.get("sender", "user")
         msg = it.get("message", "")
         ts = it.get("timestamp", "")
         lines.append(f"[{ts}] {sender}: {msg}")
-    if items:
+    if UI is not None:
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump([], f)
+            UI.update_queue(_INCOMING_QUEUE)
         except Exception:
             pass
     return "\n".join(lines)
