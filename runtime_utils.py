@@ -335,13 +335,14 @@ def generate_with_watchdog(
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
             wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        # Notify UI/watchers with the exact payload that is about to be sent
         payload_for_watchers = dict(payload)
         if agent_name:
             payload_for_watchers["__agent"] = agent_name
         for func in JSON_WATCHERS:
             try:
                 func(payload_for_watchers)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         resp = requests.post(
             "http://localhost:11434/api/generate",

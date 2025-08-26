@@ -610,8 +610,10 @@ if __name__ == "__main__":
                 try:
                     agent = p.get("__agent") or STATE.get("current_agent")
                     if UI and agent:
-                        UI.update_agent_payload(agent, p)
-                except Exception:  # noqa: BLE001
+                        payload = dict(p)
+                        payload.pop("__agent", None)
+                        UI.update_agent_payload(agent, payload)
+                except Exception:
                     pass
 
             add_json_watcher(_ui_payload_watcher)
