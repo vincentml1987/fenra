@@ -28,6 +28,7 @@ from runtime_utils import (
     parse_log_level,
     create_object_logger,
     tokenize_text,
+    add_json_watcher,
 )
 
 logger = create_object_logger("Conductor")
@@ -612,6 +613,17 @@ if __name__ == "__main__":
     if args.ui:
         try:
             UI = FenraUI(agents=AGENTS)
+
+            def _ui_payload_watcher(p: dict) -> None:
+                try:
+                    agent = p.get("__agent") or STATE.get("current_agent")
+                    if UI and agent:
+                        UI.update_agent_payload(agent, p)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            add_json_watcher(_ui_payload_watcher)
+
             cur = STATE.get("current_agent")
             if isinstance(cur, str) and cur in AGENTS_BY_NAME:
                 UI.set_active_agent(cur)
