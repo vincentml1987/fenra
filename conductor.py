@@ -109,6 +109,17 @@ def load_all_configs() -> None:
         save_state(STATE)
 
 
+def _refresh_pdvs_from_disk() -> None:
+    """Synchronize in-memory PDV state with confs/pdvs.json."""
+    global PDV_META, PDVS
+    try:
+        raw_pdvs = load_pdvs()
+    except Exception:
+        return
+    PDV_META = dict(raw_pdvs)
+    PDVS = {name: cfg.get("value", 0.5) for name, cfg in raw_pdvs.items()}
+
+
 def effective_params(agent: dict):
     cls = CLASSES[agent["agent_class"]]
     model = agent.get("model") or cls.get("model") or GLOBALS.get("model")
@@ -191,6 +202,8 @@ def post_to_discord_via_webhook(content: str) -> None:
 # ----------------------------------------------------------------------------
 
 def apply_pdv_adjustments(adjs: List[dict]) -> None:
+    # Ensure we never apply deltas on stale values.
+    _refresh_pdvs_from_disk()
     gamma = float(GLOBALS.get("pdv_gamma", 2.0))
     changed = False
     for adj in adjs:
@@ -417,6 +430,8 @@ def setup() -> None:
 
 
 def step_agent(agent_name: str) -> Optional[str]:
+    # Pick up any PDV changes applied by UI/Discord before we compute/emit.
+    _refresh_pdvs_from_disk()
     global CONTEXT
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
