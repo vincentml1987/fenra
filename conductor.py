@@ -456,21 +456,13 @@ def step_agent(agent_name: str) -> Optional[str]:
     )
     prompt = "\n".join(filter(None, [pre, msg, post]))
     if UI is not None:
-        try:
-            UI.set_active_agent(agent["name"])
-            UI.update_agent_payload(
-                agent["name"],
-                {
-                    "model": model_id,
-                    "temperature": temp,
-                    "system_text": system_text,
-                    "pre_text": pre,
-                    "post_text": post,
-                    "message_preview": (msg or "")[-2000:],
-                },
-            )
-        except Exception:
-            logger.exception("UI payload pre-gen update failed")
+       # Do not write the pre-gen “overview” blob to Agent Context.
+       # The runtime_utils JSON watcher will overwrite the panel with the *exact*
+       # payload that is POSTed to Ollama, which is what we want to display.
+       try:
+           UI.set_active_agent(agent["name"])
+       except Exception:
+           logger.exception("UI set_active_agent failed")
     reply = MODEL.generate_from_prompt(
         prompt,
         override_model=model_id,
