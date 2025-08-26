@@ -89,6 +89,13 @@ class _DiscordInUI(discord.Client):
                     norm.append(item)
                 if norm:
                     apply_and_persist_pdv_adjustments(norm)
+                    # Best-effort push to keep conductor in sync immediately.
+                    try:
+                        c = _get_conductor()
+                        if hasattr(c, "_refresh_pdvs_from_disk"):
+                            c._refresh_pdvs_from_disk()
+                    except Exception:
+                        pass
                     print("[PDVM] Applied incoming_message_pdvms on Discord message.")
         except Exception as e:
             print(f"[PDVM] Failed applying incoming_message_pdvms: {e}")

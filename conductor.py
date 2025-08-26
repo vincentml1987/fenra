@@ -5,6 +5,7 @@ import random
 import shutil
 import argparse
 import threading
+import math
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 
@@ -109,6 +110,17 @@ def load_all_configs() -> None:
         save_state(STATE)
 
 
+def _refresh_pdvs_from_disk() -> None:
+    """Synchronize in-memory PDV state with confs/pdvs.json."""
+    global PDV_META, PDVS
+    try:
+        raw_pdvs = load_pdvs()
+    except Exception:
+        return
+    PDV_META = dict(raw_pdvs)
+    PDVS = {name: cfg.get("value", 0.5) for name, cfg in raw_pdvs.items()}
+
+
 def effective_params(agent: dict):
     cls = CLASSES[agent["agent_class"]]
     model = agent.get("model") or cls.get("model") or GLOBALS.get("model")
@@ -191,6 +203,8 @@ def post_to_discord_via_webhook(content: str) -> None:
 # ----------------------------------------------------------------------------
 
 def apply_pdv_adjustments(adjs: List[dict]) -> None:
+    # Ensure we never apply deltas on stale values.
+    _refresh_pdvs_from_disk()
     gamma = float(GLOBALS.get("pdv_gamma", 2.0))
     changed = False
     for adj in adjs:
@@ -201,8 +215,12 @@ def apply_pdv_adjustments(adjs: List[dict]) -> None:
             changed = True
         m = float(adj.get("delta", 0.0))
         x = float(PDVS.get(name, 0.5))
-        g = (4 * x * (1 - x)) ** gamma
-        x2 = min(1.0, max(0.0, x + m * g))
+        g_base = (4 * x * (1 - x)) ** gamma
+        beta = float(GLOBALS.get("pdv_directional_beta", 0.75))   # 0..1 (how strong the toward/away effect is)
+        alpha = float(GLOBALS.get("pdv_directional_alpha", 0.05)) # scale of typical |delta|
+        boost = 1.0 + beta * math.tanh(((0.5 - x) * m) / max(alpha, 1e-9))
+        x2 = min(1.0, max(0.0, x + m * g_base * boost))
+
         if abs(x2 - x) > 1e-9:
             PDVS[name] = x2
             PDV_META.setdefault(name, {"name": name, "description": ""})
@@ -417,6 +435,8 @@ def setup() -> None:
 
 
 def step_agent(agent_name: str) -> Optional[str]:
+    # Pick up any PDV changes applied by UI/Discord before we compute/emit.
+    _refresh_pdvs_from_disk()
     global CONTEXT
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
