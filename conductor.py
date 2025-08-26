@@ -5,6 +5,7 @@ import random
 import shutil
 import argparse
 import threading
+import math
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 
@@ -214,8 +215,12 @@ def apply_pdv_adjustments(adjs: List[dict]) -> None:
             changed = True
         m = float(adj.get("delta", 0.0))
         x = float(PDVS.get(name, 0.5))
-        g = (4 * x * (1 - x)) ** gamma
-        x2 = min(1.0, max(0.0, x + m * g))
+        g_base = (4 * x * (1 - x)) ** gamma
+        beta = float(GLOBALS.get("pdv_directional_beta", 0.75))   # 0..1 (how strong the toward/away effect is)
+        alpha = float(GLOBALS.get("pdv_directional_alpha", 0.05)) # scale of typical |delta|
+        boost = 1.0 + beta * math.tanh(((0.5 - x) * m) / max(alpha, 1e-9))
+        x2 = min(1.0, max(0.0, x + m * g_base * boost))
+
         if abs(x2 - x) > 1e-9:
             PDVS[name] = x2
             PDV_META.setdefault(name, {"name": name, "description": ""})
