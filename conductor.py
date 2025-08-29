@@ -608,7 +608,8 @@ if __name__ == "__main__":
 
             def _ui_payload_watcher(p: dict) -> None:
                 try:
-                    agent = p.get("__agent") or STATE.get("current_agent")
+                    # Prefer the conductor's current agent; fall back to payload tag.
+                    agent = STATE.get("current_agent") or p.get("__agent")
                     if UI and agent:
                         payload = dict(p)
                         payload.pop("__agent", None)
