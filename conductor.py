@@ -28,6 +28,7 @@ from runtime_utils import (
     parse_log_level,
     create_object_logger,
     tokenize_text,
+    add_json_watcher,
 )
 
 logger = create_object_logger("Conductor")
@@ -455,21 +456,13 @@ def step_agent(agent_name: str) -> Optional[str]:
     )
     prompt = "\n".join(filter(None, [pre, msg, post]))
     if UI is not None:
-        try:
-            UI.set_active_agent(agent["name"])
-            UI.update_agent_payload(
-                agent["name"],
-                {
-                    "model": model_id,
-                    "temperature": temp,
-                    "system_text": system_text,
-                    "pre_text": pre,
-                    "post_text": post,
-                    "message_preview": (msg or "")[-2000:],
-                },
-            )
-        except Exception:
-            logger.exception("UI payload pre-gen update failed")
+       # Do not write the pre-gen “overview” blob to Agent Context.
+       # The runtime_utils JSON watcher will overwrite the panel with the *exact*
+       # payload that is POSTed to Ollama, which is what we want to display.
+       try:
+           UI.set_active_agent(agent["name"])
+       except Exception:
+           logger.exception("UI set_active_agent failed")
     reply = MODEL.generate_from_prompt(
         prompt,
         override_model=model_id,
@@ -612,6 +605,17 @@ if __name__ == "__main__":
     if args.ui:
         try:
             UI = FenraUI(agents=AGENTS)
+
+            def _ui_payload_watcher(p: dict) -> None:
+                try:
+                    agent = p.get("__agent") or STATE.get("current_agent")
+                    if UI and agent:
+                        UI.update_agent_payload(agent, p)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            add_json_watcher(_ui_payload_watcher)
+
             cur = STATE.get("current_agent")
             if isinstance(cur, str) and cur in AGENTS_BY_NAME:
                 UI.set_active_agent(cur)
