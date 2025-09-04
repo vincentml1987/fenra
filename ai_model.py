@@ -28,7 +28,7 @@ class AIModel:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         chat_style: Optional[str] = None,
-        watchdog_timeout: int = 900,
+        watchdog_timeout: int | None = 900,
         system_prompt: Optional[str] = None,
     ) -> None:
         self.logger = create_object_logger(self.__class__.__name__)

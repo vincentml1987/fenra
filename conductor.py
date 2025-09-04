@@ -419,6 +419,11 @@ def setup() -> None:
     ensure_models_available(list(models))
     global MODEL, CONTEXT
     base_model = GLOBALS.get("model") or next(iter(models))
+    wd = GLOBALS.get("watchdog_timeout", 900)
+    try:
+        wd = None if wd is None else int(wd)
+    except Exception:
+        wd = 900
     MODEL = AIModel(
         name="fenra",
         model_id=base_model,
@@ -427,6 +432,7 @@ def setup() -> None:
         temperature=float(GLOBALS.get("temperature", 0.7)),
         max_tokens=int(GLOBALS.get("max_context_tokens", 8192)),
         system_prompt=GLOBALS.get("system_prompt", ""),
+        watchdog_timeout=wd,
     )
     try:
         with open(os.path.join("chatlogs", "context_current.txt"), "r", encoding="utf-8") as f:
