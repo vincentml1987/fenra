@@ -312,10 +312,10 @@ def kill_thread(thread: threading.Thread) -> None:
 def generate_with_watchdog(
     payload: Dict,
     *,
-    base_timeout: float = 900,
+    base_timeout: float | None = 900,
     agent_name: str | None = None,
 ) -> str:
-    """Call Ollama with a fixed watchdog timeout."""
+    """Call Ollama. If base_timeout <= 0 or None, do not pass a requests timeout."""
     logger.debug(
         "Entering generate_with_watchdog base_timeout=%s agent_name=%s",
         base_timeout,
@@ -324,14 +324,22 @@ def generate_with_watchdog(
 
     model_id = payload.get("model", "unknown")
     wd_logger = create_object_logger(f"Watchdog-{model_id}")
+    disabled = base_timeout is None or base_timeout <= 0
     if agent_name:
-        wd_logger.info("Starting generation for %s with watchdog", agent_name)
+        wd_logger.info(
+            "Starting generation for %s with watchdog=%s",
+            agent_name,
+            "disabled" if disabled else f"{base_timeout}s",
+        )
     else:
-        wd_logger.info("Starting generation with watchdog")
+        wd_logger.info(
+            "Starting generation with watchdog=%s",
+            "disabled" if disabled else f"{base_timeout}s",
+        )
 
     start = time.time()
-    timeout = base_timeout
-    wd_logger.debug("Timeout set to %.2fs", timeout)
+    timeout = None if disabled else float(base_timeout)
+    wd_logger.debug("Timeout effective=%s", "disabled" if disabled else f"{timeout:.2f}s")
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
             wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
@@ -344,11 +352,10 @@ def generate_with_watchdog(
                 func(payload_for_watchers)
             except Exception:
                 pass
-        resp = requests.post(
-            "http://localhost:11434/api/generate",
-            json=payload,
-            timeout=timeout,
-        )
+        kwargs = {"json": payload}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        resp = requests.post("http://localhost:11434/api/generate", **kwargs)
         if resp.status_code >= 500:
             raise TransientModelError(
                 f"Ollama API error: {resp.status_code} {resp.text}"

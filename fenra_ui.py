@@ -270,10 +270,13 @@ class FenraUI:
         # Backward compatibility
         self.output = self.thought_stream
 
-        self.base_timeout = (
-            agents[0].watchdog_timeout if agents and hasattr(agents[0], "watchdog_timeout") else 900
+        self.base_timeout = self.global_config.get("watchdog_timeout", 900)
+        label_txt = (
+            "Base Timeout: disabled"
+            if (self.base_timeout is None or float(self.base_timeout) <= 0)
+            else f"Base Timeout: {int(self.base_timeout)}s"
         )
-        self.timeout_label = ttk.Label(thoughts_tab, text=f"Base Timeout: {self.base_timeout}s")
+        self.timeout_label = ttk.Label(thoughts_tab, text=label_txt)
         self.timeout_label.pack(anchor="w", padx=4, pady=2)
 
         self._refresh_log_display()
@@ -603,6 +606,7 @@ class FenraUI:
             "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
             "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
             "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+            "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
         }
         row = 0
         for label, key in [
@@ -614,6 +618,7 @@ class FenraUI:
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
             ("PDV Gamma", "pdv_gamma"),
+            ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
         ]:
             tk.Label(self.globals_tab, text=label).grid(row=row, column=0, sticky="w")
             if key == "model":
@@ -647,14 +652,27 @@ class FenraUI:
     def _save_globals(self) -> None:
         for k, var in self._globals_vars.items():
             val = var.get()
-            if k in {"temperature", "max_context_tokens", "pdv_gamma"}:
+            if k in {"temperature", "max_context_tokens", "pdv_gamma", "watchdog_timeout"}:
                 try:
-                    self.global_config[k] = float(val) if k != "max_context_tokens" else int(val)
+                    if k == "max_context_tokens":
+                        self.global_config[k] = int(val)
+                    elif k == "watchdog_timeout":
+                        self.global_config[k] = int(float(val))
+                    else:
+                        self.global_config[k] = float(val)
                 except ValueError:
                     self.global_config[k] = None
             else:
                 self.global_config[k] = val
         save_globals(self.global_config)
+        # refresh label
+        self.base_timeout = self.global_config.get("watchdog_timeout", 900)
+        txt = (
+            "Base Timeout: disabled"
+            if (self.base_timeout is None or float(self.base_timeout) <= 0)
+            else f"Base Timeout: {int(self.base_timeout)}s"
+        )
+        self.timeout_label.config(text=txt)
 
     def _build_pdvs_tab(self) -> None:
         for child in self.pdvs_tab.winfo_children():
@@ -904,6 +922,7 @@ class FenraUI:
             "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
             "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
             "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+            "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
         }
         models = self._fetch_models()
         row = 0
@@ -916,6 +935,7 @@ class FenraUI:
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
             ("PDV Gamma", "pdv_gamma"),
+            ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
         ]:
             tk.Label(dlg, text=label).grid(row=row, column=0, sticky="w")
             if key == "model":
@@ -936,9 +956,14 @@ class FenraUI:
             temp_cfg = {}
             for k, var in vars.items():
                 val = var.get()
-                if k in {"temperature", "max_context_tokens", "pdv_gamma"}:
+                if k in {"temperature", "max_context_tokens", "pdv_gamma", "watchdog_timeout"}:
                     try:
-                        temp_cfg[k] = float(val) if k != "max_context_tokens" else int(val)
+                        if k == "max_context_tokens":
+                            temp_cfg[k] = int(val)
+                        elif k == "watchdog_timeout":
+                            temp_cfg[k] = int(float(val))
+                        else:
+                            temp_cfg[k] = float(val)
                     except ValueError:
                         messagebox.showerror("Globals", f"Invalid value for {k}")
                         return
@@ -953,6 +978,13 @@ class FenraUI:
             save_globals(self.global_config)
             self.global_config = load_globals()
             self._build_globals_tab()
+            self.base_timeout = self.global_config.get("watchdog_timeout", 900)
+            txt = (
+                "Base Timeout: disabled"
+                if (self.base_timeout is None or float(self.base_timeout) <= 0)
+                else f"Base Timeout: {int(self.base_timeout)}s"
+            )
+            self.timeout_label.config(text=txt)
             dlg.grab_release()
             dlg.destroy()
 
