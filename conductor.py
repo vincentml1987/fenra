@@ -453,6 +453,10 @@ def step_agent(agent_name: str) -> Optional[str]:
     reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
     if reads_q:
         msg = merge_and_clear_queue()
+        # If nothing new, hand off without generating.
+        if not (msg or "").strip():
+            nxt = select_next_agent(agent_name)
+            return nxt["name"] if nxt else None
     else:
         msg = CONTEXT
     msg = trim_message_for_budget(
@@ -498,7 +502,11 @@ def step_agent(agent_name: str) -> Optional[str]:
     should_post = bool(cls.get("outputs_to_discord") or agent.get("outputs_to_discord"))
     if should_post and os.getenv("DISCORD_WEBHOOK_URL"):
         post_to_discord_via_webhook(reply)
-    CONTEXT = "\n".join(filter(None, [msg, f"{agent['name']}: {reply}"]))
+    # Preserve the running transcript when this was a queue-only read.
+    if reads_q:
+        CONTEXT = "\n".join(filter(None, [CONTEXT, f"{agent['name']}: {reply}"]))
+    else:
+        CONTEXT = "\n".join(filter(None, [msg, f"{agent['name']}: {reply}"]))
     text_block = f"[{timestamp}] {agent['name']}: {reply}\n{'-'*80}\n\n"
     for group in groups_target:
         path = os.path.join("chatlogs", f"chat_log_{group}.txt")
@@ -528,7 +536,8 @@ def step_agent(agent_name: str) -> Optional[str]:
         CONTEXT = reply
     with open(os.path.join("chatlogs", "context_current.txt"), "w", encoding="utf-8") as f:
         f.write(CONTEXT)
-    full_prompt = "\n".join(filter(None, [system_text, pre, CONTEXT, post]))
+    # Token accounting should reflect the prompt that was sent.
+    full_prompt = "\n".join(filter(None, [system_text, pre, msg, post]))
     try:
         used = len(tokenize_text(model_id, full_prompt))
     except Exception:
@@ -538,7 +547,7 @@ def step_agent(agent_name: str) -> Optional[str]:
     if UI is not None:
         try:
             UI.log({"timestamp": timestamp, "sender": agent["name"], "message": reply})
-            full_prompt = "\n".join(filter(None, [system_text, pre, CONTEXT, post]))
+            # Show the exact prompt that was sent (pre + msg + post), not CONTEXT.
             UI.update_agent_payload(
                 agent["name"],
                 {
@@ -547,7 +556,7 @@ def step_agent(agent_name: str) -> Optional[str]:
                     "system_text": system_text,
                     "pre_text": pre,
                     "post_text": post,
-                    "prompt_tail": full_prompt[-4000:],
+                    "prompt_tail": prompt[-4000:],
                 },
             )
             UI.set_group_contexts(_read_group_contexts())
