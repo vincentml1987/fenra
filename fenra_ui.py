@@ -36,6 +36,7 @@ _discord_queue: asyncio.Queue | None = None
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
 _discord_consumer_task: asyncio.Task | None = None
+_discord_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_conductor():
@@ -119,7 +120,7 @@ async def _discord_consumer_loop():
 
 
 async def start_discord_in_ui():
-    global _discord_client, _discord_task, _discord_consumer_task
+    global _discord_client, _discord_task, _discord_consumer_task, _discord_loop
 
     token = os.getenv("fenra_token")
     channel_id = os.getenv("DISCORD_CHANNEL_ID")
@@ -131,8 +132,9 @@ async def start_discord_in_ui():
     intents.message_content = True
     _discord_client = _DiscordInUI(intents=intents)
 
-    loop = asyncio.get_running_loop()
-    _discord_consumer_task = loop.create_task(_discord_consumer_loop())
+    _discord_loop = asyncio.get_running_loop()
+    loop = _discord_loop
+    # Queue removed: do not start consumer loop.
 
     async def _runner():
         try:
@@ -156,6 +158,46 @@ async def stop_discord_in_ui():
     if _discord_consumer_task:
         _discord_consumer_task.cancel()
     print("[UI/Discord] Listening stopped.")
+
+# ─── public: fetch recent discord messages for listeners ──────────────────────
+async def _discord_fetch_recent(n: int) -> list[dict]:
+    """Coroutine to fetch last n messages from configured channel."""
+    if _discord_client is None:
+        return []
+    try:
+        chan_id = int(os.getenv("DISCORD_CHANNEL_ID") or "0")
+    except Exception:
+        chan_id = 0
+    if not chan_id:
+        return []
+    ch = _discord_client.get_channel(chan_id)
+    if ch is None:
+        try:
+            ch = await _discord_client.fetch_channel(chan_id)
+        except Exception:
+            return []
+    out: list[dict] = []
+    async for m in ch.history(limit=int(n)):
+        out.append({
+            "author": getattr(m.author, "display_name", str(m.author)),
+            "text": m.content,
+            "timestamp": m.created_at.isoformat(),
+        })
+    return out
+
+def fetch_recent_discord_messages(n: int = 10) -> list[dict]:
+    """Sync wrapper to retrieve last n messages from Discord."""
+    loop = _discord_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return []
+    fut = asyncio.run_coroutine_threadsafe(_discord_fetch_recent(int(n)), loop)
+    try:
+        return fut.result(timeout=5)
+    except Exception:
+        return []
 
 
 def hsl_to_hex(h: int, s: float, l: float) -> str:
