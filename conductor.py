@@ -448,10 +448,13 @@ def step_agent(agent_name: str) -> Optional[str]:
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
     model_id, temp, system_text, pre, post = effective_params(agent)
-    msg = CONTEXT
-    if CLASSES[agent["agent_class"]].get("reads_message_queue"):
-        q = merge_and_clear_queue()
-        msg = "\n".join(filter(None, [msg, q]))
+    # When an agent reads the message queue, it must see ONLY the queue as its context.
+    # No prior transcript or other context is included.
+    reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
+    if reads_q:
+        msg = merge_and_clear_queue()
+    else:
+        msg = CONTEXT
     msg = trim_message_for_budget(
         model_id,
         system_text,
