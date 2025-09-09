@@ -24,6 +24,8 @@ from config_loader import (
     save_pdvs,
     save_classes,
     save_agents,
+    load_state,
+    save_state,
 )
 from pdv_utils import apply_and_persist_pdv_adjustments
 
@@ -36,6 +38,127 @@ _discord_queue: asyncio.Queue | None = None
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
 _discord_consumer_task: asyncio.Task | None = None
+_discord_backfill_started: bool = False
+
+
+def _parse_channel_ids_from_env() -> list[int]:
+    raw = os.getenv("DISCORD_CHANNEL_ID", "").strip()
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    out: list[int] = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except Exception:
+            pass
+    return out
+
+
+def _resolve_channel_ids(globals_cfg: dict) -> list[int]:
+    ids = []
+    cfg_ids = globals_cfg.get("discord_backfill_channel_ids")
+    if isinstance(cfg_ids, list):
+        for v in cfg_ids:
+            try:
+                ids.append(int(str(v).strip()))
+            except Exception:
+                pass
+    if not ids:
+        ids = _parse_channel_ids_from_env()
+    return ids
+
+
+async def _backfill_history(client: discord.Client) -> None:
+    """
+    Read historical Discord messages for configured channels and enqueue them
+    into Fenra's in-memory queue in chronological order. Idempotent via state.json.
+    """
+    global _discord_backfill_started
+    if _discord_backfill_started:
+        return
+    _discord_backfill_started = True
+    try:
+        g = load_globals() or {}
+    except Exception:
+        g = {}
+    if not bool(g.get("discord_backfill_on_boot", True)):
+        print("[UI/Discord] Backfill disabled by config.")
+        return
+    channel_ids = _resolve_channel_ids(g)
+    if not channel_ids:
+        print("[UI/Discord] Backfill skipped (no channel IDs).")
+        return
+    include_bots = bool(g.get("discord_backfill_include_bots", False))
+    max_per = g.get("discord_backfill_max_messages_per_channel")
+    try:
+        max_per = int(max_per) if max_per is not None else None
+    except Exception:
+        max_per = None
+
+    # Load last ingested IDs from state.json
+    try:
+        state = load_state()
+    except Exception:
+        state = {}
+    last_map = state.get("discord_last_ingested_id") or {}
+    if not isinstance(last_map, dict):
+        last_map = {}
+
+    total = 0
+    for cid in channel_ids:
+        try:
+            chan = client.get_channel(cid) or await client.fetch_channel(cid)
+        except Exception as e:
+            print(f"[UI/Discord] Backfill: failed to access channel {cid}: {e}")
+            continue
+        last_id_raw = last_map.get(str(cid))
+        try:
+            last_id = int(last_id_raw) if last_id_raw is not None else None
+        except Exception:
+            last_id = None
+
+        count = 0
+        newest_id = last_id or 0
+        # Iterate oldest-first so queue has chronological order
+        try:
+            async for msg in chan.history(limit=None, oldest_first=True):
+                # Optional upper bound per channel
+                if max_per is not None and count >= max_per:
+                    break
+                # Dedupe against last ingested id
+                if last_id is not None and msg.id <= last_id:
+                    continue
+                # Skip bots/webhooks unless allowed
+                if (not include_bots) and (getattr(msg.author, "bot", False) or getattr(msg, "webhook_id", None)):
+                    continue
+                author = getattr(msg.author, "display_name", str(msg.author))
+                entry = {
+                    "source": "discord",
+                    "author": author,
+                    "text": msg.content or "",
+                    "timestamp": msg.created_at.isoformat(),
+                }
+                await get_discord_queue().put(entry)
+                count += 1
+                total += 1
+                if msg.id > newest_id:
+                    newest_id = msg.id
+        except Exception as e:
+            print(f"[UI/Discord] Backfill: history error for channel {cid}: {e}")
+            continue
+
+        # Persist newest ingested id for this channel
+        if newest_id and newest_id != (last_id or 0):
+            last_map[str(cid)] = int(newest_id)
+            state["discord_last_ingested_id"] = last_map
+            try:
+                save_state(state)
+            except Exception as e:
+                print(f"[UI/Discord] Backfill: failed to save state: {e}")
+        print(f"[UI/Discord] Backfill: enqueued {count} msgs from #{getattr(chan,'name',cid)}")
+
+    print(f"[UI/Discord] Backfill complete. Total enqueued: {total}")
 
 
 def _get_conductor():
@@ -52,6 +175,11 @@ def get_discord_queue() -> asyncio.Queue:
 class _DiscordInUI(discord.Client):
     async def on_ready(self):
         print(f"[UI/Discord] Logged in as {self.user}")
+        # Fire-and-forget backfill on ready; reuse the same queue path as live messages.
+        try:
+            asyncio.create_task(_backfill_history(self))
+        except Exception as e:
+            print(f"[UI/Discord] Backfill start failed: {e}")
 
     async def on_message(self, msg):
         channel_id_env = os.getenv("DISCORD_CHANNEL_ID")
