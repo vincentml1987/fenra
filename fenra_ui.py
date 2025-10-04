@@ -715,6 +715,14 @@ class FenraUI:
             else f"Base Timeout: {int(self.base_timeout)}s"
         )
         self.timeout_label.config(text=txt)
+        try:
+            import importlib
+
+            conductor = importlib.import_module("conductor")
+            if hasattr(conductor, "apply_globals_update"):
+                conductor.apply_globals_update(dict(self.global_config))
+        except Exception:
+            logger.exception("Failed to apply globals update in conductor")
 
     def _build_pdvs_tab(self) -> None:
         for child in self.pdvs_tab.winfo_children():
