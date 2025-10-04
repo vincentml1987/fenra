@@ -279,25 +279,17 @@ class FenraUI:
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
-        metrics_tab = ttk.Frame(self.notebook)
-        self.notebook.add(metrics_tab, text="Live Metrics")
-
+        self.metrics_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.metrics_tab, text="Live Metrics")
         self.metric_bars: dict[str, ttk.Progressbar] = {}
         self.metric_labels: dict[str, tk.Label] = {}
-        for name in self.pdv_values.keys():
-            frame = ttk.Frame(metrics_tab)
-            frame.pack(fill=tk.X, padx=4, pady=2)
-            ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
-            bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
-            bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            val = ttk.Label(frame, text="0.00")
-            val.pack(side=tk.LEFT, padx=4)
-            self.metric_bars[name] = bar
-            self.metric_labels[name] = val
-
+        # container for PDV rows so we can rebuild
+        self.metrics_rows = ttk.Frame(self.metrics_tab)
+        self.metrics_rows.pack(fill=tk.BOTH, expand=True)
+        self._rebuild_live_metrics_rows()
         limit = self.global_config.get("max_context_tokens", 8192)
         self.token_usage_var = tk.StringVar(value=f"Tokens: 0 / {limit}")
-        tk.Label(metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
+        tk.Label(self.metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
 
         # ----- Internal Thoughts Tab -----
         thoughts_tab = ttk.Frame(self.notebook)
@@ -770,6 +762,8 @@ class FenraUI:
             }
         save_pdvs(data)
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        # Rebuild rows to reflect added/removed PDVs, then update values
+        self._rebuild_live_metrics_rows()
         self.update_pdvs(self.pdv_values)
 
     def _build_classes_tab(self) -> None:
@@ -1064,6 +1058,10 @@ class FenraUI:
                 ) as f:
                     pdv_vals = json.load(f)
                 if isinstance(pdv_vals, dict):
+                    # If new PDVs appear, rebuild rows first
+                    if set(pdv_vals.keys()) != set(self.metric_bars.keys()):
+                        self.pdv_values = dict(pdv_vals)
+                        self._rebuild_live_metrics_rows()
                     self.update_pdvs(pdv_vals)
             except Exception:
                 pass
@@ -1405,3 +1403,23 @@ class FenraUI:
                 loop.call_soon_threadsafe(loop.stop)
             t.join()
         logger.debug("Exiting start")
+    def _rebuild_live_metrics_rows(self) -> None:
+        """Recreate the PDV bars based on current self.pdv_values."""
+
+        def _do():
+            for child in self.metrics_rows.winfo_children():
+                child.destroy()
+            self.metric_bars.clear()
+            self.metric_labels.clear()
+            for name in self.pdv_values.keys():
+                frame = ttk.Frame(self.metrics_rows)
+                frame.pack(fill=tk.X, padx=4, pady=2)
+                ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
+                bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
+                bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+                val = ttk.Label(frame, text="0.00")
+                val.pack(side=tk.LEFT, padx=4)
+                self.metric_bars[name] = bar
+                self.metric_labels[name] = val
+
+        self._threadsafe(_do)
