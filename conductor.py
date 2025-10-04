@@ -283,12 +283,7 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
         cur = AGENTS_BY_NAME[curr_name]
         _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
-    # When there are no queued human messages, avoid selecting agents
-    # whose class reads the message queue to prevent ping-pong idling.
-    if _queue_empty():
-        D_nq = [a for a in D if not CLASSES[a["agent_class"]].get("reads_message_queue")]
-        if D_nq:
-            D = D_nq
+
     pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in D}
     target = max(pdvs, key=lambda p: PDVS.get(p, 0.0))
     C = [a for a in D if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or D
