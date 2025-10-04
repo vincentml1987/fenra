@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Iterable
 
 import requests
 from fenra_ui import FenraUI
+import importlib
 
 from ai_model import AIModel
 from config_loader import (
@@ -52,7 +53,7 @@ CONTEXT: str = ""
 
 UI: Optional[FenraUI] = None
 
-# In-memory queue for externally sourced messages (e.g., Discord)
+# Queue deprecated. Kept for compatibility but unused.
 _INCOMING_QUEUE: List[Dict[str, object]] = []
 
 
@@ -282,12 +283,7 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
         cur = AGENTS_BY_NAME[curr_name]
         _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
-    # When there are no queued human messages, avoid selecting agents
-    # whose class reads the message queue to prevent ping-pong idling.
-    if _queue_empty():
-        D_nq = [a for a in D if not CLASSES[a["agent_class"]].get("reads_message_queue")]
-        if D_nq:
-            D = D_nq
+
     pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in D}
     target = max(pdvs, key=lambda p: PDVS.get(p, 0.0))
     C = [a for a in D if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or D
@@ -303,23 +299,24 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
     return None
 
 
-def merge_and_clear_queue() -> str:
-    """Merge queued messages into newline text and clear the in-memory queue."""
-    global _INCOMING_QUEUE
-    items = list(_INCOMING_QUEUE)
-    _INCOMING_QUEUE = []
-    lines: List[str] = []
-    for it in sorted(items, key=lambda x: x.get("timestamp", "")):
-        sender = it.get("sender", "user")
-        msg = it.get("message", "")
-        ts = it.get("timestamp", "")
-        lines.append(f"[{ts}] {sender}: {msg}")
-    if UI is not None:
-        try:
-            UI.update_queue(_INCOMING_QUEUE)
-        except Exception:
-            pass
-    return "\n".join(lines)
+def _discord_transcript(limit: int) -> str:
+    """Pull last N Discord messages and format as transcript text."""
+    try:
+        fe = importlib.import_module("fenra_ui")
+        if hasattr(fe, "fetch_recent_discord_messages"):
+            msgs = fe.fetch_recent_discord_messages(int(limit)) or []
+            # Oldest first
+            msgs = list(reversed(msgs))
+            lines: List[str] = []
+            for it in msgs:
+                sender = it.get("author") or it.get("sender") or "user"
+                msg = it.get("text") or it.get("message") or ""
+                ts = it.get("timestamp", "")
+                lines.append(f"[{ts}] {sender}: {msg}")
+            return "\n".join(lines)
+    except Exception:
+        logger.exception("Discord history fetch failed")
+    return ""
 
 
 def _load_messages_to_humans(path: str = os.path.join("chatlogs", "messages_to_humans.json")) -> List[Dict[str, object]]:
@@ -462,9 +459,9 @@ def step_agent(agent_name: str) -> Optional[str]:
     # No prior transcript or other context is included.
     reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
     if reads_q:
-        msg = merge_and_clear_queue()
-        # If nothing new, hand off without generating.
-        if not (msg or "").strip():
+        limit = int(GLOBALS.get("discord_history_limit", 10))
+        msg = _discord_transcript(limit)
+        if not msg.strip():
             logger.debug("Queue empty for %s; skipping generation", agent["name"])
             nxt = select_next_agent(agent_name)
             return nxt["name"] if nxt else None

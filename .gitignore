@@ -22,4 +22,6 @@ fenra_config.txt
 fenra_config - Copy.txt
 orig_fenra_config.txt
 /agents-archive
+
 /confs
+confs/globals.json
