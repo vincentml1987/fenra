@@ -7,7 +7,7 @@ import threading
 import time
 import hashlib
 import colorsys
-from typing import Optional
+from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
@@ -213,7 +213,14 @@ def pastel_for_class(name: str) -> str:
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="confs/globals.json"):
+    def __init__(
+        self,
+        agents,
+        inject_callback=None,
+        send_callback=None,
+        config_path="confs/globals.json",
+        on_apply_globals: Optional[Callable[[dict], None]] = None,
+    ):
         logger.debug(
             "Entering FenraUI.__init__ with agents=%s inject_callback=%s send_callback=%s",
             agents,
@@ -226,6 +233,7 @@ class FenraUI:
         self.inject_callback = inject_callback
         self.send_callback = send_callback
         self.config_path = config_path
+        self.on_apply_globals = on_apply_globals
 
         self.sent_messages = []
         self.log_messages = []
@@ -715,14 +723,12 @@ class FenraUI:
             else f"Base Timeout: {int(self.base_timeout)}s"
         )
         self.timeout_label.config(text=txt)
+        # Live-apply to the running Conductor
         try:
-            import importlib
-
-            conductor = importlib.import_module("conductor")
-            if hasattr(conductor, "apply_globals_update"):
-                conductor.apply_globals_update(dict(self.global_config))
+            if self.on_apply_globals:
+                self.on_apply_globals(dict(self.global_config))
         except Exception:
-            logger.exception("Failed to apply globals update in conductor")
+            logger.exception("Failed to apply globals update callback")
 
     def _build_pdvs_tab(self) -> None:
         for child in self.pdvs_tab.winfo_children():
@@ -1035,6 +1041,12 @@ class FenraUI:
                 else f"Base Timeout: {int(self.base_timeout)}s"
             )
             self.timeout_label.config(text=txt)
+            # Live-apply here as well
+            try:
+                if self.on_apply_globals:
+                    self.on_apply_globals(dict(self.global_config))
+            except Exception:
+                logger.exception("Failed to apply globals update callback (dialog)")
             dlg.grab_release()
             dlg.destroy()
 

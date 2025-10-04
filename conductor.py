@@ -734,7 +734,7 @@ if __name__ == "__main__":
     steps = 1 if args.once else args.steps
     if args.ui:
         try:
-            UI = FenraUI(agents=AGENTS)
+            UI = FenraUI(agents=AGENTS, on_apply_globals=apply_globals_update)
 
             def _ui_payload_watcher(p: dict) -> None:
                 try:
