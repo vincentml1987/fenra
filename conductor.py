@@ -406,6 +406,105 @@ def ensure_models_available(model_ids: List[str]) -> None:
                 time.sleep(2 ** attempt)
 
 
+def apply_globals_update(new_cfg: dict) -> None:
+    """Apply updated global configuration without restarting the agent loop."""
+
+    if not isinstance(new_cfg, dict):
+        logger.warning("apply_globals_update ignored non-dict configuration")
+        return
+
+    global GLOBALS, MODEL
+
+    previous = dict(GLOBALS)
+    GLOBALS = dict(new_cfg)
+
+    changed_keys = sorted(
+        key
+        for key in set(previous) | set(GLOBALS)
+        if previous.get(key) != GLOBALS.get(key)
+    )
+
+    level_name = GLOBALS.get("debug_level", "INFO")
+    try:
+        level = parse_log_level(level_name)
+    except Exception:
+        level = parse_log_level("INFO")
+    init_global_logging(level)
+
+    if MODEL is None:
+        if changed_keys:
+            logger.info(
+                "Applied globals update (%s) but base model not yet initialized",
+                ", ".join(changed_keys),
+            )
+        else:
+            logger.info("Applied globals update (no changes) but base model not yet initialized")
+        return
+
+    new_model_id = GLOBALS.get("model")
+    if isinstance(new_model_id, str):
+        new_model_id = new_model_id.strip() or None
+    elif new_model_id is not None:
+        new_model_id = str(new_model_id)
+
+    old_model_id = getattr(MODEL, "model_id", None)
+    if new_model_id and new_model_id != old_model_id:
+        try:
+            ensure_models_available([new_model_id])
+        except Exception:
+            logger.exception("Failed to ensure model %s is available", new_model_id)
+        else:
+            MODEL.model_id = new_model_id
+    elif new_model_id:
+        MODEL.model_id = new_model_id
+
+    temp_val = GLOBALS.get("temperature")
+    try:
+        if temp_val is not None:
+            MODEL.temperature = float(temp_val)
+    except Exception:
+        pass
+
+    if "system_prompt" in GLOBALS:
+        try:
+            MODEL.system_prompt = GLOBALS.get("system_prompt", MODEL.system_prompt)
+        except Exception:
+            pass
+
+    wd_val = GLOBALS.get("watchdog_timeout")
+    try:
+        if wd_val is None:
+            MODEL.watchdog_timeout = None
+        else:
+            wd_num = int(float(wd_val))
+            MODEL.watchdog_timeout = None if wd_num <= 0 else wd_num
+    except Exception:
+        pass
+
+    max_tokens_val = GLOBALS.get("max_context_tokens")
+    try:
+        if max_tokens_val is not None:
+            MODEL.max_tokens = int(max_tokens_val)
+    except Exception:
+        pass
+
+    if changed_keys:
+        logger.info("Applied globals update (%s)", ", ".join(changed_keys))
+    else:
+        logger.info("Applied globals update (no changes)")
+
+
+def reload_globals_from_disk() -> None:
+    """Refresh globals from disk and apply them immediately."""
+
+    try:
+        cfg = load_globals()
+    except Exception:
+        logger.exception("Failed to reload globals from disk")
+        return
+    apply_globals_update(cfg)
+
+
 def setup() -> None:
     load_all_configs()
     if GLOBALS.get("model") in (None, ""):
@@ -635,7 +734,7 @@ if __name__ == "__main__":
     steps = 1 if args.once else args.steps
     if args.ui:
         try:
-            UI = FenraUI(agents=AGENTS)
+            UI = FenraUI(agents=AGENTS, on_apply_globals=apply_globals_update)
 
             def _ui_payload_watcher(p: dict) -> None:
                 try:
