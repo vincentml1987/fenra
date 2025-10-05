@@ -7,7 +7,7 @@ import threading
 import time
 import hashlib
 import colorsys
-from typing import Optional
+from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
@@ -213,7 +213,14 @@ def pastel_for_class(name: str) -> str:
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="confs/globals.json"):
+    def __init__(
+        self,
+        agents,
+        inject_callback=None,
+        send_callback=None,
+        config_path="confs/globals.json",
+        on_apply_globals: Optional[Callable[[dict], None]] = None,
+    ):
         logger.debug(
             "Entering FenraUI.__init__ with agents=%s inject_callback=%s send_callback=%s",
             agents,
@@ -226,6 +233,7 @@ class FenraUI:
         self.inject_callback = inject_callback
         self.send_callback = send_callback
         self.config_path = config_path
+        self.on_apply_globals = on_apply_globals
 
         self.sent_messages = []
         self.log_messages = []
@@ -271,25 +279,17 @@ class FenraUI:
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
-        metrics_tab = ttk.Frame(self.notebook)
-        self.notebook.add(metrics_tab, text="Live Metrics")
-
+        self.metrics_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.metrics_tab, text="Live Metrics")
         self.metric_bars: dict[str, ttk.Progressbar] = {}
         self.metric_labels: dict[str, tk.Label] = {}
-        for name in self.pdv_values.keys():
-            frame = ttk.Frame(metrics_tab)
-            frame.pack(fill=tk.X, padx=4, pady=2)
-            ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
-            bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
-            bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            val = ttk.Label(frame, text="0.00")
-            val.pack(side=tk.LEFT, padx=4)
-            self.metric_bars[name] = bar
-            self.metric_labels[name] = val
-
+        # container for PDV rows so we can rebuild
+        self.metrics_rows = ttk.Frame(self.metrics_tab)
+        self.metrics_rows.pack(fill=tk.BOTH, expand=True)
+        self._rebuild_live_metrics_rows()
         limit = self.global_config.get("max_context_tokens", 8192)
         self.token_usage_var = tk.StringVar(value=f"Tokens: 0 / {limit}")
-        tk.Label(metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
+        tk.Label(self.metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
 
         # ----- Internal Thoughts Tab -----
         thoughts_tab = ttk.Frame(self.notebook)
@@ -715,6 +715,12 @@ class FenraUI:
             else f"Base Timeout: {int(self.base_timeout)}s"
         )
         self.timeout_label.config(text=txt)
+        # Live-apply to the running Conductor
+        try:
+            if self.on_apply_globals:
+                self.on_apply_globals(dict(self.global_config))
+        except Exception:
+            logger.exception("Failed to apply globals update callback")
 
     def _build_pdvs_tab(self) -> None:
         for child in self.pdvs_tab.winfo_children():
@@ -756,6 +762,8 @@ class FenraUI:
             }
         save_pdvs(data)
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        # Rebuild rows to reflect added/removed PDVs, then update values
+        self._rebuild_live_metrics_rows()
         self.update_pdvs(self.pdv_values)
 
     def _build_classes_tab(self) -> None:
@@ -1027,6 +1035,12 @@ class FenraUI:
                 else f"Base Timeout: {int(self.base_timeout)}s"
             )
             self.timeout_label.config(text=txt)
+            # Live-apply here as well
+            try:
+                if self.on_apply_globals:
+                    self.on_apply_globals(dict(self.global_config))
+            except Exception:
+                logger.exception("Failed to apply globals update callback (dialog)")
             dlg.grab_release()
             dlg.destroy()
 
@@ -1044,6 +1058,10 @@ class FenraUI:
                 ) as f:
                     pdv_vals = json.load(f)
                 if isinstance(pdv_vals, dict):
+                    # If new PDVs appear, rebuild rows first
+                    if set(pdv_vals.keys()) != set(self.metric_bars.keys()):
+                        self.pdv_values = dict(pdv_vals)
+                        self._rebuild_live_metrics_rows()
                     self.update_pdvs(pdv_vals)
             except Exception:
                 pass
@@ -1385,3 +1403,23 @@ class FenraUI:
                 loop.call_soon_threadsafe(loop.stop)
             t.join()
         logger.debug("Exiting start")
+    def _rebuild_live_metrics_rows(self) -> None:
+        """Recreate the PDV bars based on current self.pdv_values."""
+
+        def _do():
+            for child in self.metrics_rows.winfo_children():
+                child.destroy()
+            self.metric_bars.clear()
+            self.metric_labels.clear()
+            for name in self.pdv_values.keys():
+                frame = ttk.Frame(self.metrics_rows)
+                frame.pack(fill=tk.X, padx=4, pady=2)
+                ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
+                bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
+                bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+                val = ttk.Label(frame, text="0.00")
+                val.pack(side=tk.LEFT, padx=4)
+                self.metric_bars[name] = bar
+                self.metric_labels[name] = val
+
+        self._threadsafe(_do)

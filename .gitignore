@@ -25,3 +25,4 @@ orig_fenra_config.txt
 
 /confs
 confs/globals.json
+*.json
