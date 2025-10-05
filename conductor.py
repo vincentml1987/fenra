@@ -55,6 +55,9 @@ UI: Optional[FenraUI] = None
 # In-memory queue for externally sourced messages (e.g., Discord)
 _INCOMING_QUEUE: List[Dict[str, object]] = []
 
+def _queue_empty() -> bool:
+    return len(_INCOMING_QUEUE) == 0
+
 
 async def inject_external_message(text: str, meta: dict | None = None):
     """Accept an externally sourced message and enqueue it for processing."""
@@ -278,6 +281,12 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
         cur = AGENTS_BY_NAME[curr_name]
         _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
+    # When there are no queued human messages, avoid selecting agents
+    # whose class reads the message queue to prevent ping-pong idling.
+    if _queue_empty():
+        D_nq = [a for a in D if not CLASSES[a["agent_class"]].get("reads_message_queue")]
+        if D_nq:
+            D = D_nq
     pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in D}
     target = max(pdvs, key=lambda p: PDVS.get(p, 0.0))
     C = [a for a in D if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or D
@@ -455,6 +464,7 @@ def step_agent(agent_name: str) -> Optional[str]:
         msg = merge_and_clear_queue()
         # If nothing new, hand off without generating.
         if not (msg or "").strip():
+            logger.debug("Queue empty for %s; skipping generation", agent["name"])
             nxt = select_next_agent(agent_name)
             return nxt["name"] if nxt else None
     else:
@@ -476,12 +486,17 @@ def step_agent(agent_name: str) -> Optional[str]:
            UI.set_active_agent(agent["name"])
        except Exception:
            logger.exception("UI set_active_agent failed")
-    reply = MODEL.generate_from_prompt(
-        prompt,
-        override_model=model_id,
-        override_temperature=temp,
-        system_text=system_text,
-    )
+    try:
+        reply = MODEL.generate_from_prompt(
+            prompt,
+            override_model=model_id,
+            override_temperature=temp,
+            system_text=system_text,
+        )
+    except Exception as exc:  # keep loop alive on Ollama/network errors
+        logger.exception("Generation failed for %s: %s", agent["name"], exc)
+        nxt = select_next_agent(agent_name)
+        return nxt["name"] if nxt else None
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
