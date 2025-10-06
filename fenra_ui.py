@@ -1138,15 +1138,16 @@ class FenraUI:
             "<<ComboboxSelected>>",
             lambda _e: (self._refresh_class_pdv_choices(), self._mark_classes_dirty()),
         )
-        val = max(0.0, min(1.0, float(delta))) if isinstance(delta, (int, float)) else 0.0
+        val = float(delta) if isinstance(delta, (int, float)) else 0.0
+        val = max(-1.0, min(1.0, val))
         var = tk.DoubleVar(value=val)
-        sc = ttk.Scale(row, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=var)
+        sc = ttk.Scale(row, from_=-1.0, to=1.0, orient=tk.HORIZONTAL, variable=var)
         sc.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
-        lbl = ttk.Label(row, text=f"{var.get():.2f}")
+        lbl = ttk.Label(row, text=f"{var.get():+0.2f}")
         lbl.pack(side=tk.LEFT, padx=4)
 
         def _on_var_change(*_args) -> None:
-            lbl.config(text=f"{var.get():.2f}")
+            lbl.config(text=f"{var.get():+0.2f}")
             self._mark_classes_dirty()
 
         var.trace_add("write", _on_var_change)
@@ -1197,7 +1198,7 @@ class FenraUI:
             n = cb.get().strip()
             if not n:
                 continue
-            adjs.append({"name": n, "delta": float(max(0.0, min(1.0, var.get())))})
+            adjs.append({"name": n, "delta": float(max(-1.0, min(1.0, var.get())))})
         if adjs:
             c["pdv_adjustments"] = adjs
         return c
@@ -1286,7 +1287,10 @@ class FenraUI:
                     c["temperature"] = None
             if "pdv_adjustments" in c:
                 c["pdv_adjustments"] = [
-                    a for a in c["pdv_adjustments"] if a.get("name") in self._pdv_names
+                    {"name": a.get("name"),
+                     "delta": max(-1.0, min(1.0, float(a.get("delta", 0.0))))}
+                    for a in c.get("pdv_adjustments", [])
+                    if a.get("name") in self._pdv_names
                 ]
         save_classes(self._classes_map)
         self._set_classes_dirty(False)
