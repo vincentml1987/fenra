@@ -11,6 +11,7 @@ from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
+from itertools import chain
 
 import discord
 import requests
@@ -306,9 +307,9 @@ class FenraUI:
         for st in (self.cls_sys, self.cls_pre, self.cls_post):
             st.bind("<KeyRelease>", self._mark_classes_dirty_from_text)
 
-        # Agents sub-tab
+        # Agents & Groups sub-tab
         self.agents_tab = ttk.Frame(self.config_nb)
-        self.config_nb.add(self.agents_tab, text="Agents")
+        self.config_nb.add(self.agents_tab, text="Agents & Groups")
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
@@ -1422,6 +1423,8 @@ class FenraUI:
             ttk.Button(btns, text="Batch Wiring", command=self._batch_wiring).pack(side=tk.LEFT, padx=2)
             ttk.Button(btns, text="Repair Dead-Ends", command=self._repair_dead_ends).pack(side=tk.LEFT, padx=2)
 
+        self._build_agents_groups_overview(self.agents_tab, agents)
+
         text = scrolledtext.ScrolledText(self.agents_tab)
         text.pack(fill=tk.BOTH, expand=True)
         text.insert("1.0", json.dumps(agents, indent=2))
@@ -1438,6 +1441,118 @@ class FenraUI:
 
         ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
 
+    def _build_agents_groups_overview(self, parent: tk.Widget, agents: list[dict]) -> None:
+        """Build compact inspector linking agents and groups."""
+        frame = ttk.LabelFrame(parent, text="Agents ↔ Groups")
+        frame.pack(fill=tk.BOTH, expand=False, padx=4, pady=4)
+
+        agent_names = sorted({a.get("name", "") for a in agents if a.get("name")})
+
+        def _collect_groups(key: str) -> set[str]:
+            raw = (agent.get(key) or [] for agent in agents)
+            return {grp for grp in chain.from_iterable(raw) if grp}
+
+        all_groups = sorted(_collect_groups("groups_in") | _collect_groups("groups_out"))
+        items = [f"Group: {grp}" for grp in all_groups] + [f"Agent: {name}" for name in agent_names]
+
+        top = ttk.Frame(frame)
+        top.pack(fill=tk.X, padx=4, pady=(4, 2))
+        ttk.Label(top, text="Select:").pack(side=tk.LEFT)
+        self._rel_selector = ttk.Combobox(top, state="readonly", values=items, width=50)
+        self._rel_selector.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+        self._rel_selector.bind("<<ComboboxSelected>>", self._on_rel_select)
+
+        cols = ttk.Frame(frame)
+        cols.pack(fill=tk.BOTH, expand=True, padx=4, pady=(2, 4))
+
+        left = ttk.Frame(cols)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
+        right = ttk.Frame(cols)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
+
+        self._rel_left_label = ttk.Label(left, text="Left")
+        self._rel_left_label.pack(anchor="w")
+        self._rel_left = tk.Listbox(left, exportselection=False)
+        self._rel_left.pack(fill=tk.BOTH, expand=True)
+
+        self._rel_right_label = ttk.Label(right, text="Right")
+        self._rel_right_label.pack(anchor="w")
+        self._rel_right = tk.Listbox(right, exportselection=False)
+        self._rel_right.pack(fill=tk.BOTH, expand=True)
+
+        self._rel_mode: Optional[str] = None
+        self._rel_agents_index = {a["name"]: a for a in agents if a.get("name")}
+
+        self._rel_left.bind("<Double-Button-1>", lambda _event: self._rel_follow(self._rel_left))
+        self._rel_right.bind("<Double-Button-1>", lambda _event: self._rel_follow(self._rel_right))
+
+        if items:
+            self._rel_selector.current(0)
+            self._on_rel_select()
+        else:
+            self._fill_rel_lists([], [])
+
+    def _on_rel_select(self, _event=None) -> None:
+        selector = getattr(self, "_rel_selector", None)
+        if not selector:
+            return
+        choice = selector.get()
+        left_items: list[str] = []
+        right_items: list[str] = []
+        if choice.startswith("Agent: "):
+            name = choice[len("Agent: ") :]
+            agent = self._rel_agents_index.get(name)
+            if not agent:
+                return
+            self._rel_mode = "agent"
+            left_items = sorted({g for g in (agent.get("groups_in") or []) if g})
+            right_items = sorted({g for g in (agent.get("groups_out") or []) if g})
+            self._rel_left_label.config(text=f"{name} · groups_in")
+            self._rel_right_label.config(text=f"{name} · groups_out")
+        elif choice.startswith("Group: "):
+            group = choice[len("Group: ") :]
+            self._rel_mode = "group"
+            left_items = sorted(
+                name
+                for name, agent in self._rel_agents_index.items()
+                if group in (agent.get("groups_out") or [])
+            )
+            right_items = sorted(
+                name
+                for name, agent in self._rel_agents_index.items()
+                if group in (agent.get("groups_in") or [])
+            )
+            self._rel_left_label.config(text=f"{group} · senders (groups_out)")
+            self._rel_right_label.config(text=f"{group} · listeners (groups_in)")
+        else:
+            self._rel_mode = None
+        self._fill_rel_lists(left_items, right_items)
+
+    def _fill_rel_lists(self, left: list[str], right: list[str]) -> None:
+        if not hasattr(self, "_rel_left") or not hasattr(self, "_rel_right"):
+            return
+        self._rel_left.delete(0, tk.END)
+        self._rel_right.delete(0, tk.END)
+        for item in left:
+            self._rel_left.insert(tk.END, item)
+        for item in right:
+            self._rel_right.insert(tk.END, item)
+
+    def _rel_follow(self, lb: tk.Listbox) -> None:
+        if not hasattr(self, "_rel_selector"):
+            return
+        selection = lb.curselection()
+        if not selection or not self._rel_mode:
+            return
+        value = lb.get(selection[0])
+        if self._rel_mode == "agent":
+            target = f"Group: {value}"
+        else:
+            target = f"Agent: {value}"
+        values = list(self._rel_selector["values"])
+        if target in values:
+            self._rel_selector.set(target)
+            self._on_rel_select()
     def _on_flag_select(self, _event=None) -> None:
         sel = getattr(self, "_flag_list", None)
         if not sel:
