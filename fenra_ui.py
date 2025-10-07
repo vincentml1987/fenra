@@ -1402,18 +1402,11 @@ class FenraUI:
             child.destroy()
         agents = load_agents()
         self._agents_cache = agents
-        # Split view: top = graph, bottom = JSON
-        pw = ttk.PanedWindow(self.agents_tab, orient=tk.VERTICAL)
-        pw.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(pw)
-        bottom = ttk.Frame(pw)
-        pw.add(top, weight=1)
-        pw.add(bottom, weight=1)
-        self._build_agents_groups_graph(top, agents)
+        self._build_agents_groups_graph(self.agents_tab, agents)
 
         flagged = [a for a in agents if a.get("flag_no_downstream")]
         if flagged:
-            banner = ttk.Frame(top, relief=tk.RIDGE, borderwidth=1)
+            banner = ttk.Frame(self.agents_tab, relief=tk.RIDGE, borderwidth=1)
             banner.pack(fill=tk.X, pady=2)
             btop = ttk.Frame(banner)
             btop.pack(fill=tk.X)
@@ -1431,24 +1424,53 @@ class FenraUI:
             ttk.Button(btns, text="Batch Wiring", command=self._batch_wiring).pack(side=tk.LEFT, padx=2)
             ttk.Button(btns, text="Repair Dead-Ends", command=self._repair_dead_ends).pack(side=tk.LEFT, padx=2)
 
-        text = scrolledtext.ScrolledText(bottom)
+        ttk.Frame(self.agents_tab).pack(fill=tk.BOTH, expand=True)
+
+        ttk.Button(
+            self.agents_tab,
+            text="Edit JSON…",
+            command=self._open_agents_json_editor,
+        ).pack(anchor="e", padx=4, pady=4)
+
+    # ---------- Agents ↔ Groups graph helpers ----------
+    def _open_agents_json_editor(self) -> None:
+        if getattr(self, "_agents_editor_window", None):
+            try:
+                self._agents_editor_window.lift()
+                return
+            except Exception:
+                self._agents_editor_window = None
+
+        win = tk.Toplevel(self.root)
+        win.title("Agents JSON")
+        win.geometry("640x480")
+        self._agents_editor_window = win
+
+        def _on_close() -> None:
+            self._agents_editor_window = None
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+        text = scrolledtext.ScrolledText(win)
         text.pack(fill=tk.BOTH, expand=True)
-        text.insert("1.0", json.dumps(agents, indent=2))
-        btn = ttk.Frame(bottom)
-        btn.pack(fill=tk.X)
+        text.insert("1.0", json.dumps(self._agents_cache or [], indent=2))
+
+        btns = ttk.Frame(win)
+        btns.pack(fill=tk.X, pady=4)
 
         def _save() -> None:
             try:
                 data = json.loads(text.get("1.0", tk.END))
                 save_agents(data)
-                # rebuild to refresh groups/agents list and canvas
                 self._build_agents_tab()
+                _on_close()
             except Exception:
                 messagebox.showerror("Error", "Invalid JSON")
 
-        ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btns, text="Save", command=_save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btns, text="Cancel", command=_on_close).pack(side=tk.RIGHT, padx=4)
 
-    # ---------- Agents ↔ Groups graph helpers ----------
     def _build_agents_groups_graph(self, parent: tk.Widget, agents: list[dict]) -> None:
         prev_selection = getattr(self, "_aggr_current_value", "")
         self._aggr_agents_by_name = {
