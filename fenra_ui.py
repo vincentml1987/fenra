@@ -1402,16 +1402,23 @@ class FenraUI:
             child.destroy()
         agents = load_agents()
         self._agents_cache = agents
-        self._build_agents_groups_graph(self.agents_tab, agents)
+        # Split view: top = graph, bottom = JSON
+        pw = ttk.PanedWindow(self.agents_tab, orient=tk.VERTICAL)
+        pw.pack(fill=tk.BOTH, expand=True)
+        top = ttk.Frame(pw)
+        bottom = ttk.Frame(pw)
+        pw.add(top, weight=1)
+        pw.add(bottom, weight=1)
+        self._build_agents_groups_graph(top, agents)
 
         flagged = [a for a in agents if a.get("flag_no_downstream")]
         if flagged:
-            banner = ttk.Frame(self.agents_tab, relief=tk.RIDGE, borderwidth=1)
+            banner = ttk.Frame(top, relief=tk.RIDGE, borderwidth=1)
             banner.pack(fill=tk.X, pady=2)
-            top = ttk.Frame(banner)
-            top.pack(fill=tk.X)
-            ttk.Label(top, text="Agents with no downstream:", foreground="red").pack(side=tk.LEFT)
-            ttk.Button(top, text="Dismiss", command=banner.destroy).pack(side=tk.RIGHT)
+            btop = ttk.Frame(banner)
+            btop.pack(fill=tk.X)
+            ttk.Label(btop, text="Agents with no downstream:", foreground="red").pack(side=tk.LEFT)
+            ttk.Button(btop, text="Dismiss", command=banner.destroy).pack(side=tk.RIGHT)
             self._flag_list = tk.Listbox(banner, height=min(5, len(flagged)), exportselection=False)
             for a in flagged:
                 self._flag_list.insert(tk.END, a["name"])
@@ -1424,10 +1431,10 @@ class FenraUI:
             ttk.Button(btns, text="Batch Wiring", command=self._batch_wiring).pack(side=tk.LEFT, padx=2)
             ttk.Button(btns, text="Repair Dead-Ends", command=self._repair_dead_ends).pack(side=tk.LEFT, padx=2)
 
-        text = scrolledtext.ScrolledText(self.agents_tab)
+        text = scrolledtext.ScrolledText(bottom)
         text.pack(fill=tk.BOTH, expand=True)
         text.insert("1.0", json.dumps(agents, indent=2))
-        btn = ttk.Frame(self.agents_tab)
+        btn = ttk.Frame(bottom)
         btn.pack(fill=tk.X)
 
         def _save() -> None:
@@ -1467,7 +1474,7 @@ class FenraUI:
             )
 
         graph_frame = ttk.LabelFrame(parent, text="Agents ↔ Groups")
-        graph_frame.pack(fill=tk.BOTH, expand=False, padx=4, pady=4)
+        graph_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
         top = ttk.Frame(graph_frame)
         top.pack(fill=tk.X, padx=4, pady=(4, 2))
@@ -1485,7 +1492,7 @@ class FenraUI:
         self._aggr_selector.bind("<<ComboboxSelected>>", self._aggr_on_select)
 
         self._aggr_canvas = tk.Canvas(graph_frame, background="white", height=260)
-        self._aggr_canvas.pack(fill=tk.BOTH, expand=False, padx=4, pady=(2, 6))
+        self._aggr_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=(2, 6))
         self._aggr_canvas.bind("<Configure>", lambda _e: self._aggr_redraw())
 
         self._aggr_mode = None
@@ -1611,11 +1618,9 @@ class FenraUI:
                 lambda e, a=agent: self._show_tooltip(e.x_root, e.y_root, a),
             )
             self._aggr_canvas.tag_bind(item, "<Leave>", lambda _e: self._hide_tooltip())
-            self._aggr_canvas.tag_bind(
-                item,
-                "<Double-1>",
-                lambda _e, n=name: self._aggr_select(f"Agent: {n}"),
-            )
+            # Single-click recenters on this agent. Keep double-click for parity.
+            self._aggr_canvas.tag_bind(item, "<Button-1>", lambda _e, n=name: self._aggr_select(f"Agent: {n}"))
+            self._aggr_canvas.tag_bind(item, "<Double-1>", lambda _e, n=name: self._aggr_select(f"Agent: {n}"))
             self._aggr_node_items[item] = f"Agent: {name}"
 
     def _aggr_draw_group_node(
@@ -1658,11 +1663,9 @@ class FenraUI:
                 lambda e, a=info: self._show_tooltip(e.x_root, e.y_root, a),
             )
             self._aggr_canvas.tag_bind(item, "<Leave>", lambda _e: self._hide_tooltip())
-            self._aggr_canvas.tag_bind(
-                item,
-                "<Double-1>",
-                lambda _e, g=group: self._aggr_select(f"Group: {g}"),
-            )
+            # Single-click recenters on this group. Keep double-click for parity.
+            self._aggr_canvas.tag_bind(item, "<Button-1>", lambda _e, g=group: self._aggr_select(f"Group: {g}"))
+            self._aggr_canvas.tag_bind(item, "<Double-1>", lambda _e, g=group: self._aggr_select(f"Group: {g}"))
             self._aggr_node_items[item] = f"Group: {group}"
 
     def _aggr_arrow(self, x1: int, y1: int, x2: int, y2: int) -> None:
