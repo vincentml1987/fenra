@@ -306,9 +306,9 @@ class FenraUI:
         for st in (self.cls_sys, self.cls_pre, self.cls_post):
             st.bind("<KeyRelease>", self._mark_classes_dirty_from_text)
 
-        # Agents sub-tab
+        # Agents & Groups sub-tab
         self.agents_tab = ttk.Frame(self.config_nb)
-        self.config_nb.add(self.agents_tab, text="Agents")
+        self.config_nb.add(self.agents_tab, text="Agents & Groups")
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
@@ -1402,6 +1402,8 @@ class FenraUI:
             child.destroy()
         agents = load_agents()
         self._agents_cache = agents
+        self._build_agents_groups_graph(self.agents_tab, agents)
+
         flagged = [a for a in agents if a.get("flag_no_downstream")]
         if flagged:
             banner = ttk.Frame(self.agents_tab, relief=tk.RIDGE, borderwidth=1)
@@ -1432,11 +1434,247 @@ class FenraUI:
             try:
                 data = json.loads(text.get("1.0", tk.END))
                 save_agents(data)
+                # rebuild to refresh groups/agents list and canvas
                 self._build_agents_tab()
             except Exception:
                 messagebox.showerror("Error", "Invalid JSON")
 
         ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
+
+    # ---------- Agents ↔ Groups graph helpers ----------
+    def _build_agents_groups_graph(self, parent: tk.Widget, agents: list[dict]) -> None:
+        prev_selection = getattr(self, "_aggr_current_value", "")
+        self._aggr_agents_by_name = {
+            a.get("name", ""): a for a in agents if a.get("name")
+        }
+        all_groups = sorted(
+            set(g for a in agents for g in (a.get("groups_in", []) or []))
+            | set(g for a in agents for g in (a.get("groups_out", []) or []))
+        )
+        agent_names = sorted(self._aggr_agents_by_name)
+        self._aggr_groups_senders: dict[str, list[str]] = {}
+        self._aggr_groups_listeners: dict[str, list[str]] = {}
+        for g in all_groups:
+            self._aggr_groups_senders[g] = sorted(
+                a.get("name", "")
+                for a in agents
+                if g in (a.get("groups_out", []) or []) and a.get("name")
+            )
+            self._aggr_groups_listeners[g] = sorted(
+                a.get("name", "")
+                for a in agents
+                if g in (a.get("groups_in", []) or []) and a.get("name")
+            )
+
+        graph_frame = ttk.LabelFrame(parent, text="Agents ↔ Groups")
+        graph_frame.pack(fill=tk.BOTH, expand=False, padx=4, pady=4)
+
+        top = ttk.Frame(graph_frame)
+        top.pack(fill=tk.X, padx=4, pady=(4, 2))
+        ttk.Label(top, text="Select:").pack(side=tk.LEFT)
+        values = [f"Group: {g}" for g in all_groups] + [
+            f"Agent: {n}" for n in agent_names
+        ]
+        self._aggr_selector = ttk.Combobox(
+            top,
+            state="readonly",
+            values=values,
+            width=60,
+        )
+        self._aggr_selector.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+        self._aggr_selector.bind("<<ComboboxSelected>>", self._aggr_on_select)
+
+        self._aggr_canvas = tk.Canvas(graph_frame, background="white", height=260)
+        self._aggr_canvas.pack(fill=tk.BOTH, expand=False, padx=4, pady=(2, 6))
+        self._aggr_canvas.bind("<Configure>", lambda _e: self._aggr_redraw())
+
+        self._aggr_mode = None
+        self._aggr_active_agent = None
+        self._aggr_active_group = None
+        self._aggr_node_items = {}
+        try:
+            color_fn: Callable[[str], str] = pastel_for_class
+        except Exception:
+            color_fn = lambda _cls: "#DDEBFF"
+        self._aggr_color_fn = color_fn
+
+        if prev_selection and prev_selection in values:
+            self._aggr_selector.set(prev_selection)
+            self._aggr_on_select()
+        elif values:
+            self._aggr_selector.current(0)
+            self._aggr_on_select()
+        else:
+            self._aggr_redraw()
+
+    def _aggr_on_select(self, _evt=None) -> None:
+        sel = self._aggr_selector.get() if hasattr(self, "_aggr_selector") else ""
+        self._aggr_current_value = sel
+        if sel.startswith("Agent: "):
+            name = sel[7:]
+            self._aggr_mode = "agent"
+            self._aggr_active_agent = self._aggr_agents_by_name.get(name)
+            self._aggr_active_group = None
+        elif sel.startswith("Group: "):
+            grp = sel[7:]
+            self._aggr_mode = "group"
+            self._aggr_active_group = grp
+            self._aggr_active_agent = None
+        else:
+            self._aggr_mode = None
+            self._aggr_active_agent = None
+            self._aggr_active_group = None
+        self._aggr_redraw()
+
+    def _aggr_spread_y(self, n: int, height: int, margin: int = 36) -> list[int]:
+        if n <= 0:
+            return []
+        usable = max(1, height - 2 * margin)
+        if n == 1:
+            return [margin + usable // 2]
+        step = usable / (n - 1)
+        return [int(margin + i * step) for i in range(n)]
+
+    def _aggr_redraw(self) -> None:
+        c = getattr(self, "_aggr_canvas", None)
+        if not c:
+            return
+        c.delete("all")
+        if hasattr(self, "_aggr_node_items"):
+            self._aggr_node_items.clear()
+        w = max(1, int(c.winfo_width()))
+        h = max(1, int(c.winfo_height()))
+        cx = w // 2
+        left_x, right_x = int(w * 0.2), int(w * 0.8)
+
+        if self._aggr_mode == "agent" and self._aggr_active_agent:
+            ag = self._aggr_active_agent
+            gin = sorted(set(ag.get("groups_in", []) or []))
+            gout = sorted(set(ag.get("groups_out", []) or []))
+            ys_l = self._aggr_spread_y(len(gin), h)
+            ys_r = self._aggr_spread_y(len(gout), h)
+            color_fn = getattr(self, "_aggr_color_fn", lambda _cls: "#DDEBFF")
+            for y, g in zip(ys_l, gin):
+                self._aggr_draw_group_node(left_x, y, g)
+                self._aggr_arrow(left_x + 40, y, cx - 24, h // 2)
+            for y, g in zip(ys_r, gout):
+                self._aggr_draw_group_node(right_x, y, g)
+                self._aggr_arrow(cx + 24, h // 2, right_x - 40, y)
+            self._aggr_draw_agent_node(cx, h // 2, ag, color_fn)
+        elif self._aggr_mode == "group" and self._aggr_active_group is not None:
+            grp = self._aggr_active_group
+            senders = getattr(self, "_aggr_groups_senders", {}).get(grp, [])
+            listeners = getattr(self, "_aggr_groups_listeners", {}).get(grp, [])
+            ys_l = self._aggr_spread_y(len(senders), h)
+            ys_r = self._aggr_spread_y(len(listeners), h)
+            color_fn = getattr(self, "_aggr_color_fn", lambda _cls: "#DDEBFF")
+            for y, name in zip(ys_l, senders):
+                agent = self._aggr_agents_by_name.get(name)
+                if agent:
+                    self._aggr_draw_agent_node(left_x, y, agent, color_fn, r=18)
+                    self._aggr_arrow(left_x + 20, y, cx - 48, h // 2)
+            for y, name in zip(ys_r, listeners):
+                agent = self._aggr_agents_by_name.get(name)
+                if agent:
+                    self._aggr_draw_agent_node(right_x, y, agent, color_fn, r=18)
+                    self._aggr_arrow(cx + 48, h // 2, right_x - 20, y)
+            self._aggr_draw_group_node(
+                cx,
+                h // 2,
+                grp,
+                center=True,
+                counts=(len(senders), len(listeners)),
+            )
+        else:
+            c.create_text(cx, h // 2, text="Select an Agent or Group")
+
+    def _aggr_draw_agent_node(
+        self, x: int, y: int, agent: dict, color_fn: Callable[[str], str], r: int = 24
+    ) -> None:
+        cls_name = agent.get("agent_class") or agent.get("role", "")
+        color = color_fn(cls_name)
+        circle = self._aggr_canvas.create_oval(
+            x - r,
+            y - r,
+            x + r,
+            y + r,
+            fill=color,
+            outline="black",
+        )
+        name = agent.get("name", "")
+        display = name if len(name) <= 18 else name[:17] + "…"
+        text = self._aggr_canvas.create_text(x, y + r + 12, text=display)
+        for item in (circle, text):
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Enter>",
+                lambda e, a=agent: self._show_tooltip(e.x_root, e.y_root, a),
+            )
+            self._aggr_canvas.tag_bind(item, "<Leave>", lambda _e: self._hide_tooltip())
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Double-1>",
+                lambda _e, n=name: self._aggr_select(f"Agent: {n}"),
+            )
+            self._aggr_node_items[item] = f"Agent: {name}"
+
+    def _aggr_draw_group_node(
+        self,
+        x: int,
+        y: int,
+        group: str,
+        center: bool = False,
+        counts: Optional[tuple[int, int]] = None,
+    ) -> None:
+        senders = list(self._aggr_groups_senders.get(group, []))
+        listeners = list(self._aggr_groups_listeners.get(group, []))
+        w, h = (90, 26) if not center else (120, 34)
+        rect = self._aggr_canvas.create_rectangle(
+            x - w // 2,
+            y - h // 2,
+            x + w // 2,
+            y + h // 2,
+            fill="#FFF8D6",
+            outline="black",
+        )
+        label = group if len(group) <= 22 else group[:21] + "…"
+        if center:
+            left = counts[0] if counts else len(senders)
+            right = counts[1] if counts else len(listeners)
+            label = f"{group}  [{left}→  ←{right}]"
+            if len(label) > 30:
+                label = label[:29] + "…"
+        text = self._aggr_canvas.create_text(x, y, text=label)
+        info = {
+            "name": group,
+            "role": "Group",
+            "groups_out": senders,
+            "groups_in": listeners,
+        }
+        for item in (rect, text):
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Enter>",
+                lambda e, a=info: self._show_tooltip(e.x_root, e.y_root, a),
+            )
+            self._aggr_canvas.tag_bind(item, "<Leave>", lambda _e: self._hide_tooltip())
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Double-1>",
+                lambda _e, g=group: self._aggr_select(f"Group: {g}"),
+            )
+            self._aggr_node_items[item] = f"Group: {group}"
+
+    def _aggr_arrow(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        self._aggr_canvas.create_line(x1, y1, x2, y2, arrow=tk.LAST)
+
+    def _aggr_select(self, value: str) -> None:
+        if not hasattr(self, "_aggr_selector"):
+            return
+        vals = list(self._aggr_selector.cget("values"))
+        if value in vals:
+            self._aggr_selector.set(value)
+            self._aggr_on_select()
 
     def _on_flag_select(self, _event=None) -> None:
         sel = getattr(self, "_flag_list", None)
