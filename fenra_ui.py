@@ -1711,6 +1711,49 @@ class FenraUI:
                     self._aggr_selector.set(self._aggr_current_value)
                     self._aggr_on_select()
 
+    def _aggr_remove_click(self, kind: str, name: str, side: str) -> None:
+        cache = getattr(self, "_agents_cache", [])
+        mode = getattr(self, "_aggr_mode", None)
+
+        if mode == "agent" and self._aggr_active_agent and kind == "group":
+            target = next(
+                (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
+                None,
+            )
+            if not target:
+                return
+            # flipped on purpose: left side shows outbound wiring
+            lst = (
+                target.setdefault("groups_out", [])
+                if side == "left"
+                else target.setdefault("groups_in", [])
+            )
+            if name in lst:
+                lst[:] = [g for g in lst if g != name]
+                save_agents(cache)
+
+        elif mode == "group" and self._aggr_active_group and kind == "agent":
+            target = next((a for a in cache if a.get("name") == name), None)
+            if not target:
+                return
+            grp = self._aggr_active_group
+            # flipped on purpose: left side shows outbound wiring
+            lst = (
+                target.setdefault("groups_out", [])
+                if side == "left"
+                else target.setdefault("groups_in", [])
+            )
+            if grp in lst:
+                lst[:] = [g for g in lst if g != grp]
+                save_agents(cache)
+        else:
+            return
+
+        self._build_agents_tab()
+        if hasattr(self, "_aggr_selector"):
+            self._aggr_selector.set(self._aggr_current_value)
+            self._aggr_on_select()
+
     def _aggr_spread_y(self, n: int, height: int, margin: int = 36) -> list[int]:
         if n <= 0:
             return []
@@ -1740,10 +1783,10 @@ class FenraUI:
             ys_r = self._aggr_spread_y(len(gout), h)
             color_fn = getattr(self, "_aggr_color_fn", lambda _cls: "#DDEBFF")
             for y, g in zip(ys_l, gin):
-                self._aggr_draw_group_node(left_x, y, g)
+                self._aggr_draw_group_node(left_x, y, g, side="left")
                 self._aggr_arrow(left_x + 40, y, cx - 24, h // 2)
             for y, g in zip(ys_r, gout):
-                self._aggr_draw_group_node(right_x, y, g)
+                self._aggr_draw_group_node(right_x, y, g, side="right")
                 self._aggr_arrow(cx + 24, h // 2, right_x - 40, y)
             self._aggr_draw_agent_node(cx, h // 2, ag, color_fn)
         elif self._aggr_mode == "group" and self._aggr_active_group is not None:
@@ -1756,12 +1799,16 @@ class FenraUI:
             for y, name in zip(ys_l, senders):
                 agent = self._aggr_agents_by_name.get(name)
                 if agent:
-                    self._aggr_draw_agent_node(left_x, y, agent, color_fn, r=18)
+                    self._aggr_draw_agent_node(
+                        left_x, y, agent, color_fn, r=18, side="left"
+                    )
                     self._aggr_arrow(left_x + 20, y, cx - 48, h // 2)
             for y, name in zip(ys_r, listeners):
                 agent = self._aggr_agents_by_name.get(name)
                 if agent:
-                    self._aggr_draw_agent_node(right_x, y, agent, color_fn, r=18)
+                    self._aggr_draw_agent_node(
+                        right_x, y, agent, color_fn, r=18, side="right"
+                    )
                     self._aggr_arrow(cx + 48, h // 2, right_x - 20, y)
             self._aggr_draw_group_node(
                 cx,
@@ -1774,7 +1821,13 @@ class FenraUI:
             c.create_text(cx, h // 2, text="Select an Agent or Group")
 
     def _aggr_draw_agent_node(
-        self, x: int, y: int, agent: dict, color_fn: Callable[[str], str], r: int = 24
+        self,
+        x: int,
+        y: int,
+        agent: dict,
+        color_fn: Callable[[str], str],
+        r: int = 24,
+        side: Optional[str] = None,
     ) -> None:
         cls_name = agent.get("agent_class") or agent.get("role", "")
         color = color_fn(cls_name)
@@ -1799,6 +1852,13 @@ class FenraUI:
             # Single-click recenters on this agent. Keep double-click for parity.
             self._aggr_canvas.tag_bind(item, "<Button-1>", lambda _e, n=name: self._aggr_select(f"Agent: {n}"))
             self._aggr_canvas.tag_bind(item, "<Double-1>", lambda _e, n=name: self._aggr_select(f"Agent: {n}"))
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Button-3>",
+                lambda _e, n=name, s=side: self._aggr_remove_click("agent", n, s)
+                if s in ("left", "right")
+                else None,
+            )
             self._aggr_node_items[item] = f"Agent: {name}"
 
     def _aggr_draw_group_node(
@@ -1808,6 +1868,7 @@ class FenraUI:
         group: str,
         center: bool = False,
         counts: Optional[tuple[int, int]] = None,
+        side: Optional[str] = None,
     ) -> None:
         senders = list(self._aggr_groups_senders.get(group, []))
         listeners = list(self._aggr_groups_listeners.get(group, []))
@@ -1844,6 +1905,13 @@ class FenraUI:
             # Single-click recenters on this group. Keep double-click for parity.
             self._aggr_canvas.tag_bind(item, "<Button-1>", lambda _e, g=group: self._aggr_select(f"Group: {g}"))
             self._aggr_canvas.tag_bind(item, "<Double-1>", lambda _e, g=group: self._aggr_select(f"Group: {g}"))
+            self._aggr_canvas.tag_bind(
+                item,
+                "<Button-3>",
+                lambda _e, g=group, s=side: self._aggr_remove_click("group", g, s)
+                if s in ("left", "right")
+                else None,
+            )
             self._aggr_node_items[item] = f"Group: {group}"
 
     def _aggr_arrow(self, x1: int, y1: int, x2: int, y2: int) -> None:
