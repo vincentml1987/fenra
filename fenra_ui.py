@@ -1712,8 +1712,20 @@ class FenraUI:
                     self._aggr_on_select()
 
     def _aggr_remove_click(self, kind: str, name: str, side: str) -> None:
-        cache = getattr(self, "_agents_cache", [])
-        mode = getattr(self, "_aggr_mode", None)
+        cache = self._agents_cache
+        mode = self._aggr_mode
+        warn = lambda txt: messagebox.showwarning("Remove", txt)
+
+        def _safe_pop(lst: list[str], item: str, label: str) -> bool:
+            if item not in lst:
+                return False
+            if len(lst) == 1:
+                warn(f"{label} must contain at least one entry.")
+                return False
+            lst.remove(item)
+            return True
+
+        changed = False
 
         if mode == "agent" and self._aggr_active_agent and kind == "group":
             target = next(
@@ -1728,9 +1740,8 @@ class FenraUI:
                 if side == "left"
                 else target.setdefault("groups_in", [])
             )
-            if name in lst:
-                lst[:] = [g for g in lst if g != name]
-                save_agents(cache)
+            if _safe_pop(lst, name, f"{target['name']} {side} list"):
+                changed = True
 
         elif mode == "group" and self._aggr_active_group and kind == "agent":
             target = next((a for a in cache if a.get("name") == name), None)
@@ -1743,10 +1754,18 @@ class FenraUI:
                 if side == "left"
                 else target.setdefault("groups_in", [])
             )
-            if grp in lst:
-                lst[:] = [g for g in lst if g != grp]
-                save_agents(cache)
+            if _safe_pop(lst, grp, f"{target['name']} {side} list"):
+                changed = True
         else:
+            return
+
+        if not changed:
+            return
+
+        try:
+            save_agents(cache)
+        except ValueError as exc:
+            warn(str(exc))
             return
 
         self._build_agents_tab()
