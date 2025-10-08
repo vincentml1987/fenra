@@ -1455,7 +1455,32 @@ class FenraUI:
         graph_frame = ttk.LabelFrame(parent, text="Agents ↔ Groups")
         graph_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
-        top = ttk.Frame(graph_frame)
+        paned = ttk.Panedwindow(graph_frame, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        left_pane = ttk.Frame(paned)
+        paned.add(left_pane, weight=1)
+
+        center_pane = ttk.Frame(paned)
+        paned.add(center_pane, weight=3)
+
+        right_pane = ttk.Frame(paned)
+        paned.add(right_pane, weight=1)
+
+        self._aggr_left_label = ttk.Label(left_pane, text="Left")
+        self._aggr_left_label.pack(anchor="w", padx=4, pady=(4, 0))
+        self._aggr_left_list = tk.Listbox(left_pane, exportselection=False)
+        self._aggr_left_list.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        self._aggr_left_list.bind("<Double-1>", lambda _e: self._aggr_add_left())
+        self._aggr_left_add = ttk.Button(
+            left_pane, text="Add", command=self._aggr_add_left, state="disabled"
+        )
+        self._aggr_left_add.pack(fill=tk.X, padx=4, pady=(0, 6))
+        self._aggr_left_list.bind(
+            "<<ListboxSelect>>", lambda _e: self._aggr_update_add_state("left")
+        )
+
+        top = ttk.Frame(center_pane)
         top.pack(fill=tk.X, padx=4, pady=(4, 2))
         ttk.Label(top, text="Select:").pack(side=tk.LEFT)
         values = [f"Group: {g}" for g in all_groups] + [
@@ -1470,9 +1495,22 @@ class FenraUI:
         self._aggr_selector.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self._aggr_selector.bind("<<ComboboxSelected>>", self._aggr_on_select)
 
-        self._aggr_canvas = tk.Canvas(graph_frame, background="white", height=260)
+        self._aggr_canvas = tk.Canvas(center_pane, background="white", height=260)
         self._aggr_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=(2, 6))
         self._aggr_canvas.bind("<Configure>", lambda _e: self._aggr_redraw())
+
+        self._aggr_right_label = ttk.Label(right_pane, text="Right")
+        self._aggr_right_label.pack(anchor="w", padx=4, pady=(4, 0))
+        self._aggr_right_list = tk.Listbox(right_pane, exportselection=False)
+        self._aggr_right_list.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        self._aggr_right_list.bind("<Double-1>", lambda _e: self._aggr_add_right())
+        self._aggr_right_add = ttk.Button(
+            right_pane, text="Add", command=self._aggr_add_right, state="disabled"
+        )
+        self._aggr_right_add.pack(fill=tk.X, padx=4, pady=(0, 6))
+        self._aggr_right_list.bind(
+            "<<ListboxSelect>>", lambda _e: self._aggr_update_add_state("right")
+        )
 
         self._aggr_mode = None
         self._aggr_active_agent = None
@@ -1492,6 +1530,7 @@ class FenraUI:
             self._aggr_on_select()
         else:
             self._aggr_redraw()
+        self._aggr_refresh_side_lists()
 
     def _aggr_on_select(self, _evt=None) -> None:
         sel = self._aggr_selector.get() if hasattr(self, "_aggr_selector") else ""
@@ -1510,7 +1549,167 @@ class FenraUI:
             self._aggr_mode = None
             self._aggr_active_agent = None
             self._aggr_active_group = None
+        self._aggr_refresh_side_lists()
         self._aggr_redraw()
+
+    def _aggr_refresh_side_lists(self) -> None:
+        mode = getattr(self, "_aggr_mode", None)
+        agents = getattr(self, "_aggr_agents_by_name", {})
+        cache = getattr(self, "_agents_cache", [])
+        all_groups = sorted(
+            set(g for a in cache for g in (a.get("groups_in", []) or []))
+            | set(g for a in cache for g in (a.get("groups_out", []) or []))
+        )
+
+        left_items: list[str] = []
+        right_items: list[str] = []
+        left_label = "Left"
+        right_label = "Right"
+
+        if mode == "agent" and self._aggr_active_agent:
+            ag = self._aggr_active_agent
+            gin = set(ag.get("groups_in", []) or [])
+            gout = set(ag.get("groups_out", []) or [])
+            left_items = [g for g in all_groups if g not in gin]
+            right_items = [g for g in all_groups if g not in gout]
+            left_label = "Add to groups_in"
+            right_label = "Add to groups_out"
+        elif mode == "group" and self._aggr_active_group is not None:
+            grp = self._aggr_active_group
+            names = sorted(agents.keys())
+            left_items = [
+                n
+                for n in names
+                if grp not in (agents[n].get("groups_out", []) or [])
+            ]
+            right_items = [
+                n
+                for n in names
+                if grp not in (agents[n].get("groups_in", []) or [])
+            ]
+            left_label = f"Agents missing {grp} in groups_out"
+            right_label = f"Agents missing {grp} in groups_in"
+        else:
+            left_items = []
+            right_items = []
+
+        for lb, items in (
+            (getattr(self, "_aggr_left_list", None), left_items),
+            (getattr(self, "_aggr_right_list", None), right_items),
+        ):
+            if lb is None:
+                continue
+            lb.delete(0, tk.END)
+            for s in items:
+                lb.insert(tk.END, s)
+
+        if hasattr(self, "_aggr_left_label"):
+            self._aggr_left_label.config(text=left_label)
+        if hasattr(self, "_aggr_right_label"):
+            self._aggr_right_label.config(text=right_label)
+
+        if hasattr(self, "_aggr_left_add"):
+            self._aggr_left_add.state(["disabled"])
+        if hasattr(self, "_aggr_right_add"):
+            self._aggr_right_add.state(["disabled"])
+
+    def _aggr_update_add_state(self, side: str) -> None:
+        if side == "left" and hasattr(self, "_aggr_left_add"):
+            if self._aggr_left_list.curselection():
+                self._aggr_left_add.state(["!disabled"])
+            else:
+                self._aggr_left_add.state(["disabled"])
+        elif side == "right" and hasattr(self, "_aggr_right_add"):
+            if self._aggr_right_list.curselection():
+                self._aggr_right_add.state(["!disabled"])
+            else:
+                self._aggr_right_add.state(["disabled"])
+
+    def _aggr_add_left(self) -> None:
+        if getattr(self, "_aggr_mode", None) == "agent" and self._aggr_active_agent:
+            idx = self._aggr_left_list.curselection()
+            if not idx:
+                return
+            grp = self._aggr_left_list.get(idx[0])
+            cache = getattr(self, "_agents_cache", [])
+            target = next(
+                (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
+                None,
+            )
+            if target is None:
+                return
+            target.setdefault("groups_in", [])
+            if grp not in target["groups_in"]:
+                target["groups_in"].append(grp)
+                save_agents(cache)
+                self._build_agents_tab()
+                if hasattr(self, "_aggr_selector"):
+                    self._aggr_selector.set(self._aggr_current_value)
+                    self._aggr_on_select()
+        elif getattr(self, "_aggr_mode", None) == "group" and self._aggr_active_group is not None:
+            idx = self._aggr_left_list.curselection()
+            if not idx:
+                return
+            agent_name = self._aggr_left_list.get(idx[0])
+            grp = self._aggr_active_group
+            cache = getattr(self, "_agents_cache", [])
+            target = next(
+                (a for a in cache if a.get("name") == agent_name),
+                None,
+            )
+            if target is None:
+                return
+            target.setdefault("groups_out", [])
+            if grp not in target["groups_out"]:
+                target["groups_out"].append(grp)
+                save_agents(cache)
+                self._build_agents_tab()
+                if hasattr(self, "_aggr_selector"):
+                    self._aggr_selector.set(self._aggr_current_value)
+                    self._aggr_on_select()
+
+    def _aggr_add_right(self) -> None:
+        if getattr(self, "_aggr_mode", None) == "agent" and self._aggr_active_agent:
+            idx = self._aggr_right_list.curselection()
+            if not idx:
+                return
+            grp = self._aggr_right_list.get(idx[0])
+            cache = getattr(self, "_agents_cache", [])
+            target = next(
+                (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
+                None,
+            )
+            if target is None:
+                return
+            target.setdefault("groups_out", [])
+            if grp not in target["groups_out"]:
+                target["groups_out"].append(grp)
+                save_agents(cache)
+                self._build_agents_tab()
+                if hasattr(self, "_aggr_selector"):
+                    self._aggr_selector.set(self._aggr_current_value)
+                    self._aggr_on_select()
+        elif getattr(self, "_aggr_mode", None) == "group" and self._aggr_active_group is not None:
+            idx = self._aggr_right_list.curselection()
+            if not idx:
+                return
+            agent_name = self._aggr_right_list.get(idx[0])
+            grp = self._aggr_active_group
+            cache = getattr(self, "_agents_cache", [])
+            target = next(
+                (a for a in cache if a.get("name") == agent_name),
+                None,
+            )
+            if target is None:
+                return
+            target.setdefault("groups_in", [])
+            if grp not in target["groups_in"]:
+                target["groups_in"].append(grp)
+                save_agents(cache)
+                self._build_agents_tab()
+                if hasattr(self, "_aggr_selector"):
+                    self._aggr_selector.set(self._aggr_current_value)
+                    self._aggr_on_select()
 
     def _aggr_spread_y(self, n: int, height: int, margin: int = 36) -> list[int]:
         if n <= 0:
