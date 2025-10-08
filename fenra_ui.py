@@ -309,6 +309,7 @@ class FenraUI:
         # Agents & Groups sub-tab
         self.agents_tab = ttk.Frame(self.config_nb)
         self.config_nb.add(self.agents_tab, text="Agents & Groups")
+        self._ensure_agent_group_membership()
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
@@ -1772,6 +1773,108 @@ class FenraUI:
         if hasattr(self, "_aggr_selector"):
             self._aggr_selector.set(self._aggr_current_value)
             self._aggr_on_select()
+
+    def _ensure_agent_group_membership(self) -> None:
+        try:
+            agents = load_agents()
+        except FileNotFoundError:
+            return
+
+        all_groups = sorted(
+            {
+                g
+                for agent in agents
+                for g in (agent.get("groups_in", []) or []) + (agent.get("groups_out", []) or [])
+                if g
+            }
+        )
+        changed = False
+
+        for agent in agents:
+            name = agent.get("name") or "Unnamed agent"
+            missing_sides: list[tuple[str, str]] = []
+            if not (agent.get("groups_in") or []):
+                missing_sides.append(("groups_in", "incoming"))
+            if not (agent.get("groups_out") or []):
+                missing_sides.append(("groups_out", "outgoing"))
+
+            for side_key, side_label in missing_sides:
+                selections = self._prompt_agent_group_selection(name, side_label, all_groups)
+                if not selections:
+                    continue
+                agent[side_key] = selections
+                all_groups = sorted({*all_groups, *selections})
+                changed = True
+
+        if not changed:
+            return
+
+        try:
+            save_agents(agents)
+        except ValueError as exc:
+            messagebox.showwarning("Agents & Groups", str(exc))
+            return
+
+    def _prompt_agent_group_selection(
+        self, agent_name: str, side_label: str, choices: list[str]
+    ) -> list[str]:
+        title = "Assign Groups"
+        prompt = (
+            f"Agent '{agent_name}' is missing {side_label} groups.\n"
+            "Select one or more existing groups or enter new group names (comma separated)."
+        )
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        ttk.Label(dialog, text=prompt, wraplength=360, justify=tk.LEFT).pack(
+            anchor="w", padx=12, pady=(12, 8)
+        )
+
+        listbox = tk.Listbox(dialog, selectmode=tk.MULTIPLE, height=8, exportselection=False)
+        for choice in choices:
+            listbox.insert(tk.END, choice)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=12)
+
+        entry_frame = ttk.Frame(dialog)
+        entry_frame.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ttk.Label(entry_frame, text="New groups:").pack(side=tk.LEFT)
+        entry_var = tk.StringVar()
+        entry = ttk.Entry(entry_frame, textvariable=entry_var, width=35)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+
+        result: list[str] = []
+
+        def _apply() -> None:
+            selected_indices = listbox.curselection()
+            selected = [listbox.get(i) for i in selected_indices]
+            new_raw = [part.strip() for part in entry_var.get().split(",") if part.strip()]
+            combined: list[str] = []
+            seen = set()
+            for name in selected + new_raw:
+                if name and name not in seen:
+                    combined.append(name)
+                    seen.add(name)
+            if not combined:
+                messagebox.showwarning(title, "Select or enter at least one group before continuing.")
+                return
+            result.extend(combined)
+            dialog.destroy()
+
+        def _block_close() -> None:
+            messagebox.showwarning(title, "Please assign at least one group to continue.")
+
+        dialog.protocol("WM_DELETE_WINDOW", _block_close)
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=12, pady=(4, 12))
+        ttk.Button(btn_frame, text="Assign", command=_apply).pack(side=tk.RIGHT)
+
+        listbox.focus_set()
+        self.root.wait_window(dialog)
+        return result
 
     def _aggr_spread_y(self, n: int, height: int, margin: int = 36) -> list[int]:
         if n <= 0:
