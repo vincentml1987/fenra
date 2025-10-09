@@ -40,7 +40,21 @@ _discord_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_conductor():
+    """Return the *running* conductor module even if it was launched as a script."""
+
+    import sys
     import importlib
+    import os
+
+    module = sys.modules.get("conductor")
+    if module is not None:
+        return module
+
+    main = sys.modules.get("__main__")
+    main_file = getattr(main, "__file__", "")
+    if main_file and os.path.basename(main_file) == "conductor.py":
+        return main
+
     return importlib.import_module("conductor")
 
 def get_discord_queue() -> asyncio.Queue:
@@ -471,6 +485,8 @@ class FenraUI:
         except Exception as e:
             messagebox.showerror("Run Control Error", f"Failed to import conductor: {e}")
             return
+
+        print(f"[UI] Toggling run on module id={id(c)} file={getattr(c, '__file__', None)}")
 
         try:
             running = False

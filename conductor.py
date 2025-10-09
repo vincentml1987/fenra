@@ -8,10 +8,16 @@ import threading
 import math
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
+import sys as _sys
 
 import requests
 from fenra_ui import FenraUI
 import importlib
+
+# Ensure that when this file is executed as a script (__main__), importing
+# "conductor" yields the running module instead of creating a duplicate.
+if __name__ == "__main__":
+    _sys.modules.setdefault("conductor", _sys.modules[__name__])
 
 from ai_model import AIModel
 from config_loader import (
@@ -65,12 +71,14 @@ _RUN_EVENT = threading.Event()
 def start_processing() -> None:
     """Enable the agent loop to run."""
 
+    logger.info("[RunControl] START pressed; enabling processing")
     _RUN_EVENT.set()
 
 
 def stop_processing() -> None:
     """Pause the agent loop."""
 
+    logger.info("[RunControl] STOP pressed; pausing processing")
     _RUN_EVENT.clear()
 
 
