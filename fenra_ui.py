@@ -7,7 +7,7 @@ import threading
 import time
 import hashlib
 import colorsys
-from typing import Optional
+from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
@@ -213,7 +213,14 @@ def pastel_for_class(name: str) -> str:
 class FenraUI:
     """Simple UI for displaying output and listing AIs."""
 
-    def __init__(self, agents, inject_callback=None, send_callback=None, config_path="confs/globals.json"):
+    def __init__(
+        self,
+        agents,
+        inject_callback=None,
+        send_callback=None,
+        config_path="confs/globals.json",
+        on_apply_globals: Optional[Callable[[dict], None]] = None,
+    ):
         logger.debug(
             "Entering FenraUI.__init__ with agents=%s inject_callback=%s send_callback=%s",
             agents,
@@ -226,6 +233,7 @@ class FenraUI:
         self.inject_callback = inject_callback
         self.send_callback = send_callback
         self.config_path = config_path
+        self.on_apply_globals = on_apply_globals
 
         self.sent_messages = []
         self.log_messages = []
@@ -234,6 +242,23 @@ class FenraUI:
         self._group_contexts: dict[str, str] = {}
 
         self._model_cache: list[str] = []
+
+        try:
+            self._classes_map: dict[str, dict] = load_classes()
+        except FileNotFoundError:
+            self._classes_map = {}
+        try:
+            self._pdv_names: list[str] = sorted(load_pdvs().keys())
+        except FileNotFoundError:
+            self._pdv_names = []
+        # drop adjustments for PDVs that no longer exist
+        for c in self._classes_map.values():
+            if "pdv_adjustments" in c:
+                c["pdv_adjustments"] = [
+                    a for a in c.get("pdv_adjustments", []) if a.get("name") in self._pdv_names
+                ]
+        self._classes_dirty = False
+        self._loading_class = False
 
         self.global_config = load_globals()
 
@@ -264,6 +289,22 @@ class FenraUI:
         self.classes_tab = ttk.Frame(self.config_nb)
         self.config_nb.add(self.classes_tab, text="Agent Classes")
         self._build_classes_tab()
+        # persist and restore last selection
+        last = self._load_ui_state().get("last_class")
+        if last and last in self._classes_map:
+            items = list(self.cls_list.get(0, tk.END))
+            if last in items:
+                idx = items.index(last)
+                self.cls_list.selection_set(idx)
+        elif self.cls_list.size() > 0:
+            self.cls_list.selection_set(0)
+        if self.cls_list.size() > 0:
+            self._on_class_select()
+        # prompt on tab change if dirty
+        self.config_nb.bind("<<NotebookTabChanged>>", self._on_config_tab_changed)
+        # mark dirty on text edits
+        for st in (self.cls_sys, self.cls_pre, self.cls_post):
+            st.bind("<KeyRelease>", self._mark_classes_dirty_from_text)
 
         # Agents sub-tab
         self.agents_tab = ttk.Frame(self.config_nb)
@@ -271,25 +312,17 @@ class FenraUI:
         self._build_agents_tab()
 
         # ----- Live Metrics Tab -----
-        metrics_tab = ttk.Frame(self.notebook)
-        self.notebook.add(metrics_tab, text="Live Metrics")
-
+        self.metrics_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.metrics_tab, text="Live Metrics")
         self.metric_bars: dict[str, ttk.Progressbar] = {}
         self.metric_labels: dict[str, tk.Label] = {}
-        for name in self.pdv_values.keys():
-            frame = ttk.Frame(metrics_tab)
-            frame.pack(fill=tk.X, padx=4, pady=2)
-            ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
-            bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
-            bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            val = ttk.Label(frame, text="0.00")
-            val.pack(side=tk.LEFT, padx=4)
-            self.metric_bars[name] = bar
-            self.metric_labels[name] = val
-
+        # container for PDV rows so we can rebuild
+        self.metrics_rows = ttk.Frame(self.metrics_tab)
+        self.metrics_rows.pack(fill=tk.BOTH, expand=True)
+        self._rebuild_live_metrics_rows()
         limit = self.global_config.get("max_context_tokens", 8192)
         self.token_usage_var = tk.StringVar(value=f"Tokens: 0 / {limit}")
-        tk.Label(metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
+        tk.Label(self.metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
 
         # ----- Internal Thoughts Tab -----
         thoughts_tab = ttk.Frame(self.notebook)
@@ -715,6 +748,12 @@ class FenraUI:
             else f"Base Timeout: {int(self.base_timeout)}s"
         )
         self.timeout_label.config(text=txt)
+        # Live-apply to the running Conductor
+        try:
+            if self.on_apply_globals:
+                self.on_apply_globals(dict(self.global_config))
+        except Exception:
+            logger.exception("Failed to apply globals update callback")
 
     def _build_pdvs_tab(self) -> None:
         for child in self.pdvs_tab.winfo_children():
@@ -756,25 +795,603 @@ class FenraUI:
             }
         save_pdvs(data)
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        self._pdv_names = sorted(data.keys())
+        for cls in self._classes_map.values():
+            if "pdv_adjustments" in cls:
+                cls["pdv_adjustments"] = [
+                    a for a in cls["pdv_adjustments"] if a.get("name") in self._pdv_names
+                ]
+        self._refresh_class_pdv_choices()
+        # Rebuild rows to reflect added/removed PDVs, then update values
+        self._rebuild_live_metrics_rows()
         self.update_pdvs(self.pdv_values)
 
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
             child.destroy()
-        classes = load_classes()
-        text = scrolledtext.ScrolledText(self.classes_tab)
-        text.pack(fill=tk.BOTH, expand=True)
-        text.insert("1.0", json.dumps(list(classes.values()), indent=2))
-        btn = ttk.Frame(self.classes_tab)
-        btn.pack(fill=tk.X)
-        def _save():
+
+        container = ttk.Frame(self.classes_tab)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        # left column: list of classes and controls
+        left = ttk.Frame(container)
+        left.grid(row=0, column=0, sticky="ns")
+        left.rowconfigure(0, weight=1)
+
+        self.cls_list = tk.Listbox(left, exportselection=False)
+        self.cls_list.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.cls_list.bind("<<ListboxSelect>>", lambda _e: self._on_class_select())
+        for name in sorted(self._classes_map.keys()):
+            self.cls_list.insert(tk.END, name)
+
+        left_btns = ttk.Frame(left)
+        left_btns.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
+        ttk.Button(left_btns, text="Add", command=self._add_class).pack(side=tk.LEFT, padx=2)
+        ttk.Button(left_btns, text="Duplicate", command=self._dup_class).pack(side=tk.LEFT, padx=2)
+        ttk.Button(left_btns, text="Delete", command=self._del_class).pack(side=tk.LEFT, padx=2)
+        self.cls_save_btn = ttk.Button(left_btns, text="Save", command=self._save_classes, state="disabled")
+        self.cls_save_btn.pack(side=tk.RIGHT, padx=2)
+
+        # right column: form for class details
+        right = ttk.Frame(container)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+
+        form = ttk.Frame(right)
+        form.grid(row=0, column=0, sticky="nsew")
+        form.columnconfigure(1, weight=1)
+        for r in (4, 5, 6, 8):
+            form.rowconfigure(r, weight=1)
+
+        ttk.Label(form, text="Name").grid(row=0, column=0, sticky="w")
+        self.cls_name = tk.StringVar()
+        name_entry = ttk.Entry(form, textvariable=self.cls_name)
+        name_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        self.cls_name.trace_add("write", self._mark_classes_dirty)
+
+        ttk.Label(form, text="Triggering PDV").grid(row=1, column=0, sticky="w")
+        self.cls_trig = tk.StringVar()
+        self.cls_trig_cb = ttk.Combobox(
+            form, textvariable=self.cls_trig, values=self._pdv_names, state="readonly"
+        )
+        self.cls_trig_cb.grid(row=1, column=1, sticky="ew", padx=4)
+        self.cls_trig_cb.bind("<<ComboboxSelected>>", lambda _e: self._mark_classes_dirty())
+
+        ttk.Label(form, text="Model").grid(row=2, column=0, sticky="w")
+        self.cls_model = tk.StringVar()
+        models = ["<inherit global>"] + self._fetch_models()
+        self.cls_model_cb = ttk.Combobox(form, textvariable=self.cls_model, values=models, state="readonly")
+        model_row = ttk.Frame(form)
+        model_row.grid(row=2, column=1, sticky="ew", padx=4)
+        self.cls_model_cb.pack(in_=model_row, side=tk.LEFT, fill=tk.X, expand=True)
+        self.cls_model_cb.bind("<<ComboboxSelected>>", lambda _e: self._mark_classes_dirty())
+        ttk.Button(model_row, text="Refresh models", command=self._reload_model_choices).pack(side=tk.LEFT, padx=6)
+
+        ttk.Label(form, text="Temperature").grid(row=3, column=0, sticky="w")
+        self.cls_temp = tk.DoubleVar(value=1.0)
+        self.cls_temp_inherit = tk.BooleanVar(value=False)
+        temp_row = ttk.Frame(form)
+        temp_row.grid(row=3, column=1, sticky="ew", padx=4)
+        self.cls_temp_scale = ttk.Scale(temp_row, from_=0.0, to=2.0, orient=tk.HORIZONTAL, variable=self.cls_temp)
+        self.cls_temp_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.cls_temp_scale.bind("<ButtonPress-1>", self._enable_temp_override)
+        self.cls_temp_label = ttk.Label(temp_row, text="1.00")
+        self.cls_temp_label.pack(side=tk.LEFT, padx=6)
+        ttk.Button(temp_row, text="Reset to inherited", command=self._temp_reset_inherit).pack(side=tk.LEFT, padx=6)
+        self.cls_temp.trace_add("write", lambda *_: self._on_temp_changed())
+
+        def _mk_label(row: int, text: str) -> None:
+            ttk.Label(form, text=text).grid(row=row, column=0, sticky="nw")
+
+        def _mk_st(row: int) -> scrolledtext.ScrolledText:
+            st = scrolledtext.ScrolledText(form, height=4, wrap=tk.WORD)
+            st.grid(row=row, column=1, sticky="nsew", padx=4, pady=2)
+            return st
+
+        _mk_label(4, "System Prompt")
+        self.cls_sys = _mk_st(4)
+        ttk.Button(form, text="Reset to inherited", command=lambda: self._reset_text(self.cls_sys)).grid(
+            row=4, column=2, sticky="w"
+        )
+        _mk_label(5, "Pre Context")
+        self.cls_pre = _mk_st(5)
+        ttk.Button(form, text="Reset to inherited", command=lambda: self._reset_text(self.cls_pre)).grid(
+            row=5, column=2, sticky="w"
+        )
+        _mk_label(6, "Post Context")
+        self.cls_post = _mk_st(6)
+        ttk.Button(form, text="Reset to inherited", command=lambda: self._reset_text(self.cls_post)).grid(
+            row=6, column=2, sticky="w"
+        )
+
+        ttk.Label(form, text="Flags").grid(row=7, column=0, sticky="nw")
+        flags = ttk.Frame(form)
+        flags.grid(row=7, column=1, sticky="w", padx=4, pady=2)
+        self.cls_readq = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Reads message queue",
+            variable=self.cls_readq,
+            command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        self.cls_outdisc = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Outputs to Discord",
+            variable=self.cls_outdisc,
+            command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        self.cls_arch = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Archivist",
+            variable=self.cls_arch,
+            command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT)
+
+        ttk.Label(form, text="PDV Adjustments").grid(row=8, column=0, sticky="nw")
+        scf = ttk.Frame(form)
+        scf.grid(row=8, column=1, sticky="nsew", padx=4, pady=2)
+        canvas = tk.Canvas(scf, highlightthickness=0)
+        vsb = ttk.Scrollbar(scf, orient="vertical", command=canvas.yview)
+        self.pdv_rows_container = ttk.Frame(canvas)
+        self.pdv_rows_container.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        window_id = canvas.create_window((0, 0), window=self.pdv_rows_container, anchor="nw")
+
+        def _resize(_event) -> None:
+            canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+        canvas.bind("<Configure>", _resize)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._pdv_row_widgets: list[tuple[ttk.Combobox, tk.DoubleVar, ttk.Scale, ttk.Button]] = []
+        ttk.Button(
+            form,
+            text="Add PDV Adjustment",
+            command=lambda: self._pdv_adj_add_row(None, 0.0),
+        ).grid(row=9, column=1, sticky="w", padx=4, pady=(0, 4))
+
+        self._clear_class_form()
+
+    def _clear_class_form(self) -> None:
+        self._loading_class = True
+        try:
+            self.cls_name.set("")
+            default_trig = self._pdv_names[0] if self._pdv_names else ""
+            self.cls_trig.set(default_trig)
+            self.cls_model.set("<inherit global>")
+            self.cls_temp.set(1.0)
+            self.cls_temp_inherit.set(True)
+            self._clear_pdv_rows()
+            for widget in (self.cls_sys, self.cls_pre, self.cls_post):
+                widget.delete("1.0", tk.END)
+            self.cls_readq.set(False)
+            self.cls_outdisc.set(False)
+            self.cls_arch.set(False)
+        finally:
+            self._loading_class = False
+        self._temp_apply_inherit_state()
+        self._set_classes_dirty(False)
+
+    def _clear_pdv_rows(self) -> None:
+        for cb, var, sc, rm in list(self._pdv_row_widgets):
             try:
-                data = json.loads(text.get("1.0", tk.END))
-                cls_map = {c["name"]: c for c in data}
-                save_classes(cls_map)
+                row = cb.master
             except Exception:
-                messagebox.showerror("Error", "Invalid JSON")
-        ttk.Button(btn, text="Save", command=_save).pack(side=tk.RIGHT, padx=2)
+                row = None
+            if row is not None and row.winfo_exists():
+                row.destroy()
+        self._pdv_row_widgets.clear()
+
+    def _mark_classes_dirty(self, *_args, **_kwargs) -> None:
+        if self._loading_class:
+            return
+        self._set_classes_dirty(True)
+
+    def _mark_classes_dirty_from_text(self, _event=None) -> None:
+        self._mark_classes_dirty()
+
+    def _on_class_select(self) -> None:
+        # warn if dirty before navigating
+        if not self._confirm_discard_if_dirty():
+            return
+        sel = self.cls_list.curselection()
+        if not sel:
+            self._clear_class_form()
+            return
+        name = self.cls_list.get(sel[0])
+        c = self._classes_map.get(name, {})
+        self._loading_class = True
+        try:
+            self.cls_name.set(c.get("name", name))
+            trig = c.get("triggering_pdv", "")
+            if trig and trig not in self._pdv_names:
+                trig = ""
+            if not trig and self._pdv_names:
+                trig = self._pdv_names[0]
+            self.cls_trig.set(trig)
+            model = c.get("model") or "<inherit global>"
+            values = list(self.cls_model_cb["values"])
+            if model not in values:
+                values.append(model)
+                self.cls_model_cb.configure(values=values)
+            self.cls_model.set(model)
+            t = c.get("temperature", None)
+            if t is None:
+                self.cls_temp_inherit.set(True)
+                self.cls_temp.set(1.0)
+            else:
+                self.cls_temp_inherit.set(False)
+                try:
+                    self.cls_temp.set(float(t))
+                except Exception:
+                    self.cls_temp.set(1.0)
+            for widget, key in (
+                (self.cls_sys, "system_prompt"),
+                (self.cls_pre, "pre_context_message"),
+                (self.cls_post, "post_context_message"),
+            ):
+                widget.delete("1.0", tk.END)
+                val = c.get(key)
+                if val:
+                    widget.insert("1.0", val)
+            self.cls_readq.set(bool(c.get("reads_message_queue")))
+            self.cls_outdisc.set(bool(c.get("outputs_to_discord")))
+            self.cls_arch.set(bool(c.get("is_archivist")))
+            self._clear_pdv_rows()
+            for adj in c.get("pdv_adjustments", []):
+                if adj.get("name") in self._pdv_names:
+                    try:
+                        delta = float(adj.get("delta", adj.get("delta_pct", 0.0)))
+                    except Exception:
+                        delta = 0.0
+                    self._pdv_adj_add_row(adj.get("name"), delta)
+        finally:
+            self._loading_class = False
+        self._temp_apply_inherit_state()
+        self._set_classes_dirty(False)
+        self._save_ui_state({"last_class": name})
+
+    def _add_class(self) -> None:
+        if not self._confirm_discard_if_dirty():
+            return
+        base = "NewClass"
+        idx = 1
+        name = base
+        while name in self._classes_map:
+            idx += 1
+            name = f"{base}{idx}"
+        new_cls = {
+            "name": name,
+            "triggering_pdv": self._pdv_names[0] if self._pdv_names else "",
+            "reads_message_queue": False,
+            "outputs_to_discord": False,
+            "is_archivist": False,
+        }
+        self._classes_map[name] = new_cls
+        self.cls_list.insert(tk.END, name)
+        self.cls_list.selection_clear(0, tk.END)
+        self.cls_list.selection_set(tk.END)
+        self._on_class_select()
+        self._set_classes_dirty(True)
+
+    def _dup_class(self) -> None:
+        if not self._confirm_discard_if_dirty():
+            return
+        sel = self.cls_list.curselection()
+        if not sel:
+            return
+        src = self.cls_list.get(sel[0])
+        c = json.loads(json.dumps(self._classes_map.get(src, {})))
+        base = f"{src}_copy"
+        i = 1
+        name = base
+        while name in self._classes_map:
+            i += 1
+            name = f"{base}{i}"
+        c["name"] = name
+        self._classes_map[name] = c
+        self.cls_list.insert(tk.END, name)
+        self.cls_list.selection_clear(0, tk.END)
+        self.cls_list.selection_set(tk.END)
+        self._on_class_select()
+        self._set_classes_dirty(True)
+
+    def _del_class(self) -> None:
+        if not self._confirm_discard_if_dirty():
+            return
+        sel = self.cls_list.curselection()
+        if not sel:
+            return
+        name = self.cls_list.get(sel[0])
+        if not messagebox.askyesno("Delete Class", f"Delete agent class '{name}'?"):
+            return
+        self.cls_list.delete(sel[0])
+        self._classes_map.pop(name, None)
+        if self.cls_list.size() > 0:
+            new_idx = min(sel[0], self.cls_list.size() - 1)
+            self.cls_list.selection_set(new_idx)
+            self._on_class_select()
+        else:
+            self._clear_class_form()
+        self._set_classes_dirty(True)
+
+    def _pdv_adj_add_row(self, name: Optional[str], delta: float) -> None:
+        existing = {cb.get() for cb, *_ in self._pdv_row_widgets if cb.winfo_exists()}
+        choices = [p for p in self._pdv_names if p not in existing or p == name]
+        if not choices:
+            messagebox.showinfo("PDVs", "All PDVs already added.")
+            return
+        row = ttk.Frame(self.pdv_rows_container)
+        row.pack(fill=tk.X, pady=2)
+        cb = ttk.Combobox(row, values=choices, state="readonly")
+        cb.set(name or choices[0])
+        cb.pack(side=tk.LEFT, padx=4)
+        cb.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: (self._refresh_class_pdv_choices(), self._mark_classes_dirty()),
+        )
+        val = max(0.0, min(1.0, float(delta))) if isinstance(delta, (int, float)) else 0.0
+        var = tk.DoubleVar(value=val)
+        sc = ttk.Scale(row, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=var)
+        sc.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+        lbl = ttk.Label(row, text=f"{var.get():.2f}")
+        lbl.pack(side=tk.LEFT, padx=4)
+
+        def _on_var_change(*_args) -> None:
+            lbl.config(text=f"{var.get():.2f}")
+            self._mark_classes_dirty()
+
+        var.trace_add("write", _on_var_change)
+        rm = ttk.Button(row, text="Remove")
+
+        def _remove_row() -> None:
+            if row.winfo_exists():
+                row.destroy()
+            try:
+                self._pdv_row_widgets.remove((cb, var, sc, rm))
+            except ValueError:
+                pass
+            self._mark_classes_dirty()
+
+        rm.configure(command=_remove_row)
+        rm.pack(side=tk.LEFT, padx=4)
+        self._pdv_row_widgets.append((cb, var, sc, rm))
+        self._refresh_class_pdv_choices()
+        self._mark_classes_dirty()
+
+    def _collect_form(self) -> dict:
+        c = {
+            "name": self.cls_name.get().strip(),
+            "triggering_pdv": self.cls_trig.get().strip(),
+            "model": (None if self.cls_model.get() == "<inherit global>" else (self.cls_model.get().strip() or None)),
+            "temperature": (
+                None
+                if self.cls_temp_inherit.get()
+                else round(min(max(float(self.cls_temp.get()), 0.0), 2.0), 2)
+            ),
+            "reads_message_queue": bool(self.cls_readq.get()),
+            "outputs_to_discord": bool(self.cls_outdisc.get()),
+            "is_archivist": bool(self.cls_arch.get()),
+        }
+        sys_txt = self.cls_sys.get("1.0", tk.END).strip()
+        pre_txt = self.cls_pre.get("1.0", tk.END).strip()
+        post_txt = self.cls_post.get("1.0", tk.END).strip()
+        if sys_txt:
+            c["system_prompt"] = sys_txt
+        if pre_txt:
+            c["pre_context_message"] = pre_txt
+        if post_txt:
+            c["post_context_message"] = post_txt
+        adjs: list[dict[str, float]] = []
+        for cb, var, _, _ in self._pdv_row_widgets:
+            if not cb.winfo_exists():
+                continue
+            n = cb.get().strip()
+            if not n:
+                continue
+            adjs.append({"name": n, "delta": float(max(0.0, min(1.0, var.get())))})
+        if adjs:
+            c["pdv_adjustments"] = adjs
+        return c
+
+    def _apply_form_to_current(self) -> Optional[str]:
+        sel = self.cls_list.curselection()
+        if not sel:
+            return None
+        idx = sel[0]
+        old_name = self.cls_list.get(idx)
+        c = self._collect_form()
+        name = c.get("name") or old_name
+        if not name:
+            messagebox.showerror("Classes", "Name is required.")
+            return None
+        if not c.get("triggering_pdv"):
+            messagebox.showerror("Classes", "Triggering PDV is required.")
+            return None
+        if name != old_name and name in self._classes_map:
+            messagebox.showerror("Classes", f"Name '{name}' already exists.")
+            return None
+        self._classes_map.pop(old_name, None)
+        self._classes_map[name] = c
+        self.cls_list.delete(idx)
+        self.cls_list.insert(idx, name)
+        self.cls_list.selection_set(idx)
+        self._set_classes_dirty(True)
+        return name
+
+    def _refresh_class_pdv_choices(self) -> None:
+        if hasattr(self, "cls_trig_cb"):
+            self.cls_trig_cb.configure(values=self._pdv_names)
+            if self.cls_trig.get() not in self._pdv_names:
+                self.cls_trig.set(self._pdv_names[0] if self._pdv_names else "")
+        removed = False
+        for cb, var, sc, rm in list(self._pdv_row_widgets):
+            if not cb.winfo_exists():
+                continue
+            current = cb.get()
+            others = {
+                other_cb.get()
+                for other_cb, *_ in self._pdv_row_widgets
+                if other_cb.winfo_exists() and other_cb is not cb
+            }
+            choices = [p for p in self._pdv_names if p not in others or p == current]
+            cb.configure(values=choices)
+            if current not in choices:
+                if choices:
+                    cb.set(choices[0])
+                else:
+                    parent = cb.master
+                    if parent.winfo_exists():
+                        parent.destroy()
+                    try:
+                        self._pdv_row_widgets.remove((cb, var, sc, rm))
+                    except ValueError:
+                        pass
+                    removed = True
+        if removed and not self._loading_class:
+            self._mark_classes_dirty()
+
+    def _save_classes(self) -> None:
+        cur = self._apply_form_to_current()
+        if cur is None:
+            return
+        seen = set()
+        for cname, c in self._classes_map.items():
+            n = (c.get("name") or "").strip()
+            tpdv = (c.get("triggering_pdv") or "").strip()
+            if not n or not tpdv:
+                messagebox.showerror("Agent Classes", f"Class '{cname}' is missing required fields.")
+                return
+            if n in seen:
+                messagebox.showerror("Agent Classes", f"Duplicate class name '{n}'.")
+                return
+            seen.add(n)
+            c["name"] = n
+            if not c.get("model"):
+                c["model"] = None
+            if "temperature" in c and c["temperature"] is None:
+                pass
+            elif "temperature" in c:
+                try:
+                    c["temperature"] = round(min(max(float(c["temperature"]), 0.0), 2.0), 2)
+                except Exception:
+                    c["temperature"] = None
+            if "pdv_adjustments" in c:
+                c["pdv_adjustments"] = [
+                    a for a in c["pdv_adjustments"] if a.get("name") in self._pdv_names
+                ]
+        save_classes(self._classes_map)
+        self._set_classes_dirty(False)
+        messagebox.showinfo("Agent Classes", "Saved.")
+        self._save_ui_state({"last_class": cur})
+
+    # ----- helpers for classes editor -----
+    def _set_classes_dirty(self, dirty: bool) -> None:
+        self._classes_dirty = bool(dirty)
+        try:
+            if self._classes_dirty:
+                self.cls_save_btn.state(["!disabled"])
+            else:
+                self.cls_save_btn.state(["disabled"])
+        except Exception:
+            pass
+
+    def _confirm_discard_if_dirty(self) -> bool:
+        if not getattr(self, "_classes_dirty", False):
+            return True
+        res = messagebox.askyesno("Unsaved changes", "Save changes to Agent Classes before leaving?")
+        if res:
+            self._save_classes()
+            return not self._classes_dirty
+        self._set_classes_dirty(False)
+        return True
+
+    def _on_config_tab_changed(self, _e=None) -> None:
+        selected = self.config_nb.select()
+        if str(selected) != str(self.classes_tab):
+            self._confirm_discard_if_dirty()
+
+    def _on_temp_changed(self) -> None:
+        try:
+            val = float(self.cls_temp.get())
+        except Exception:
+            val = 0.0
+        if self.cls_temp_inherit.get():
+            self.cls_temp_label.config(text="(inherit)")
+        else:
+            self.cls_temp_label.config(text=f"{val:.2f}")
+            if not self._loading_class:
+                self._set_classes_dirty(True)
+
+    def _temp_reset_inherit(self) -> None:
+        self.cls_temp_inherit.set(True)
+        self._temp_apply_inherit_state()
+        if not self._loading_class:
+            self._set_classes_dirty(True)
+
+    def _temp_apply_inherit_state(self) -> None:
+        if self.cls_temp_inherit.get():
+            self.cls_temp_scale.state(["disabled"])
+            self.cls_temp_label.config(text="(inherit)")
+        else:
+            self.cls_temp_scale.state(["!disabled"])
+            try:
+                val = float(self.cls_temp.get())
+            except Exception:
+                val = 0.0
+            self.cls_temp_label.config(text=f"{val:.2f}")
+
+    def _enable_temp_override(self, *_event) -> None:
+        if self.cls_temp_inherit.get():
+            self.cls_temp_inherit.set(False)
+            self._temp_apply_inherit_state()
+            if not self._loading_class:
+                self._set_classes_dirty(True)
+
+    def _reset_text(self, st: scrolledtext.ScrolledText) -> None:
+        st.delete("1.0", tk.END)
+        if not self._loading_class:
+            self._set_classes_dirty(True)
+
+    def _reload_model_choices(self) -> None:
+        try:
+            self.cls_model_cb["values"] = ["<inherit global>"] + self._fetch_models()
+        except Exception:
+            pass
+        if not self._loading_class:
+            self._set_classes_dirty(True)
+
+    def _save_ui_state(self, data: dict) -> None:
+        try:
+            os.makedirs(CHATLOG_DIR, exist_ok=True)
+            path = os.path.join(CHATLOG_DIR, "ui_state.json")
+            cur = {}
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    cur = json.load(f) or {}
+            cur.update(data or {})
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cur, f)
+        except Exception:
+            pass
+
+    def _load_ui_state(self) -> dict:
+        try:
+            path = os.path.join(CHATLOG_DIR, "ui_state.json")
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f) or {}
+        except Exception:
+            pass
+        return {}
 
     def _build_agents_tab(self) -> None:
         for child in self.agents_tab.winfo_children():
@@ -1027,6 +1644,12 @@ class FenraUI:
                 else f"Base Timeout: {int(self.base_timeout)}s"
             )
             self.timeout_label.config(text=txt)
+            # Live-apply here as well
+            try:
+                if self.on_apply_globals:
+                    self.on_apply_globals(dict(self.global_config))
+            except Exception:
+                logger.exception("Failed to apply globals update callback (dialog)")
             dlg.grab_release()
             dlg.destroy()
 
@@ -1044,6 +1667,10 @@ class FenraUI:
                 ) as f:
                     pdv_vals = json.load(f)
                 if isinstance(pdv_vals, dict):
+                    # If new PDVs appear, rebuild rows first
+                    if set(pdv_vals.keys()) != set(self.metric_bars.keys()):
+                        self.pdv_values = dict(pdv_vals)
+                        self._rebuild_live_metrics_rows()
                     self.update_pdvs(pdv_vals)
             except Exception:
                 pass
@@ -1385,3 +2012,23 @@ class FenraUI:
                 loop.call_soon_threadsafe(loop.stop)
             t.join()
         logger.debug("Exiting start")
+    def _rebuild_live_metrics_rows(self) -> None:
+        """Recreate the PDV bars based on current self.pdv_values."""
+
+        def _do():
+            for child in self.metrics_rows.winfo_children():
+                child.destroy()
+            self.metric_bars.clear()
+            self.metric_labels.clear()
+            for name in self.pdv_values.keys():
+                frame = ttk.Frame(self.metrics_rows)
+                frame.pack(fill=tk.X, padx=4, pady=2)
+                ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
+                bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
+                bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+                val = ttk.Label(frame, text="0.00")
+                val.pack(side=tk.LEFT, padx=4)
+                self.metric_bars[name] = bar
+                self.metric_labels[name] = val
+
+        self._threadsafe(_do)
