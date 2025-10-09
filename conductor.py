@@ -56,6 +56,29 @@ UI: Optional[FenraUI] = None
 # Queue deprecated. Kept for compatibility but unused.
 _INCOMING_QUEUE: List[Dict[str, object]] = []
 
+# ----------------------------------------------------------------------------
+# Run control (Start/Stop)
+# ----------------------------------------------------------------------------
+_RUN_EVENT = threading.Event()
+
+
+def start_processing() -> None:
+    """Enable the agent loop to run."""
+
+    _RUN_EVENT.set()
+
+
+def stop_processing() -> None:
+    """Pause the agent loop."""
+
+    _RUN_EVENT.clear()
+
+
+def is_processing() -> bool:
+    """Return True if processing is currently enabled."""
+
+    return _RUN_EVENT.is_set()
+
 
 def _queue_empty() -> bool:
     return len(_INCOMING_QUEUE) == 0
@@ -687,6 +710,10 @@ def run_loop(steps: Optional[int] = None) -> None:
     hist: List[str] = [cur]
     count = 0
     while steps is None or count < steps:
+        # Respect Start/Stop toggle: idle until started.
+        if not _RUN_EVENT.is_set():
+            time.sleep(0.1)
+            continue
         if UI is not None:
             try:
                 UI.set_active_agent(cur)
@@ -767,4 +794,6 @@ if __name__ == "__main__":
         finally:
             UI = None
     else:
+        # Non-UI mode should behave as before: start immediately.
+        start_processing()
         run_loop(steps)
