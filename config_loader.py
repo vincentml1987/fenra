@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, List
+from typing import Dict
 
 from config import CONF_DIR
 
@@ -79,9 +79,43 @@ def load_agents(path: str = _conf_path('agents.json')) -> list[dict]:
     for idx, a in enumerate(agents):
         if not isinstance(a, dict) or 'name' not in a or 'agent_class' not in a:
             raise ValueError(f"agents[{idx}] missing name or agent_class")
-        if not a.get('groups_in') or not a.get('groups_out'):
-            raise ValueError(f"agents[{idx}] groups_in/out required")
+        if not isinstance(a.get('groups_in'), list):
+            a['groups_in'] = []
+        if not isinstance(a.get('groups_out'), list):
+            a['groups_out'] = []
     return list(agents)
+
+
+def try_load_globals(path: str = _conf_path('globals.json')) -> dict:
+    try:
+        return load_globals(path)
+    except Exception:
+        return {}
+
+
+def try_load_pdvs(path: str = _conf_path('pdvs.json')) -> Dict[str, dict]:
+    try:
+        return load_pdvs(path)
+    except Exception:
+        return {}
+
+
+def try_load_classes(path: str = _conf_path('agent_classes.json')) -> Dict[str, dict]:
+    try:
+        return load_classes(path)
+    except Exception:
+        return {}
+
+
+def try_load_agents(path: str = _conf_path('agents.json')) -> list[dict]:
+    try:
+        agents = load_agents(path)
+    except Exception:
+        return []
+    for agent in agents:
+        agent.setdefault('groups_in', [])
+        agent.setdefault('groups_out', [])
+    return agents
 
 def load_state(path: str = _conf_path('state.json')) -> dict:
     try:
