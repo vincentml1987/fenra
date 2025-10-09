@@ -262,6 +262,10 @@ class FenraUI:
         self._is_running = False
         self._conf_dir_path = Path(CONF_DIR).resolve()
         self._conf_dir = str(self._conf_dir_path)
+        # Pre-create Live Metrics containers so early rebuilds are safe
+        self.metric_bars: dict[str, ttk.Progressbar] = {}
+        self.metric_labels: dict[str, tk.Label] = {}
+        self.metrics_rows: ttk.Frame | None = None
         self._conf_presence: dict[str, bool] = {}
         self._config_watch_stop = threading.Event()
         self._config_watch_thread: threading.Thread | None = None
@@ -395,8 +399,6 @@ class FenraUI:
         # ----- Live Metrics Tab -----
         self.metrics_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.metrics_tab, text="Live Metrics")
-        self.metric_bars: dict[str, ttk.Progressbar] = {}
-        self.metric_labels: dict[str, tk.Label] = {}
         # container for PDV rows so we can rebuild
         self.metrics_rows = ttk.Frame(self.metrics_tab)
         self.metrics_rows.pack(fill=tk.BOTH, expand=True)
@@ -1056,7 +1058,8 @@ class FenraUI:
             self.pdv_values = {}
             self._pdv_names = []
             self._missing_conf_panel(self.pdvs_tab, "pdvs.json")
-            self._rebuild_live_metrics_rows()
+            if getattr(self, "metrics_rows", None):
+                self._rebuild_live_metrics_rows()
             return
         try:
             pdvs = load_pdvs()
@@ -1076,7 +1079,8 @@ class FenraUI:
             command=lambda: self._add_pdv_row(frame, "new", {"description": "", "value": 0.0}),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn, text="Save", command=self._save_pdvs).pack(side=tk.LEFT, padx=2)
-        self._rebuild_live_metrics_rows()
+        if getattr(self, "metrics_rows", None):
+            self._rebuild_live_metrics_rows()
         self._refresh_class_pdv_choices()
 
     def _add_pdv_row(self, parent, name, cfg):
@@ -3038,6 +3042,8 @@ class FenraUI:
         """Recreate the PDV bars based on current self.pdv_values."""
 
         def _do():
+            if not getattr(self, "metrics_rows", None):
+                return
             for child in self.metrics_rows.winfo_children():
                 child.destroy()
             self.metric_bars.clear()
