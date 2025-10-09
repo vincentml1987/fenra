@@ -57,6 +57,9 @@ AGENTS_BY_GROUP_IN: Dict[str, set] = {}
 STATE: Dict[str, object] = {}
 CONTEXT: str = ""
 
+DEFER_CONFIG_LOADING: bool = False
+_CONFIGS_LOADED: bool = False
+
 UI: Optional[FenraUI] = None
 
 # Queue deprecated. Kept for compatibility but unused.
@@ -68,9 +71,30 @@ _INCOMING_QUEUE: List[Dict[str, object]] = []
 _RUN_EVENT = threading.Event()
 
 
+def _reset_config_state() -> None:
+    """Reset in-memory config structures to harmless defaults."""
+
+    global GLOBALS, PDV_META, PDVS, CLASSES, AGENTS, AGENTS_BY_NAME
+    global AGENTS_BY_GROUP_IN, STATE, CONTEXT, MODEL, _CONFIGS_LOADED
+
+    GLOBALS = {}
+    PDV_META = {}
+    PDVS = {}
+    CLASSES = {}
+    AGENTS = []
+    AGENTS_BY_NAME = {}
+    AGENTS_BY_GROUP_IN = {}
+    STATE = {}
+    CONTEXT = ""
+    MODEL = None
+    _CONFIGS_LOADED = False
+    _RUN_EVENT.clear()
+
+
 def start_processing() -> None:
     """Enable the agent loop to run."""
 
+    ensure_configs_loaded()
     logger.info("[RunControl] START pressed; enabling processing")
     _RUN_EVENT.set()
 
@@ -536,8 +560,9 @@ def reload_globals_from_disk() -> None:
     apply_globals_update(cfg)
 
 
-def setup() -> None:
-    load_all_configs()
+def _initialize_runtime_from_configs() -> None:
+    """Finalize runtime initialization once configs are available."""
+
     if GLOBALS.get("model") in (None, ""):
         raise RuntimeError(
             "Global model is required. Set it in confs/globals.json or via the UI."
@@ -546,14 +571,17 @@ def setup() -> None:
         raise RuntimeError(
             "Global temperature is required. Set it in confs/globals.json or via the UI."
         )
+
     level = parse_log_level(GLOBALS.get("debug_level", "INFO"))
     init_global_logging(level)
+
     models = set()
     for agent in AGENTS:
         model, _, _, _, _ = effective_params(agent)
         if model:
             models.add(model)
     ensure_models_available(list(models))
+
     global MODEL, CONTEXT
     base_model = GLOBALS.get("model") or next(iter(models))
     wd = GLOBALS.get("watchdog_timeout", 900)
@@ -576,6 +604,30 @@ def setup() -> None:
             CONTEXT = f.read()
     except FileNotFoundError:
         CONTEXT = ""
+
+
+def ensure_configs_loaded() -> None:
+    """Load configuration files on demand when deferred."""
+
+    global _CONFIGS_LOADED
+
+    if _CONFIGS_LOADED:
+        return
+
+    load_all_configs()
+    _initialize_runtime_from_configs()
+    _CONFIGS_LOADED = True
+
+
+def setup(lazy_configs: bool = False) -> None:
+    global DEFER_CONFIG_LOADING
+
+    DEFER_CONFIG_LOADING = bool(lazy_configs)
+    if DEFER_CONFIG_LOADING:
+        _reset_config_state()
+        return
+
+    ensure_configs_loaded()
 
 
 def step_agent(agent_name: str) -> Optional[str]:
@@ -765,7 +817,7 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=None, help="Run N steps then exit")
     parser.add_argument("--ui", action="store_true", help="Launch Tk UI")
     args = parser.parse_args()
-    setup()
+    setup(lazy_configs=args.ui)
     steps = 1 if args.once else args.steps
     if args.ui:
         try:

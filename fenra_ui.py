@@ -564,6 +564,18 @@ class FenraUI:
                 self._apply_required_configs_state(True, [])
             else:
                 messagebox.showerror("Run Control Error", "Conductor run control not available.")
+        except FileNotFoundError:
+            all_present, missing = check_required_configs(self._conf_dir)
+            self._run_btn_text.set("Start")
+            self._run_status.set("Paused")
+            self._is_running = False
+            self._missing_configs = missing
+            self._apply_required_configs_state(all_present, missing)
+            messagebox.showwarning(
+                "Missing Config Files",
+                "Cannot start until these configs exist in"
+                f" {CONF_DIR}/: {', '.join(missing)}",
+            )
         except Exception as e:
             messagebox.showerror("Run Control Error", str(e))
 
