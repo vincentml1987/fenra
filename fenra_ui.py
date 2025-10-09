@@ -15,6 +15,8 @@ from tkinter import ttk
 import discord
 import requests
 
+from config import CONF_DIR
+from config.checks import check_required_configs
 from config_loader import (
     load_globals,
     load_pdvs,
@@ -256,6 +258,13 @@ class FenraUI:
         self._group_contexts: dict[str, str] = {}
 
         self._model_cache: list[str] = []
+        self._is_running = False
+        self._conf_dir = os.path.abspath(CONF_DIR)
+        self._config_watch_stop = threading.Event()
+        self._config_watch_thread: threading.Thread | None = None
+        self._config_observer = None
+        self._config_update_pending = False
+        self._missing_configs: list[str] = []
 
         try:
             self._classes_map: dict[str, dict] = load_classes()
@@ -274,9 +283,21 @@ class FenraUI:
         self._classes_dirty = False
         self._loading_class = False
 
-        self.global_config = load_globals()
+        try:
+            self.global_config = load_globals()
+        except FileNotFoundError:
+            self.global_config = {}
+        except ValueError as exc:
+            messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
+            self.global_config = {}
 
-        pdv_cfg = load_pdvs()
+        try:
+            pdv_cfg = load_pdvs()
+        except FileNotFoundError:
+            pdv_cfg = {}
+        except ValueError as exc:
+            messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
+            pdv_cfg = {}
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
 
         # ── Run Control Toolbar ───────────────────────────────────────────────
@@ -284,10 +305,25 @@ class FenraUI:
         toolbar.pack(fill=tk.X, pady=(4, 0))
         self._run_btn_text = tk.StringVar(value="Start")
         self._run_status = tk.StringVar(value="Idle")
-        ttk.Button(toolbar, textvariable=self._run_btn_text, command=self._toggle_run).pack(
-            side=tk.LEFT, padx=4
+        run_controls = ttk.Frame(toolbar)
+        run_controls.pack(side=tk.LEFT, padx=4)
+        self._run_button = ttk.Button(
+            run_controls, textvariable=self._run_btn_text, command=self._toggle_run
+        )
+        self._run_button.pack()
+        self._run_hint_var = tk.StringVar(value="")
+        self._run_hint_label = ttk.Label(
+            run_controls,
+            textvariable=self._run_hint_var,
+            foreground="#b94a48",
+            wraplength=220,
+            justify=tk.LEFT,
         )
         ttk.Label(toolbar, textvariable=self._run_status).pack(side=tk.LEFT, padx=8)
+        self._config_refresh_btn = ttk.Button(
+            toolbar, text="Refresh configs", command=self._manual_refresh_required_configs
+        )
+        self._config_refresh_btn.pack(side=tk.LEFT, padx=4)
 
         # Try to reflect initial state from conductor (if available)
         try:
@@ -295,6 +331,7 @@ class FenraUI:
             if hasattr(c, "is_processing") and c.is_processing():
                 self._run_btn_text.set("Stop")
                 self._run_status.set("Running")
+                self._is_running = True
         except Exception:
             pass
 
@@ -475,10 +512,26 @@ class FenraUI:
         self.update_pdvs(self.pdv_values)
         self._start_metrics_poll()
         self._ensure_globals_set()
+
+        os.makedirs(self._conf_dir, exist_ok=True)
+        self._start_config_watcher()
+        self._update_required_configs_state()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         logger.debug("Exiting FenraUI.__init__")
 
     def _toggle_run(self):
         """Start/Stop the agent processing loop in conductor."""
+
+        if not self._is_running:
+            all_present, missing = check_required_configs(self._conf_dir)
+            if not all_present:
+                self._apply_required_configs_state(all_present, missing)
+                messagebox.showwarning(
+                    "Missing Config Files",
+                    "Cannot start until these configs exist in"
+                    f" {CONF_DIR}/: {', '.join(missing)}",
+                )
+                return
 
         try:
             c = _get_conductor()
@@ -500,14 +553,132 @@ class FenraUI:
                 c.stop_processing()
                 self._run_btn_text.set("Start")
                 self._run_status.set("Paused")
+                self._is_running = False
+                self._update_required_configs_state()
             elif not running and hasattr(c, "start_processing"):
                 c.start_processing()
                 self._run_btn_text.set("Stop")
                 self._run_status.set("Running")
+                self._is_running = True
+                self._missing_configs = []
+                self._apply_required_configs_state(True, [])
             else:
                 messagebox.showerror("Run Control Error", "Conductor run control not available.")
         except Exception as e:
             messagebox.showerror("Run Control Error", str(e))
+
+
+    def _manual_refresh_required_configs(self) -> None:
+        logger.debug("Manual refresh of required configs requested")
+        self._update_required_configs_state()
+
+    def _schedule_required_configs_update(self) -> None:
+        if self._config_update_pending:
+            return
+
+        def _run():
+            self._config_update_pending = False
+            self._update_required_configs_state()
+
+        self._config_update_pending = True
+        try:
+            self.root.after(150, _run)
+        except tk.TclError:
+            self._config_update_pending = False
+
+    def _update_required_configs_state(self) -> None:
+        all_present, missing = check_required_configs(self._conf_dir)
+        self._missing_configs = missing
+        self._apply_required_configs_state(all_present, missing)
+
+    def _apply_required_configs_state(self, all_present: bool, missing: list[str]) -> None:
+        hint = ""
+        if not all_present:
+            hint = f"Missing config files in {CONF_DIR}/: {', '.join(missing)}"
+        self._show_run_hint(hint)
+        if all_present or self._is_running:
+            self._run_button.state(["!disabled"])
+        else:
+            self._run_button.state(["disabled"])
+
+    def _show_run_hint(self, text: str) -> None:
+        self._run_hint_var.set(text)
+        if text:
+            if not self._run_hint_label.winfo_ismapped():
+                self._run_hint_label.pack(fill=tk.X, pady=(2, 0))
+        else:
+            if self._run_hint_label.winfo_ismapped():
+                self._run_hint_label.pack_forget()
+
+    def _start_config_watcher(self) -> None:
+        logger.debug("Starting configuration watcher for %s", self._conf_dir)
+        self._config_watch_stop.clear()
+        try:
+            from watchdog.events import FileSystemEventHandler  # type: ignore
+            from watchdog.observers import Observer  # type: ignore
+        except Exception:
+            logger.debug("watchdog not available; falling back to polling")
+            self._config_watch_thread = threading.Thread(
+                target=self._poll_config_dir, args=(self._conf_dir,), daemon=True
+            )
+            self._config_watch_thread.start()
+            return
+
+        class _ConfigHandler(FileSystemEventHandler):
+            def __init__(self, outer: "FenraUI") -> None:
+                self._outer = outer
+
+            def on_any_event(self, event) -> None:  # type: ignore[override]
+                if getattr(event, "is_directory", False):
+                    return
+                self._outer._schedule_required_configs_update()
+
+        observer = Observer()
+        try:
+            observer.schedule(_ConfigHandler(self), self._conf_dir, recursive=False)
+            observer.start()
+            self._config_observer = observer
+        except Exception as exc:
+            logger.warning("Failed to start watchdog observer: %s", exc)
+            try:
+                observer.stop()
+                observer.join(timeout=1)
+            except Exception:
+                pass
+            self._config_observer = None
+            self._config_watch_thread = threading.Thread(
+                target=self._poll_config_dir, args=(self._conf_dir,), daemon=True
+            )
+            self._config_watch_thread.start()
+
+    def _poll_config_dir(self, conf_dir: str) -> None:
+        last_missing: tuple[str, ...] | None = None
+        while not self._config_watch_stop.wait(1.0):
+            _, missing = check_required_configs(conf_dir)
+            state = tuple(missing)
+            if state != last_missing:
+                last_missing = state
+                self._schedule_required_configs_update()
+
+    def _stop_config_watcher(self) -> None:
+        self._config_watch_stop.set()
+        if self._config_observer is not None:
+            try:
+                self._config_observer.stop()
+                self._config_observer.join(timeout=2.0)
+            except Exception:
+                pass
+            self._config_observer = None
+        if self._config_watch_thread is not None and self._config_watch_thread.is_alive():
+            self._config_watch_thread.join(timeout=2.0)
+        self._config_watch_thread = None
+
+    def _on_close(self) -> None:
+        self._stop_config_watcher()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
 
     class _InjectDialog(simpledialog.Dialog):
@@ -2686,6 +2857,7 @@ class FenraUI:
         try:
             self.root.mainloop()
         finally:
+            self._stop_config_watcher()
             if loop.is_running():
                 loop.call_soon_threadsafe(lambda: asyncio.create_task(stop_discord_in_ui()))
                 loop.call_soon_threadsafe(loop.stop)
