@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import asyncio
+from pathlib import Path
 from datetime import datetime
 import threading
 import time
@@ -15,7 +16,7 @@ from tkinter import ttk
 import discord
 import requests
 
-from config import CONF_DIR
+from config import CONF_DIR, REQUIRED_CONFIGS
 from config.checks import check_required_configs
 from config_loader import (
     load_globals,
@@ -259,21 +260,29 @@ class FenraUI:
 
         self._model_cache: list[str] = []
         self._is_running = False
-        self._conf_dir = os.path.abspath(CONF_DIR)
+        self._conf_dir_path = Path(CONF_DIR).resolve()
+        self._conf_dir = str(self._conf_dir_path)
+        self._conf_presence: dict[str, bool] = {}
         self._config_watch_stop = threading.Event()
         self._config_watch_thread: threading.Thread | None = None
         self._config_observer = None
         self._config_update_pending = False
         self._missing_configs: list[str] = []
 
-        try:
-            self._classes_map: dict[str, dict] = load_classes()
-        except FileNotFoundError:
-            self._classes_map = {}
-        try:
-            self._pdv_names: list[str] = sorted(load_pdvs().keys())
-        except FileNotFoundError:
-            self._pdv_names = []
+        self._classes_map: dict[str, dict] = {}
+        if self._have_conf("classes.json"):
+            try:
+                self._classes_map = load_classes()
+            except ValueError as exc:
+                messagebox.showwarning("Agent Classes", f"Failed to load classes: {exc}")
+                self._classes_map = {}
+        self._pdv_names: list[str] = []
+        if self._have_conf("pdvs.json"):
+            try:
+                self._pdv_names = sorted(load_pdvs().keys())
+            except ValueError as exc:
+                messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
+                self._pdv_names = []
         # drop adjustments for PDVs that no longer exist
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
@@ -283,21 +292,21 @@ class FenraUI:
         self._classes_dirty = False
         self._loading_class = False
 
-        try:
-            self.global_config = load_globals()
-        except FileNotFoundError:
-            self.global_config = {}
-        except ValueError as exc:
-            messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
-            self.global_config = {}
+        self.global_config = {}
+        if self._have_conf("globals.json"):
+            try:
+                self.global_config = load_globals()
+            except ValueError as exc:
+                messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
+                self.global_config = {}
 
-        try:
-            pdv_cfg = load_pdvs()
-        except FileNotFoundError:
-            pdv_cfg = {}
-        except ValueError as exc:
-            messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
-            pdv_cfg = {}
+        pdv_cfg = {}
+        if self._have_conf("pdvs.json"):
+            try:
+                pdv_cfg = load_pdvs()
+            except ValueError as exc:
+                messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
+                pdv_cfg = {}
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
 
         # ── Run Control Toolbar ───────────────────────────────────────────────
@@ -600,8 +609,16 @@ class FenraUI:
 
     def _update_required_configs_state(self) -> None:
         all_present, missing = check_required_configs(self._conf_dir)
+        presence_changes: list[tuple[str, bool]] = []
+        for name in REQUIRED_CONFIGS:
+            present = self._have_conf(name)
+            if self._conf_presence.get(name) != present:
+                presence_changes.append((name, present))
+            self._conf_presence[name] = present
         self._missing_configs = missing
         self._apply_required_configs_state(all_present, missing)
+        if presence_changes:
+            self._handle_conf_presence_changes(presence_changes)
 
     def _apply_required_configs_state(self, all_present: bool, missing: list[str]) -> None:
         hint = ""
@@ -921,6 +938,24 @@ class FenraUI:
     def _build_globals_tab(self) -> None:
         for child in self.globals_tab.winfo_children():
             child.destroy()
+        self._globals_vars = {}
+        if not self._have_conf("globals.json"):
+            self.global_config = {}
+            self.base_timeout = self.global_config.get("watchdog_timeout", 900)
+            if hasattr(self, "timeout_label"):
+                txt = (
+                    "Base Timeout: disabled"
+                    if (self.base_timeout is None or float(self.base_timeout) <= 0)
+                    else f"Base Timeout: {int(self.base_timeout)}s"
+                )
+                self.timeout_label.config(text=txt)
+            self._missing_conf_panel(self.globals_tab, "globals.json")
+            return
+        try:
+            self.global_config = load_globals()
+        except ValueError as exc:
+            messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
+            self.global_config = {}
         models = self._fetch_models()
         self._globals_vars = {
             "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
@@ -963,6 +998,14 @@ class FenraUI:
         btn_frame.grid(row=row, column=0, columnspan=2, pady=4)
         ttk.Button(btn_frame, text="Refresh Models", command=self._refresh_models).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="Save", command=self._save_globals).pack(side=tk.LEFT, padx=2)
+        self.base_timeout = self.global_config.get("watchdog_timeout", 900)
+        if hasattr(self, "timeout_label"):
+            txt = (
+                "Base Timeout: disabled"
+                if (self.base_timeout is None or float(self.base_timeout) <= 0)
+                else f"Base Timeout: {int(self.base_timeout)}s"
+            )
+            self.timeout_label.config(text=txt)
 
     def _refresh_models(self) -> None:
         models = self._fetch_models()
@@ -1009,14 +1052,32 @@ class FenraUI:
         for child in self.pdvs_tab.winfo_children():
             child.destroy()
         self._pdv_rows = []
-        pdvs = load_pdvs()
+        if not self._have_conf("pdvs.json"):
+            self.pdv_values = {}
+            self._pdv_names = []
+            self._missing_conf_panel(self.pdvs_tab, "pdvs.json")
+            self._rebuild_live_metrics_rows()
+            return
+        try:
+            pdvs = load_pdvs()
+        except ValueError as exc:
+            messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
+            pdvs = {}
+        self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdvs.items()}
+        self._pdv_names = sorted(pdvs.keys())
         frame = self.pdvs_tab
         for name, cfg in pdvs.items():
             self._add_pdv_row(frame, name, cfg)
         btn = ttk.Frame(frame)
         btn.pack(fill=tk.X, pady=4)
-        ttk.Button(btn, text="Add", command=lambda: self._add_pdv_row(frame, "new", {"description": "", "value": 0.0})).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            btn,
+            text="Add",
+            command=lambda: self._add_pdv_row(frame, "new", {"description": "", "value": 0.0}),
+        ).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn, text="Save", command=self._save_pdvs).pack(side=tk.LEFT, padx=2)
+        self._rebuild_live_metrics_rows()
+        self._refresh_class_pdv_choices()
 
     def _add_pdv_row(self, parent, name, cfg):
         row = ttk.Frame(parent)
@@ -1059,6 +1120,38 @@ class FenraUI:
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
             child.destroy()
+
+        if not self._have_conf("classes.json"):
+            self._classes_map = {}
+            self.cls_list = tk.Listbox(self.classes_tab, exportselection=False)
+            self.cls_save_btn = ttk.Button(self.classes_tab, state="disabled")
+            self.cls_name = tk.StringVar()
+            self.cls_trig = tk.StringVar()
+            self.cls_trig_cb = ttk.Combobox(self.classes_tab, state="disabled")
+            self.cls_model = tk.StringVar()
+            self.cls_model_cb = ttk.Combobox(self.classes_tab, state="disabled")
+            self.cls_temp = tk.DoubleVar(value=1.0)
+            self.cls_temp_inherit = tk.BooleanVar(value=True)
+            self.cls_temp_scale = ttk.Scale(self.classes_tab, from_=0.0, to=2.0, orient=tk.HORIZONTAL)
+            self.cls_temp_label = ttk.Label(self.classes_tab, text="")
+            self.cls_sys = scrolledtext.ScrolledText(self.classes_tab)
+            self.cls_pre = scrolledtext.ScrolledText(self.classes_tab)
+            self.cls_post = scrolledtext.ScrolledText(self.classes_tab)
+            self.pdv_rows_container = ttk.Frame(self.classes_tab)
+            self._pdv_row_widgets = []
+            self._missing_conf_panel(self.classes_tab, "classes.json")
+            return
+
+        try:
+            self._classes_map = load_classes()
+        except ValueError as exc:
+            messagebox.showwarning("Agent Classes", f"Failed to load classes: {exc}")
+            self._classes_map = {}
+        for c in self._classes_map.values():
+            if "pdv_adjustments" in c:
+                c["pdv_adjustments"] = [
+                    a for a in c.get("pdv_adjustments", []) if a.get("name") in self._pdv_names
+                ]
 
         container = ttk.Frame(self.classes_tab)
         container.pack(fill=tk.BOTH, expand=True)
@@ -1650,7 +1743,15 @@ class FenraUI:
     def _build_agents_tab(self) -> None:
         for child in self.agents_tab.winfo_children():
             child.destroy()
-        agents = load_agents()
+        if not self._have_conf("agents.json"):
+            self._agents_cache = []
+            self._missing_conf_panel(self.agents_tab, "agents.json")
+            return
+        try:
+            agents = load_agents()
+        except ValueError as exc:
+            messagebox.showwarning("Agents & Groups", f"Failed to load agents: {exc}")
+            agents = []
         self._agents_cache = agents
 
         flagged = [a for a in agents if a.get("flag_no_downstream")]
@@ -1781,6 +1882,60 @@ class FenraUI:
         else:
             self._aggr_redraw()
         self._aggr_refresh_side_lists()
+
+    def _have_conf(self, name: str) -> bool:
+        return (self._conf_dir_path / name).is_file()
+
+    def _missing_conf_panel(self, parent: tk.Widget, name: str) -> None:
+        frame = ttk.Frame(parent, padding=24)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame,
+            text=f"⚠ '{name}' not found in '{self._conf_dir_path.name}'.",
+            foreground="#b94a48",
+            wraplength=360,
+            justify=tk.CENTER,
+        ).pack(pady=(0, 6))
+        ttk.Label(
+            frame,
+            text="Create the file to enable this view.",
+            wraplength=360,
+            justify=tk.CENTER,
+        ).pack()
+
+    def _restore_class_tab_selection(self) -> None:
+        lst = getattr(self, "cls_list", None)
+        if lst is None:
+            return
+        last = self._load_ui_state().get("last_class")
+        if last and last in self._classes_map:
+            items = list(lst.get(0, tk.END))
+            if last in items:
+                idx = items.index(last)
+                lst.selection_clear(0, tk.END)
+                lst.selection_set(idx)
+        elif lst.size() > 0:
+            lst.selection_clear(0, tk.END)
+            lst.selection_set(0)
+        if lst.size() > 0:
+            self._on_class_select()
+
+    def _handle_conf_presence_changes(self, changes: list[tuple[str, bool]]) -> None:
+        for name, present in changes:
+            if name == "globals.json":
+                self._build_globals_tab()
+                if present:
+                    self._ensure_globals_set()
+            elif name == "pdvs.json":
+                self._build_pdvs_tab()
+            elif name == "classes.json":
+                self._build_classes_tab()
+                if present:
+                    self._restore_class_tab_selection()
+            elif name == "agents.json":
+                if present:
+                    self._ensure_agent_group_membership()
+                self._build_agents_tab()
 
     def _aggr_on_select(self, _evt=None) -> None:
         sel = self._aggr_selector.get() if hasattr(self, "_aggr_selector") else ""
@@ -2024,6 +2179,8 @@ class FenraUI:
             self._aggr_on_select()
 
     def _ensure_agent_group_membership(self) -> None:
+        if not self._have_conf("agents.json"):
+            return
         try:
             agents = load_agents()
         except FileNotFoundError:
@@ -2424,6 +2581,8 @@ class FenraUI:
         return list(self._model_cache)
 
     def _ensure_globals_set(self) -> None:
+        if not self._have_conf("globals.json"):
+            return
         need = not self.global_config.get("model") or (
             self.global_config.get("temperature") is None
         )
