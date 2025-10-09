@@ -20,9 +20,6 @@ from config import CONF_DIR, REQUIRED_CONFIGS
 from config.checks import check_required_configs
 from config_loader import (
     load_globals,
-    load_pdvs,
-    load_classes,
-    load_agents,
     try_load_globals,
     try_load_pdvs,
     try_load_classes,
@@ -277,8 +274,8 @@ class FenraUI:
         self._config_update_pending = False
         self._missing_configs: list[str] = []
 
-        self._classes_map: dict[str, dict] = try_load_classes()
-        self._pdv_names: list[str] = sorted(try_load_pdvs().keys())
+        self._classes_map: dict[str, dict] = self._ui_classes()
+        self._pdv_names: list[str] = sorted(self._ui_pdvs().keys())
         # drop adjustments for PDVs that no longer exist
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
@@ -288,12 +285,12 @@ class FenraUI:
         self._classes_dirty = False
         self._loading_class = False
 
-        self.global_config = try_load_globals()
+        self.global_config = self._ui_globals()
 
-        pdv_cfg = try_load_pdvs()
+        pdv_cfg = self._ui_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
 
-        self._agents_model: list[dict] = try_load_agents()
+        self._agents_model: list[dict] = self._ui_agents()
         self._active_agent_index: Optional[int] = None
         self._agent_form_vars: dict[str, tk.Variable] = {}
         self._agent_text_fields: dict[str, scrolledtext.ScrolledText] = {}
@@ -384,9 +381,9 @@ class FenraUI:
         self.config_nb.add(self.agents_editor_tab, text="Agents")
         self._build_agents_editor_tab()
 
-        # Simple Groups sub-tab
+        # Groups sub-tab
         self.simple_groups_tab = ttk.Frame(self.config_nb)
-        self.config_nb.add(self.simple_groups_tab, text="Simple Groups")
+        self.config_nb.add(self.simple_groups_tab, text="Groups")
         self._ensure_agent_group_membership()
         self._build_simple_groups_tab()
 
@@ -947,7 +944,7 @@ class FenraUI:
                 self.timeout_label.config(text=txt)
             self._missing_conf_panel(self.globals_tab, "globals.json")
             return
-        self.global_config = try_load_globals()
+        self.global_config = self._ui_globals()
         models = self._fetch_models()
         self._globals_vars = {
             "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
@@ -1051,7 +1048,7 @@ class FenraUI:
             if getattr(self, "metrics_rows", None):
                 self._rebuild_live_metrics_rows()
             return
-        pdvs = try_load_pdvs()
+        pdvs = self._ui_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdvs.items()}
         self._pdv_names = sorted(pdvs.keys())
         frame = self.pdvs_tab
@@ -1132,7 +1129,7 @@ class FenraUI:
             self._missing_conf_panel(self.classes_tab, "classes.json")
             return
 
-        self._classes_map = try_load_classes()
+        self._classes_map = self._ui_classes()
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
                 c["pdv_adjustments"] = [
@@ -1748,7 +1745,7 @@ class FenraUI:
             self._missing_conf_panel(frame, "agents.json")
             return
 
-        self._agents_model = try_load_agents()
+        self._agents_model = self._ui_agents()
 
         paned = ttk.Panedwindow(frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
@@ -2110,7 +2107,7 @@ class FenraUI:
         except Exception as exc:
             messagebox.showerror("Agents", f"Failed to save agents: {exc}")
             return
-        self._agents_model = try_load_agents()
+        self._agents_model = self._ui_agents()
         messagebox.showinfo("Agents", "Saved agents.json")
         self._refresh_agent_listbox()
         self._build_simple_groups_tab()
@@ -2144,7 +2141,7 @@ class FenraUI:
             self._missing_conf_panel(frame, "agents.json")
             return
 
-        agents = try_load_agents()
+        agents = self._ui_agents()
         self._agents_cache = agents
 
         flagged = [a for a in agents if a.get("flag_no_downstream")]
@@ -2295,6 +2292,22 @@ class FenraUI:
             wraplength=360,
             justify=tk.CENTER,
         ).pack()
+
+    def _ui_globals(self) -> dict:
+        data = try_load_globals()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_pdvs(self) -> dict[str, dict]:
+        data = try_load_pdvs()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_classes(self) -> dict[str, dict]:
+        data = try_load_classes()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_agents(self) -> list[dict]:
+        data = try_load_agents()
+        return data if isinstance(data, list) else []
 
     def _restore_class_tab_selection(self) -> None:
         lst = getattr(self, "cls_list", None)
@@ -2576,7 +2589,7 @@ class FenraUI:
     def _ensure_agent_group_membership(self) -> None:
         if not self._have_conf("agents.json"):
             return
-        agents = try_load_agents()
+        agents = self._ui_agents()
         if not agents:
             return
 
@@ -2612,7 +2625,7 @@ class FenraUI:
         try:
             save_agents(agents)
         except ValueError as exc:
-            messagebox.showwarning("Simple Groups", str(exc))
+            messagebox.showwarning("Groups", str(exc))
             return
 
     def _prompt_agent_group_selection(
@@ -3050,7 +3063,7 @@ class FenraUI:
                 return
             self.global_config.update(temp_cfg)
             save_globals(self.global_config)
-            self.global_config = load_globals()
+            self.global_config = self._ui_globals()
             self._build_globals_tab()
             self.base_timeout = self.global_config.get("watchdog_timeout", 900)
             txt = (
