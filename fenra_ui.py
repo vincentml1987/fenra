@@ -40,7 +40,21 @@ _discord_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_conductor():
+    """Return the *running* conductor module even if it was launched as a script."""
+
+    import sys
     import importlib
+    import os
+
+    module = sys.modules.get("conductor")
+    if module is not None:
+        return module
+
+    main = sys.modules.get("__main__")
+    main_file = getattr(main, "__file__", "")
+    if main_file and os.path.basename(main_file) == "conductor.py":
+        return main
+
     return importlib.import_module("conductor")
 
 def get_discord_queue() -> asyncio.Queue:
@@ -265,6 +279,26 @@ class FenraUI:
         pdv_cfg = load_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
 
+        # ── Run Control Toolbar ───────────────────────────────────────────────
+        toolbar = ttk.Frame(self.root)
+        toolbar.pack(fill=tk.X, pady=(4, 0))
+        self._run_btn_text = tk.StringVar(value="Start")
+        self._run_status = tk.StringVar(value="Idle")
+        ttk.Button(toolbar, textvariable=self._run_btn_text, command=self._toggle_run).pack(
+            side=tk.LEFT, padx=4
+        )
+        ttk.Label(toolbar, textvariable=self._run_status).pack(side=tk.LEFT, padx=8)
+
+        # Try to reflect initial state from conductor (if available)
+        try:
+            c = _get_conductor()
+            if hasattr(c, "is_processing") and c.is_processing():
+                self._run_btn_text.set("Stop")
+                self._run_status.set("Running")
+        except Exception:
+            pass
+
+        # ── Main Notebook ────────────────────────────────────────────────────
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
@@ -442,6 +476,38 @@ class FenraUI:
         self._start_metrics_poll()
         self._ensure_globals_set()
         logger.debug("Exiting FenraUI.__init__")
+
+    def _toggle_run(self):
+        """Start/Stop the agent processing loop in conductor."""
+
+        try:
+            c = _get_conductor()
+        except Exception as e:
+            messagebox.showerror("Run Control Error", f"Failed to import conductor: {e}")
+            return
+
+        print(f"[UI] Toggling run on module id={id(c)} file={getattr(c, '__file__', None)}")
+
+        try:
+            running = False
+            if hasattr(c, "is_processing"):
+                running = bool(c.is_processing())
+        except Exception:
+            running = False
+
+        try:
+            if running and hasattr(c, "stop_processing"):
+                c.stop_processing()
+                self._run_btn_text.set("Start")
+                self._run_status.set("Paused")
+            elif not running and hasattr(c, "start_processing"):
+                c.start_processing()
+                self._run_btn_text.set("Stop")
+                self._run_status.set("Running")
+            else:
+                messagebox.showerror("Run Control Error", "Conductor run control not available.")
+        except Exception as e:
+            messagebox.showerror("Run Control Error", str(e))
 
 
     class _InjectDialog(simpledialog.Dialog):
