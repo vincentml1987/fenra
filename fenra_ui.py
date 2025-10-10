@@ -20,9 +20,10 @@ from config import CONF_DIR, REQUIRED_CONFIGS
 from config.checks import check_required_configs
 from config_loader import (
     load_globals,
-    load_pdvs,
-    load_classes,
-    load_agents,
+    try_load_globals,
+    try_load_pdvs,
+    try_load_classes,
+    try_load_agents,
     save_globals,
     save_pdvs,
     save_classes,
@@ -273,20 +274,8 @@ class FenraUI:
         self._config_update_pending = False
         self._missing_configs: list[str] = []
 
-        self._classes_map: dict[str, dict] = {}
-        if self._have_conf("classes.json"):
-            try:
-                self._classes_map = load_classes()
-            except ValueError as exc:
-                messagebox.showwarning("Agent Classes", f"Failed to load classes: {exc}")
-                self._classes_map = {}
-        self._pdv_names: list[str] = []
-        if self._have_conf("pdvs.json"):
-            try:
-                self._pdv_names = sorted(load_pdvs().keys())
-            except ValueError as exc:
-                messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
-                self._pdv_names = []
+        self._classes_map: dict[str, dict] = self._ui_classes()
+        self._pdv_names: list[str] = sorted(self._ui_pdvs().keys())
         # drop adjustments for PDVs that no longer exist
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
@@ -296,22 +285,19 @@ class FenraUI:
         self._classes_dirty = False
         self._loading_class = False
 
-        self.global_config = {}
-        if self._have_conf("globals.json"):
-            try:
-                self.global_config = load_globals()
-            except ValueError as exc:
-                messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
-                self.global_config = {}
+        self.global_config = self._ui_globals()
 
-        pdv_cfg = {}
-        if self._have_conf("pdvs.json"):
-            try:
-                pdv_cfg = load_pdvs()
-            except ValueError as exc:
-                messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
-                pdv_cfg = {}
+        pdv_cfg = self._ui_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdv_cfg.items()}
+
+        self._agents_model: list[dict] = self._ui_agents()
+        self._active_agent_index: Optional[int] = None
+        self._agent_form_vars: dict[str, tk.Variable] = {}
+        self._agent_text_fields: dict[str, scrolledtext.ScrolledText] = {}
+        self.agent_list: tk.Listbox | None = None
+        self._agent_class_cb: ttk.Combobox | None = None
+        self._agent_model_hint: ttk.Label | None = None
+        self._loading_agent_form = False
 
         # ── Run Control Toolbar ───────────────────────────────────────────────
         toolbar = ttk.Frame(self.root)
@@ -390,11 +376,16 @@ class FenraUI:
         for st in (self.cls_sys, self.cls_pre, self.cls_post):
             st.bind("<KeyRelease>", self._mark_classes_dirty_from_text)
 
-        # Agents & Groups sub-tab
-        self.agents_tab = ttk.Frame(self.config_nb)
-        self.config_nb.add(self.agents_tab, text="Agents & Groups")
+        # Agents sub-tab
+        self.agents_editor_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.agents_editor_tab, text="Agents")
+        self._build_agents_editor_tab()
+
+        # Groups sub-tab
+        self.simple_groups_tab = ttk.Frame(self.config_nb)
+        self.config_nb.add(self.simple_groups_tab, text="Groups")
         self._ensure_agent_group_membership()
-        self._build_agents_tab()
+        self._build_simple_groups_tab()
 
         # ----- Live Metrics Tab -----
         self.metrics_tab = ttk.Frame(self.notebook)
@@ -953,11 +944,7 @@ class FenraUI:
                 self.timeout_label.config(text=txt)
             self._missing_conf_panel(self.globals_tab, "globals.json")
             return
-        try:
-            self.global_config = load_globals()
-        except ValueError as exc:
-            messagebox.showwarning("Globals", f"Failed to load globals: {exc}")
-            self.global_config = {}
+        self.global_config = self._ui_globals()
         models = self._fetch_models()
         self._globals_vars = {
             "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
@@ -1061,11 +1048,7 @@ class FenraUI:
             if getattr(self, "metrics_rows", None):
                 self._rebuild_live_metrics_rows()
             return
-        try:
-            pdvs = load_pdvs()
-        except ValueError as exc:
-            messagebox.showwarning("PDVs", f"Failed to load PDVs: {exc}")
-            pdvs = {}
+        pdvs = self._ui_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdvs.items()}
         self._pdv_names = sorted(pdvs.keys())
         frame = self.pdvs_tab
@@ -1146,11 +1129,7 @@ class FenraUI:
             self._missing_conf_panel(self.classes_tab, "classes.json")
             return
 
-        try:
-            self._classes_map = load_classes()
-        except ValueError as exc:
-            messagebox.showwarning("Agent Classes", f"Failed to load classes: {exc}")
-            self._classes_map = {}
+        self._classes_map = self._ui_classes()
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
                 c["pdv_adjustments"] = [
@@ -1306,6 +1285,7 @@ class FenraUI:
         ).grid(row=9, column=1, sticky="w", padx=4, pady=(0, 4))
 
         self._clear_class_form()
+        self._refresh_agent_class_choices()
 
     def _clear_class_form(self) -> None:
         self._loading_class = True
@@ -1428,6 +1408,7 @@ class FenraUI:
         self.cls_list.selection_set(tk.END)
         self._on_class_select()
         self._set_classes_dirty(True)
+        self._refresh_agent_class_choices()
 
     def _dup_class(self) -> None:
         if not self._confirm_discard_if_dirty():
@@ -1450,6 +1431,7 @@ class FenraUI:
         self.cls_list.selection_set(tk.END)
         self._on_class_select()
         self._set_classes_dirty(True)
+        self._refresh_agent_class_choices()
 
     def _del_class(self) -> None:
         if not self._confirm_discard_if_dirty():
@@ -1469,6 +1451,7 @@ class FenraUI:
         else:
             self._clear_class_form()
         self._set_classes_dirty(True)
+        self._refresh_agent_class_choices()
 
     def _pdv_adj_add_row(self, name: Optional[str], delta: float) -> None:
         existing = {cb.get() for cb, *_ in self._pdv_row_widgets if cb.winfo_exists()}
@@ -1643,6 +1626,7 @@ class FenraUI:
         self._set_classes_dirty(False)
         messagebox.showinfo("Agent Classes", "Saved.")
         self._save_ui_state({"last_class": cur})
+        self._refresh_agent_class_choices()
 
     # ----- helpers for classes editor -----
     def _set_classes_dirty(self, dirty: bool) -> None:
@@ -1744,23 +1728,425 @@ class FenraUI:
             pass
         return {}
 
-    def _build_agents_tab(self) -> None:
-        for child in self.agents_tab.winfo_children():
+    def _build_agents_editor_tab(self) -> None:
+        frame = getattr(self, "agents_editor_tab", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        if not self._have_conf("agents.json"):
+            self._agents_model = []
+            self._active_agent_index = None
+            self.agent_list = None
+            self._agent_form_vars = {}
+            self._agent_text_fields = {}
+            self._agent_class_cb = None
+            self._agent_model_hint = None
+            self._missing_conf_panel(frame, "agents.json")
+            return
+
+        self._agents_model = self._ui_agents()
+
+        paned = ttk.Panedwindow(frame, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        left = ttk.Frame(paned)
+        right = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(right, weight=3)
+
+        self.agent_list = tk.Listbox(left, exportselection=False)
+        self.agent_list.pack(fill=tk.BOTH, expand=True, padx=4, pady=(4, 2))
+        self.agent_list.bind("<<ListboxSelect>>", self._agent_load_into_form)
+
+        btns = ttk.Frame(left)
+        btns.pack(fill=tk.X, padx=4, pady=(0, 4))
+        ttk.Button(btns, text="Add", command=self._agent_add).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Duplicate", command=self._agent_dup).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Delete", command=self._agent_del).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Save", command=self._agent_save_all).pack(side=tk.RIGHT, padx=2)
+
+        form = ttk.Frame(right, padding=(8, 8))
+        form.pack(fill=tk.BOTH, expand=True)
+        form.columnconfigure(1, weight=1)
+
+        self._agent_form_vars = {
+            "name": tk.StringVar(),
+            "agent_class": tk.StringVar(),
+            "model": tk.StringVar(),
+            "temperature": tk.StringVar(),
+            "topic_prompt": tk.StringVar(),
+            "role_prompt": tk.StringVar(),
+            "watchdog_timeout": tk.StringVar(),
+            "max_tokens": tk.StringVar(),
+        }
+        self._agent_text_fields = {}
+
+        row = 0
+        ttk.Label(form, text="Name").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["name"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        ttk.Label(form, text="Agent Class").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        self._agent_class_cb = ttk.Combobox(
+            form,
+            textvariable=self._agent_form_vars["agent_class"],
+            values=sorted(self._classes_map.keys()),
+        )
+        self._agent_class_cb.grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        ttk.Label(form, text="Model").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["model"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        self._agent_model_hint = ttk.Label(form, text="", foreground="#666666")
+        self._agent_model_hint.grid(row=row, column=1, sticky="w", pady=(0, 4))
+        row += 1
+
+        ttk.Label(form, text="Temperature").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["temperature"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        ttk.Label(form, text="Topic Prompt").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["topic_prompt"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        ttk.Label(form, text="Role Prompt").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["role_prompt"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        ttk.Label(form, text="Watchdog Timeout").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["watchdog_timeout"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        ttk.Label(form, text="Max Tokens").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        ttk.Entry(form, textvariable=self._agent_form_vars["max_tokens"]).grid(
+            row=row, column=1, sticky="ew", pady=2
+        )
+        row += 1
+
+        def _add_text_field(label: str, key: str, height: int = 5) -> None:
+            nonlocal row
+            ttk.Label(form, text=label).grid(
+                row=row, column=0, sticky="nw", padx=(0, 8), pady=(6, 2)
+            )
+            txt = scrolledtext.ScrolledText(form, height=height, wrap=tk.WORD)
+            txt.grid(row=row, column=1, sticky="nsew", pady=(6, 2))
+            form.rowconfigure(row, weight=1)
+            self._agent_text_fields[key] = txt
+            row += 1
+
+        _add_text_field("System Prompt", "system_prompt", height=6)
+        _add_text_field("Pre-context Message", "pre_context_message", height=4)
+        _add_text_field("Post-context Message", "post_context_message", height=4)
+        _add_text_field("Chat Style", "chat_style", height=4)
+
+        self._active_agent_index = None
+        self._loading_agent_form = False
+        self._agent_form_vars["model"].trace_add("write", self._update_agent_model_hint)
+        self._update_agent_model_hint()
+        self._clear_agent_form()
+        self._refresh_agent_listbox()
+
+    def _selected_agent_index(self) -> Optional[int]:
+        if self.agent_list is None:
+            return None
+        selection = self.agent_list.curselection()
+        if not selection:
+            return None
+        return int(selection[0])
+
+    def _agent_load_into_form(self, *_event) -> None:
+        if self.agent_list is None:
+            return
+        idx = self._selected_agent_index()
+        if idx is None or idx >= len(self._agents_model):
+            self._active_agent_index = None
+            self._clear_agent_form()
+            return
+        if idx != self._active_agent_index:
+            self._agent_store_from_form()
+        agent = self._agents_model[idx]
+        self._active_agent_index = idx
+        self._loading_agent_form = True
+        name_var = self._agent_form_vars.get("name")
+        if name_var is not None:
+            name_var.set(str(agent.get("name", "")))
+        cls_var = self._agent_form_vars.get("agent_class")
+        if cls_var is not None:
+            cls_var.set(str(agent.get("agent_class", "")))
+        model_var = self._agent_form_vars.get("model")
+        if model_var is not None:
+            model_val = agent.get("model")
+            model_var.set("" if model_val is None else str(model_val))
+        temp_var = self._agent_form_vars.get("temperature")
+        if temp_var is not None:
+            temp_val = agent.get("temperature")
+            temp_var.set("" if temp_val in (None, "") else str(temp_val))
+        topic_var = self._agent_form_vars.get("topic_prompt")
+        if topic_var is not None:
+            topic_var.set(str(agent.get("topic_prompt", "")))
+        role_var = self._agent_form_vars.get("role_prompt")
+        if role_var is not None:
+            role_var.set(str(agent.get("role_prompt", "")))
+        wd_var = self._agent_form_vars.get("watchdog_timeout")
+        if wd_var is not None:
+            wd_val = agent.get("watchdog_timeout")
+            wd_var.set("" if wd_val in (None, "") else str(wd_val))
+        max_var = self._agent_form_vars.get("max_tokens")
+        if max_var is not None:
+            max_val = agent.get("max_tokens")
+            max_var.set("" if max_val in (None, "") else str(max_val))
+        for key, widget in self._agent_text_fields.items():
+            widget.delete("1.0", tk.END)
+            text_val = agent.get(key)
+            if text_val:
+                widget.insert(tk.END, text_val)
+        self._loading_agent_form = False
+        self._update_agent_model_hint()
+
+    def _clear_agent_form(self) -> None:
+        if not self._agent_form_vars:
+            return
+        self._loading_agent_form = True
+        for var in self._agent_form_vars.values():
+            var.set("")
+        for widget in self._agent_text_fields.values():
+            widget.delete("1.0", tk.END)
+        self._loading_agent_form = False
+        self._update_agent_model_hint()
+
+    def _agent_store_from_form(self) -> None:
+        if (
+            self._active_agent_index is None
+            or self._active_agent_index >= len(self._agents_model)
+            or not self._agent_form_vars
+        ):
+            return
+        agent = self._agents_model[self._active_agent_index]
+
+        name_var = self._agent_form_vars.get("name")
+        if name_var is not None:
+            agent["name"] = name_var.get().strip()
+
+        cls_var = self._agent_form_vars.get("agent_class")
+        if cls_var is not None:
+            agent["agent_class"] = cls_var.get().strip()
+
+        def _assign_optional_str(field: str) -> None:
+            var = self._agent_form_vars.get(field)
+            if var is None:
+                return
+            value = var.get().strip()
+            if value:
+                agent[field] = value
+            else:
+                agent.pop(field, None)
+
+        for optional in ("model", "topic_prompt", "role_prompt"):
+            _assign_optional_str(optional)
+
+        def _assign_optional_int(field: str) -> None:
+            var = self._agent_form_vars.get(field)
+            if var is None:
+                return
+            value = var.get().strip()
+            if not value:
+                agent.pop(field, None)
+                return
+            try:
+                agent[field] = int(value)
+            except ValueError:
+                agent[field] = value
+
+        for numeric in ("watchdog_timeout", "max_tokens"):
+            _assign_optional_int(numeric)
+
+        temp_var = self._agent_form_vars.get("temperature")
+        if temp_var is not None:
+            value = temp_var.get().strip()
+            if not value:
+                agent.pop("temperature", None)
+            else:
+                try:
+                    agent["temperature"] = float(value)
+                except ValueError:
+                    agent["temperature"] = value
+
+        for key, widget in self._agent_text_fields.items():
+            value = widget.get("1.0", tk.END).strip()
+            if value:
+                agent[key] = value
+            else:
+                agent.pop(key, None)
+
+        agent.setdefault("groups_in", [])
+        agent.setdefault("groups_out", [])
+
+    def _refresh_agent_listbox(self, select_index: Optional[int] = None) -> None:
+        if self.agent_list is None:
+            return
+        self._agent_store_from_form()
+        self.agent_list.delete(0, tk.END)
+        for agent in self._agents_model:
+            label = agent.get("name") or "<unnamed>"
+            self.agent_list.insert(tk.END, label)
+        if not self._agents_model:
+            self.agent_list.selection_clear(0, tk.END)
+            self._active_agent_index = None
+            self._clear_agent_form()
+            return
+        if select_index is None:
+            if self._active_agent_index is not None and self._active_agent_index < len(
+                self._agents_model
+            ):
+                select_index = self._active_agent_index
+            else:
+                select_index = 0
+        select_index = max(0, min(select_index, len(self._agents_model) - 1))
+        self.agent_list.selection_clear(0, tk.END)
+        self.agent_list.selection_set(select_index)
+        self.agent_list.see(select_index)
+        self._agent_load_into_form()
+
+    def _agent_add(self) -> None:
+        self._agent_store_from_form()
+        base_name = f"Agent{len(self._agents_model) + 1}"
+        existing = {a.get("name") for a in self._agents_model if a.get("name")}
+        candidate = base_name
+        suffix = 1
+        while candidate in existing:
+            suffix += 1
+            candidate = f"{base_name}_{suffix}"
+        new_agent = {
+            "name": candidate,
+            "agent_class": "",
+            "groups_in": [],
+            "groups_out": [],
+        }
+        self._agents_model.append(new_agent)
+        self._refresh_agent_listbox(select_index=len(self._agents_model) - 1)
+
+    def _agent_dup(self) -> None:
+        idx = self._selected_agent_index()
+        if idx is None or idx >= len(self._agents_model):
+            return
+        self._agent_store_from_form()
+        dup = json.loads(json.dumps(self._agents_model[idx]))
+        base = dup.get("name") or "Agent"
+        existing = {a.get("name") for a in self._agents_model if a.get("name")}
+        candidate = f"{base}_copy"
+        suffix = 1
+        while candidate in existing:
+            suffix += 1
+            candidate = f"{base}_copy{suffix}"
+        dup["name"] = candidate
+        dup.setdefault("groups_in", [])
+        dup.setdefault("groups_out", [])
+        self._agents_model.append(dup)
+        self._refresh_agent_listbox(select_index=len(self._agents_model) - 1)
+
+    def _agent_del(self) -> None:
+        idx = self._selected_agent_index()
+        if idx is None or idx >= len(self._agents_model):
+            return
+        self._agent_store_from_form()
+        del self._agents_model[idx]
+        if not self._agents_model:
+            self._refresh_agent_listbox()
+        else:
+            self._refresh_agent_listbox(select_index=max(0, idx - 1))
+
+    def _agent_save_all(self) -> None:
+        self._agent_store_from_form()
+        cleaned: list[dict] = []
+        for idx, agent in enumerate(self._agents_model):
+            name = agent.get("name", "").strip()
+            if not name:
+                messagebox.showwarning("Agents", f"Agent #{idx + 1} must have a name before saving.")
+                return
+            agent_class = agent.get("agent_class", "").strip()
+            if not agent_class:
+                messagebox.showwarning(
+                    "Agents", f"Agent '{name}' must have an agent_class before saving."
+                )
+                return
+            temp_val = agent.get("temperature")
+            if isinstance(temp_val, str) and temp_val:
+                messagebox.showwarning(
+                    "Agents", f"Temperature for '{name}' must be a number (got '{temp_val}')."
+                )
+                return
+            for field in ("watchdog_timeout", "max_tokens"):
+                raw_val = agent.get(field)
+                if isinstance(raw_val, str) and raw_val:
+                    messagebox.showwarning(
+                        "Agents",
+                        f"{field.replace('_', ' ').title()} for '{name}' must be an integer (got '{raw_val}').",
+                    )
+                    return
+            copy = json.loads(json.dumps(agent))
+            copy.setdefault("groups_in", [])
+            copy.setdefault("groups_out", [])
+            cleaned.append(copy)
+        try:
+            save_agents(cleaned)
+        except Exception as exc:
+            messagebox.showerror("Agents", f"Failed to save agents: {exc}")
+            return
+        self._agents_model = self._ui_agents()
+        messagebox.showinfo("Agents", "Saved agents.json")
+        self._refresh_agent_listbox()
+        self._build_simple_groups_tab()
+
+    def _update_agent_model_hint(self, *_args) -> None:
+        if self._agent_model_hint is None:
+            return
+        model_var = self._agent_form_vars.get("model") if self._agent_form_vars else None
+        if model_var is None:
+            self._agent_model_hint.config(text="")
+            return
+        text = "Use class/global default" if not model_var.get().strip() else ""
+        self._agent_model_hint.config(text=text)
+
+    def _refresh_agent_class_choices(self) -> None:
+        if self._agent_class_cb is None:
+            return
+        try:
+            self._agent_class_cb["values"] = sorted(self._classes_map.keys())
+        except Exception:
+            pass
+
+    def _build_simple_groups_tab(self) -> None:
+        frame = getattr(self, "simple_groups_tab", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
             child.destroy()
         if not self._have_conf("agents.json"):
             self._agents_cache = []
-            self._missing_conf_panel(self.agents_tab, "agents.json")
+            self._missing_conf_panel(frame, "agents.json")
             return
-        try:
-            agents = load_agents()
-        except ValueError as exc:
-            messagebox.showwarning("Agents & Groups", f"Failed to load agents: {exc}")
-            agents = []
+
+        agents = self._ui_agents()
         self._agents_cache = agents
 
         flagged = [a for a in agents if a.get("flag_no_downstream")]
         if flagged:
-            banner = ttk.Frame(self.agents_tab, relief=tk.RIDGE, borderwidth=1)
+            banner = ttk.Frame(frame, relief=tk.RIDGE, borderwidth=1)
             banner.pack(fill=tk.X, pady=2)
             btop = ttk.Frame(banner)
             btop.pack(fill=tk.X)
@@ -1778,7 +2164,7 @@ class FenraUI:
             ttk.Button(btns, text="Batch Wiring", command=self._batch_wiring).pack(side=tk.LEFT, padx=2)
             ttk.Button(btns, text="Repair Dead-Ends", command=self._repair_dead_ends).pack(side=tk.LEFT, padx=2)
 
-        graph_container = ttk.Frame(self.agents_tab)
+        graph_container = ttk.Frame(frame)
         graph_container.pack(fill=tk.BOTH, expand=True)
         self._build_agents_groups_graph(graph_container, agents)
 
@@ -1907,6 +2293,22 @@ class FenraUI:
             justify=tk.CENTER,
         ).pack()
 
+    def _ui_globals(self) -> dict:
+        data = try_load_globals()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_pdvs(self) -> dict[str, dict]:
+        data = try_load_pdvs()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_classes(self) -> dict[str, dict]:
+        data = try_load_classes()
+        return data if isinstance(data, dict) else {}
+
+    def _ui_agents(self) -> list[dict]:
+        data = try_load_agents()
+        return data if isinstance(data, list) else []
+
     def _restore_class_tab_selection(self) -> None:
         lst = getattr(self, "cls_list", None)
         if lst is None:
@@ -1936,10 +2338,12 @@ class FenraUI:
                 self._build_classes_tab()
                 if present:
                     self._restore_class_tab_selection()
+                self._refresh_agent_class_choices()
             elif name == "agents.json":
                 if present:
                     self._ensure_agent_group_membership()
-                self._build_agents_tab()
+                self._build_agents_editor_tab()
+                self._build_simple_groups_tab()
 
     def _aggr_on_select(self, _evt=None) -> None:
         sel = self._aggr_selector.get() if hasattr(self, "_aggr_selector") else ""
@@ -2051,7 +2455,7 @@ class FenraUI:
             if grp not in target["groups_in"]:
                 target["groups_in"].append(grp)
                 save_agents(cache)
-                self._build_agents_tab()
+                self._build_simple_groups_tab()
                 if hasattr(self, "_aggr_selector"):
                     self._aggr_selector.set(self._aggr_current_value)
                     self._aggr_on_select()
@@ -2072,7 +2476,7 @@ class FenraUI:
             if grp not in target["groups_out"]:
                 target["groups_out"].append(grp)
                 save_agents(cache)
-                self._build_agents_tab()
+                self._build_simple_groups_tab()
                 if hasattr(self, "_aggr_selector"):
                     self._aggr_selector.set(self._aggr_current_value)
                     self._aggr_on_select()
@@ -2094,7 +2498,7 @@ class FenraUI:
             if grp not in target["groups_out"]:
                 target["groups_out"].append(grp)
                 save_agents(cache)
-                self._build_agents_tab()
+                self._build_simple_groups_tab()
                 if hasattr(self, "_aggr_selector"):
                     self._aggr_selector.set(self._aggr_current_value)
                     self._aggr_on_select()
@@ -2115,7 +2519,7 @@ class FenraUI:
             if grp not in target["groups_in"]:
                 target["groups_in"].append(grp)
                 save_agents(cache)
-                self._build_agents_tab()
+                self._build_simple_groups_tab()
                 if hasattr(self, "_aggr_selector"):
                     self._aggr_selector.set(self._aggr_current_value)
                     self._aggr_on_select()
@@ -2177,7 +2581,7 @@ class FenraUI:
             warn(str(exc))
             return
 
-        self._build_agents_tab()
+        self._build_simple_groups_tab()
         if hasattr(self, "_aggr_selector"):
             self._aggr_selector.set(self._aggr_current_value)
             self._aggr_on_select()
@@ -2185,9 +2589,8 @@ class FenraUI:
     def _ensure_agent_group_membership(self) -> None:
         if not self._have_conf("agents.json"):
             return
-        try:
-            agents = load_agents()
-        except FileNotFoundError:
+        agents = self._ui_agents()
+        if not agents:
             return
 
         all_groups = sorted(
@@ -2222,7 +2625,7 @@ class FenraUI:
         try:
             save_agents(agents)
         except ValueError as exc:
-            messagebox.showwarning("Agents & Groups", str(exc))
+            messagebox.showwarning("Groups", str(exc))
             return
 
     def _prompt_agent_group_selection(
@@ -2532,7 +2935,7 @@ class FenraUI:
                 save_agents(new_agents)
                 prev_win.destroy()
                 dialog.destroy()
-                self._build_agents_tab()
+                self._build_simple_groups_tab()
             ttk.Button(prev_win, text="Apply", command=_confirm).pack()
         ttk.Button(dialog, text="Apply", command=_apply).pack(pady=4)
 
@@ -2570,7 +2973,7 @@ class FenraUI:
         def _apply() -> None:
             save_agents(new_agents)
             win.destroy()
-            self._build_agents_tab()
+            self._build_simple_groups_tab()
         ttk.Button(win, text="Apply", command=_apply).pack()
 
     def _fetch_models(self) -> list[str]:
@@ -2660,7 +3063,7 @@ class FenraUI:
                 return
             self.global_config.update(temp_cfg)
             save_globals(self.global_config)
-            self.global_config = load_globals()
+            self.global_config = self._ui_globals()
             self._build_globals_tab()
             self.base_timeout = self.global_config.get("watchdog_timeout", 900)
             txt = (
