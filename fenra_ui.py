@@ -2493,7 +2493,7 @@ class FenraUI:
             )
             if not target:
                 return
-            # left = incoming (groups_in), right = outgoing (groups_out)
+            # left = incoming, right = outgoing (for an AGENT)
             lst = (
                 target.setdefault("groups_in", [])
                 if side == "left"
@@ -2507,11 +2507,11 @@ class FenraUI:
             if not target:
                 return
             grp = self._aggr_active_group
-            # left = incoming (groups_in), right = outgoing (groups_out)
+            # left = senders/outbound, right = listeners/inbound (for a GROUP)
             lst = (
-                target.setdefault("groups_in", [])
+                target.setdefault("groups_out", [])
                 if side == "left"
-                else target.setdefault("groups_out", [])
+                else target.setdefault("groups_in", [])
             )
             if _safe_pop(lst, grp, f"{target['name']} {side} list"):
                 changed = True
