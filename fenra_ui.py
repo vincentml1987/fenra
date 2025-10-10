@@ -2480,9 +2480,7 @@ class FenraUI:
         def _safe_pop(lst: list[str], item: str, label: str) -> bool:
             if item not in lst:
                 return False
-            if len(lst) == 1:
-                warn(f"{label} must contain at least one entry.")
-                return False
+            # Allow empty lists; removing the last item is OK.
             lst.remove(item)
             return True
 
@@ -2495,11 +2493,11 @@ class FenraUI:
             )
             if not target:
                 return
-            # flipped on purpose: left side shows outbound wiring
+            # left = incoming (groups_in), right = outgoing (groups_out)
             lst = (
-                target.setdefault("groups_out", [])
+                target.setdefault("groups_in", [])
                 if side == "left"
-                else target.setdefault("groups_in", [])
+                else target.setdefault("groups_out", [])
             )
             if _safe_pop(lst, name, f"{target['name']} {side} list"):
                 changed = True
@@ -2509,11 +2507,11 @@ class FenraUI:
             if not target:
                 return
             grp = self._aggr_active_group
-            # flipped on purpose: left side shows outbound wiring
+            # left = incoming (groups_in), right = outgoing (groups_out)
             lst = (
-                target.setdefault("groups_out", [])
+                target.setdefault("groups_in", [])
                 if side == "left"
-                else target.setdefault("groups_in", [])
+                else target.setdefault("groups_out", [])
             )
             if _safe_pop(lst, grp, f"{target['name']} {side} list"):
                 changed = True
