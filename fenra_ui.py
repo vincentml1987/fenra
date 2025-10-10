@@ -932,18 +932,6 @@ class FenraUI:
         for child in self.globals_tab.winfo_children():
             child.destroy()
         self._globals_vars = {}
-        if not self._have_conf("globals.json"):
-            self.global_config = {}
-            self.base_timeout = self.global_config.get("watchdog_timeout", 900)
-            if hasattr(self, "timeout_label"):
-                txt = (
-                    "Base Timeout: disabled"
-                    if (self.base_timeout is None or float(self.base_timeout) <= 0)
-                    else f"Base Timeout: {int(self.base_timeout)}s"
-                )
-                self.timeout_label.config(text=txt)
-            self._missing_conf_panel(self.globals_tab, "globals.json")
-            return
         self.global_config = self._ui_globals()
         models = self._fetch_models()
         self._globals_vars = {
@@ -1022,6 +1010,7 @@ class FenraUI:
             else:
                 self.global_config[k] = val
         save_globals(self.global_config)
+        self._update_required_configs_state()
         # refresh label
         self.base_timeout = self.global_config.get("watchdog_timeout", 900)
         txt = (
@@ -1041,13 +1030,6 @@ class FenraUI:
         for child in self.pdvs_tab.winfo_children():
             child.destroy()
         self._pdv_rows = []
-        if not self._have_conf("pdvs.json"):
-            self.pdv_values = {}
-            self._pdv_names = []
-            self._missing_conf_panel(self.pdvs_tab, "pdvs.json")
-            if getattr(self, "metrics_rows", None):
-                self._rebuild_live_metrics_rows()
-            return
         pdvs = self._ui_pdvs()
         self.pdv_values = {name: cfg.get("value", 0.0) for name, cfg in pdvs.items()}
         self._pdv_names = sorted(pdvs.keys())
@@ -1092,6 +1074,7 @@ class FenraUI:
                 "value": float(val_var.get()),
             }
         save_pdvs(data)
+        self._update_required_configs_state()
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
         self._pdv_names = sorted(data.keys())
         for cls in self._classes_map.values():
@@ -1107,28 +1090,6 @@ class FenraUI:
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
             child.destroy()
-
-        if not self._have_conf("classes.json"):
-            self._classes_map = {}
-            self.cls_list = tk.Listbox(self.classes_tab, exportselection=False)
-            self.cls_save_btn = ttk.Button(self.classes_tab, state="disabled")
-            self.cls_name = tk.StringVar()
-            self.cls_trig = tk.StringVar()
-            self.cls_trig_cb = ttk.Combobox(self.classes_tab, state="disabled")
-            self.cls_model = tk.StringVar()
-            self.cls_model_cb = ttk.Combobox(self.classes_tab, state="disabled")
-            self.cls_temp = tk.DoubleVar(value=1.0)
-            self.cls_temp_inherit = tk.BooleanVar(value=True)
-            self.cls_temp_scale = ttk.Scale(self.classes_tab, from_=0.0, to=2.0, orient=tk.HORIZONTAL)
-            self.cls_temp_label = ttk.Label(self.classes_tab, text="")
-            self.cls_sys = scrolledtext.ScrolledText(self.classes_tab)
-            self.cls_pre = scrolledtext.ScrolledText(self.classes_tab)
-            self.cls_post = scrolledtext.ScrolledText(self.classes_tab)
-            self.pdv_rows_container = ttk.Frame(self.classes_tab)
-            self._pdv_row_widgets = []
-            self._missing_conf_panel(self.classes_tab, "classes.json")
-            return
-
         self._classes_map = self._ui_classes()
         for c in self._classes_map.values():
             if "pdv_adjustments" in c:
@@ -1623,6 +1584,7 @@ class FenraUI:
                     if a.get("name") in self._pdv_names
                 ]
         save_classes(self._classes_map)
+        self._update_required_configs_state()
         self._set_classes_dirty(False)
         messagebox.showinfo("Agent Classes", "Saved.")
         self._save_ui_state({"last_class": cur})
@@ -1734,17 +1696,6 @@ class FenraUI:
             return
         for child in frame.winfo_children():
             child.destroy()
-        if not self._have_conf("agents.json"):
-            self._agents_model = []
-            self._active_agent_index = None
-            self.agent_list = None
-            self._agent_form_vars = {}
-            self._agent_text_fields = {}
-            self._agent_class_cb = None
-            self._agent_model_hint = None
-            self._missing_conf_panel(frame, "agents.json")
-            return
-
         self._agents_model = self._ui_agents()
 
         paned = ttk.Panedwindow(frame, orient=tk.HORIZONTAL)
@@ -2108,6 +2059,7 @@ class FenraUI:
             messagebox.showerror("Agents", f"Failed to save agents: {exc}")
             return
         self._agents_model = self._ui_agents()
+        self._update_required_configs_state()
         messagebox.showinfo("Agents", "Saved agents.json")
         self._refresh_agent_listbox()
         self._build_simple_groups_tab()
@@ -2136,11 +2088,6 @@ class FenraUI:
             return
         for child in frame.winfo_children():
             child.destroy()
-        if not self._have_conf("agents.json"):
-            self._agents_cache = []
-            self._missing_conf_panel(frame, "agents.json")
-            return
-
         agents = self._ui_agents()
         self._agents_cache = agents
 
