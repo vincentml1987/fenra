@@ -298,6 +298,7 @@ class FenraUI:
         self._agent_class_cb: ttk.Combobox | None = None
         self._agent_model_hint: ttk.Label | None = None
         self._loading_agent_form = False
+        self._pdv_row_widgets: list[tuple[ttk.Combobox, tk.DoubleVar, ttk.Scale, ttk.Button]] = []
 
         # ── Run Control Toolbar ───────────────────────────────────────────────
         toolbar = ttk.Frame(self.root)
@@ -1269,7 +1270,7 @@ class FenraUI:
         self._set_classes_dirty(False)
 
     def _clear_pdv_rows(self) -> None:
-        for cb, var, sc, rm in list(self._pdv_row_widgets):
+        for cb, var, sc, rm in list(getattr(self, "_pdv_row_widgets", [])):
             try:
                 row = cb.master
             except Exception:
