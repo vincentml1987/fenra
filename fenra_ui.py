@@ -1223,6 +1223,28 @@ class FenraUI:
             text="Archivist",
             variable=self.cls_arch,
             command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        # Per-class switches for excluding global contexts
+        self.cls_ign_sys = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global System",
+            variable=self.cls_ign_sys,
+            command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT, padx=(12, 6))
+        self.cls_ign_pre = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global Pre",
+            variable=self.cls_ign_pre,
+            command=lambda: self._mark_classes_dirty(),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        self.cls_ign_post = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global Post",
+            variable=self.cls_ign_post,
+            command=lambda: self._mark_classes_dirty(),
         ).pack(side=tk.LEFT)
 
         ttk.Label(form, text="PDV Adjustments").grid(row=8, column=0, sticky="nw")
@@ -1269,6 +1291,9 @@ class FenraUI:
             self.cls_readq.set(False)
             self.cls_outdisc.set(False)
             self.cls_arch.set(False)
+            self.cls_ign_sys.set(False)
+            self.cls_ign_pre.set(False)
+            self.cls_ign_post.set(False)
         finally:
             self._loading_class = False
         self._temp_apply_inherit_state()
@@ -1339,6 +1364,9 @@ class FenraUI:
             self.cls_readq.set(bool(c.get("reads_message_queue")))
             self.cls_outdisc.set(bool(c.get("outputs_to_discord")))
             self.cls_arch.set(bool(c.get("is_archivist")))
+            self.cls_ign_sys.set(bool(c.get("ignore_global_system", False)))
+            self.cls_ign_pre.set(bool(c.get("ignore_global_pre", False)))
+            self.cls_ign_post.set(bool(c.get("ignore_global_post", False)))
             self._clear_pdv_rows()
             for adj in c.get("pdv_adjustments", []):
                 if adj.get("name") in self._pdv_names:
@@ -1368,6 +1396,9 @@ class FenraUI:
             "reads_message_queue": False,
             "outputs_to_discord": False,
             "is_archivist": False,
+            "ignore_global_system": False,
+            "ignore_global_pre": False,
+            "ignore_global_post": False,
         }
         self._classes_map[name] = new_cls
         self.cls_list.insert(tk.END, name)
@@ -1478,6 +1509,9 @@ class FenraUI:
             "reads_message_queue": bool(self.cls_readq.get()),
             "outputs_to_discord": bool(self.cls_outdisc.get()),
             "is_archivist": bool(self.cls_arch.get()),
+            "ignore_global_system": bool(self.cls_ign_sys.get()),
+            "ignore_global_pre": bool(self.cls_ign_pre.get()),
+            "ignore_global_post": bool(self.cls_ign_post.get()),
         }
         sys_txt = self.cls_sys.get("1.0", tk.END).strip()
         pre_txt = self.cls_pre.get("1.0", tk.END).strip()

@@ -190,23 +190,27 @@ def effective_params(agent: dict):
         temp = cls.get("temperature")
     if temp is None:
         temp = GLOBALS.get("temperature")
+    ignore_global_system = bool(cls.get("ignore_global_system", False))
+    ignore_global_pre = bool(cls.get("ignore_global_pre", False))
+    ignore_global_post = bool(cls.get("ignore_global_post", False))
+
     system_text = "\n".join(
         [
-            GLOBALS.get("system_prompt", ""),
+            ("" if ignore_global_system else GLOBALS.get("system_prompt", "")),
             cls.get("system_prompt", ""),
             agent.get("system_prompt", ""),
         ]
     ).strip()
     pre_text = "\n".join(
         [
-            GLOBALS.get("pre_context_message", ""),
+            ("" if ignore_global_pre else GLOBALS.get("pre_context_message", "")),
             cls.get("pre_context_message", ""),
             agent.get("pre_context_message", ""),
         ]
     ).strip()
     post_text = "\n".join(
         [
-            GLOBALS.get("post_context_message", ""),
+            ("" if ignore_global_post else GLOBALS.get("post_context_message", "")),
             cls.get("post_context_message", ""),
             agent.get("post_context_message", ""),
         ]
