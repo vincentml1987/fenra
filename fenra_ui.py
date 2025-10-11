@@ -514,7 +514,7 @@ class FenraUI:
 
         self.update_pdvs(self.pdv_values)
         self._start_metrics_poll()
-        self._ensure_globals_set()
+        # Do not auto-open the Globals modal. Users will set values in the Globals tab.
 
         os.makedirs(self._conf_dir, exist_ok=True)
         self._start_config_watcher()
@@ -2282,9 +2282,9 @@ class FenraUI:
     def _handle_conf_presence_changes(self, changes: list[tuple[str, bool]]) -> None:
         for name, present in changes:
             if name == "globals.json":
+                # Rebuild the Globals tab when the file is created/updated,
+                # but never auto-open a blocking dialog.
                 self._build_globals_tab()
-                if present:
-                    self._ensure_globals_set()
             elif name == "pdvs.json":
                 self._build_pdvs_tab()
             elif name == "classes.json":
