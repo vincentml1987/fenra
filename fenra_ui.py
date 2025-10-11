@@ -2940,36 +2940,29 @@ class FenraUI:
 
     def _ensure_globals_set(self) -> None:
         """
-        Only prompt for Globals if the file exists and is non-empty but missing
-        required keys. If the file is absent => return (tabs stay editable/blank).
-        If the file exists but is empty ({}, whitespace, or ~0 bytes) => return.
+        Only prompt for Globals if globals.json exists and is non-empty,
+        but missing required keys. An absent or empty file should NOT
+        open the dialog; tabs stay accessible/blank.
         """
-        # If the file doesn't exist, don't prompt.
-        if not self._have_conf("globals.json"):
+        p = self._conf_dir_path / "globals.json"
+        if not p.exists():
             return
-
-        # Treat an existing but empty file as intentionally blank (no prompt).
         try:
-            p = self._conf_dir_path / "globals.json"
-            if not p.exists():
-                return
+            # Treat 0–2 byte files (empty or "{}") as blank configs.
             if p.stat().st_size <= 2:
                 return
-            try:
-                cfg = try_load_globals() or {}
-            except Exception:
-                cfg = {}
-            if not cfg:
-                return
         except Exception:
-            # On any I/O issue, fail closed (no prompt).
+            return  # Be conservative; never block on errors.
+
+        data = try_load_globals()
+        if not isinstance(data, dict):
             return
 
-        if (
-            not isinstance(self.global_config, dict)
-            or not self.global_config.get("model")
-            or self.global_config.get("temperature") is None
-        ):
+        # Update in-memory config so the dialog shows current values if needed.
+        self.global_config = data
+
+        need = (not data.get("model")) or (data.get("temperature") is None)
+        if need:
             self._open_globals_dialog_blocking()
 
     def _open_globals_dialog_blocking(self) -> None:
