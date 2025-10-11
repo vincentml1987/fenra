@@ -602,14 +602,19 @@ class FenraUI:
             self._config_update_pending = False
 
     def _update_required_configs_state(self) -> None:
-        all_present, missing = check_required_configs(self._conf_dir)
+        # Compute presence strictly by existence on disk.
         presence_changes: list[tuple[str, bool]] = []
+        missing: list[str] = []
         for name in REQUIRED_CONFIGS:
             present = self._have_conf(name)
             if self._conf_presence.get(name) != present:
                 presence_changes.append((name, present))
             self._conf_presence[name] = present
+            if not present:
+                missing.append(name)
+
         self._missing_configs = missing
+        all_present = len(missing) == 0
         self._apply_required_configs_state(all_present, missing)
         if presence_changes:
             self._handle_conf_presence_changes(presence_changes)
@@ -2934,21 +2939,37 @@ class FenraUI:
         return list(self._model_cache)
 
     def _ensure_globals_set(self) -> None:
-        # If the file doesn't exist, don't prompt; the tab stays editable/blank.
+        """
+        Only prompt for Globals if the file exists and is non-empty but missing
+        required keys. If the file is absent => return (tabs stay editable/blank).
+        If the file exists but is empty ({}, whitespace, or ~0 bytes) => return.
+        """
+        # If the file doesn't exist, don't prompt.
         if not self._have_conf("globals.json"):
             return
 
-        # If the file exists but is empty ({}), treat that as user-intended blank state.
-        # Do NOT pop the dialog in this case.
-        if not self.global_config:  # {}, None, etc.
+        # Treat an existing but empty file as intentionally blank (no prompt).
+        try:
+            p = self._conf_dir_path / "globals.json"
+            if not p.exists():
+                return
+            if p.stat().st_size <= 2:
+                return
+            try:
+                cfg = try_load_globals() or {}
+            except Exception:
+                cfg = {}
+            if not cfg:
+                return
+        except Exception:
+            # On any I/O issue, fail closed (no prompt).
             return
 
-        # Only prompt if the user has some values but is missing required ones.
-        need = (
-            not self.global_config.get("model")
+        if (
+            not isinstance(self.global_config, dict)
+            or not self.global_config.get("model")
             or self.global_config.get("temperature") is None
-        )
-        if need:
+        ):
             self._open_globals_dialog_blocking()
 
     def _open_globals_dialog_blocking(self) -> None:
