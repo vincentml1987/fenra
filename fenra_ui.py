@@ -2934,10 +2934,19 @@ class FenraUI:
         return list(self._model_cache)
 
     def _ensure_globals_set(self) -> None:
+        # If the file doesn't exist, don't prompt; the tab stays editable/blank.
         if not self._have_conf("globals.json"):
             return
-        need = not self.global_config.get("model") or (
-            self.global_config.get("temperature") is None
+
+        # If the file exists but is empty ({}), treat that as user-intended blank state.
+        # Do NOT pop the dialog in this case.
+        if not self.global_config:  # {}, None, etc.
+            return
+
+        # Only prompt if the user has some values but is missing required ones.
+        need = (
+            not self.global_config.get("model")
+            or self.global_config.get("temperature") is None
         )
         if need:
             self._open_globals_dialog_blocking()
