@@ -190,28 +190,38 @@ def effective_params(agent: dict):
         temp = cls.get("temperature")
     if temp is None:
         temp = GLOBALS.get("temperature")
-    ignore_global_system = bool(cls.get("ignore_global_system", False))
-    ignore_global_pre = bool(cls.get("ignore_global_pre", False))
-    ignore_global_post = bool(cls.get("ignore_global_post", False))
+    ignore_global_system = bool(cls.get("ignore_global_system", False)) or bool(
+        agent.get("ignore_global_system", False)
+    )
+    ignore_global_pre = bool(cls.get("ignore_global_pre", False)) or bool(
+        agent.get("ignore_global_pre", False)
+    )
+    ignore_global_post = bool(cls.get("ignore_global_post", False)) or bool(
+        agent.get("ignore_global_post", False)
+    )
+
+    ignore_class_system = bool(agent.get("ignore_class_system", False))
+    ignore_class_pre = bool(agent.get("ignore_class_pre", False))
+    ignore_class_post = bool(agent.get("ignore_class_post", False))
 
     system_text = "\n".join(
         [
             ("" if ignore_global_system else GLOBALS.get("system_prompt", "")),
-            cls.get("system_prompt", ""),
+            ("" if ignore_class_system else cls.get("system_prompt", "")),
             agent.get("system_prompt", ""),
         ]
     ).strip()
     pre_text = "\n".join(
         [
             ("" if ignore_global_pre else GLOBALS.get("pre_context_message", "")),
-            cls.get("pre_context_message", ""),
+            ("" if ignore_class_pre else cls.get("pre_context_message", "")),
             agent.get("pre_context_message", ""),
         ]
     ).strip()
     post_text = "\n".join(
         [
             ("" if ignore_global_post else GLOBALS.get("post_context_message", "")),
-            cls.get("post_context_message", ""),
+            ("" if ignore_class_post else cls.get("post_context_message", "")),
             agent.get("post_context_message", ""),
         ]
     ).strip()
