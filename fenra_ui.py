@@ -1845,6 +1845,51 @@ class FenraUI:
         _add_text_field("Post-context Message", "post_context_message", height=4)
         _add_text_field("Chat Style", "chat_style", height=4)
 
+        ttk.Label(form, text="Flags").grid(
+            row=row, column=0, sticky="nw", padx=(0, 8), pady=(6, 2)
+        )
+        flags = ttk.Frame(form)
+        flags.grid(row=row, column=1, sticky="w", pady=(6, 2))
+        row += 1
+
+        self.ag_ign_glob_sys = tk.BooleanVar(value=False)
+        self.ag_ign_glob_pre = tk.BooleanVar(value=False)
+        self.ag_ign_glob_post = tk.BooleanVar(value=False)
+        self.ag_ign_cls_sys = tk.BooleanVar(value=False)
+        self.ag_ign_cls_pre = tk.BooleanVar(value=False)
+        self.ag_ign_cls_post = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global System",
+            variable=self.ag_ign_glob_sys,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global Pre",
+            variable=self.ag_ign_glob_pre,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Global Post",
+            variable=self.ag_ign_glob_post,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Class System",
+            variable=self.ag_ign_cls_sys,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Class Pre",
+            variable=self.ag_ign_cls_pre,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Checkbutton(
+            flags,
+            text="Ignore Class Post",
+            variable=self.ag_ign_cls_post,
+        ).pack(side=tk.LEFT)
+
         self._active_agent_index = None
         self._loading_agent_form = False
         self._agent_form_vars["model"].trace_add("write", self._update_agent_model_hint)
@@ -1906,6 +1951,13 @@ class FenraUI:
             text_val = agent.get(key)
             if text_val:
                 widget.insert(tk.END, text_val)
+        if hasattr(self, "ag_ign_glob_sys"):
+            self.ag_ign_glob_sys.set(bool(agent.get("ignore_global_system", False)))
+            self.ag_ign_glob_pre.set(bool(agent.get("ignore_global_pre", False)))
+            self.ag_ign_glob_post.set(bool(agent.get("ignore_global_post", False)))
+            self.ag_ign_cls_sys.set(bool(agent.get("ignore_class_system", False)))
+            self.ag_ign_cls_pre.set(bool(agent.get("ignore_class_pre", False)))
+            self.ag_ign_cls_post.set(bool(agent.get("ignore_class_post", False)))
         self._loading_agent_form = False
         self._update_agent_model_hint()
 
@@ -1917,6 +1969,13 @@ class FenraUI:
             var.set("")
         for widget in self._agent_text_fields.values():
             widget.delete("1.0", tk.END)
+        if hasattr(self, "ag_ign_glob_sys"):
+            self.ag_ign_glob_sys.set(False)
+            self.ag_ign_glob_pre.set(False)
+            self.ag_ign_glob_post.set(False)
+            self.ag_ign_cls_sys.set(False)
+            self.ag_ign_cls_pre.set(False)
+            self.ag_ign_cls_post.set(False)
         self._loading_agent_form = False
         self._update_agent_model_hint()
 
@@ -1984,6 +2043,14 @@ class FenraUI:
             else:
                 agent.pop(key, None)
 
+        if hasattr(self, "ag_ign_glob_sys"):
+            agent["ignore_global_system"] = bool(self.ag_ign_glob_sys.get())
+            agent["ignore_global_pre"] = bool(self.ag_ign_glob_pre.get())
+            agent["ignore_global_post"] = bool(self.ag_ign_glob_post.get())
+            agent["ignore_class_system"] = bool(self.ag_ign_cls_sys.get())
+            agent["ignore_class_pre"] = bool(self.ag_ign_cls_pre.get())
+            agent["ignore_class_post"] = bool(self.ag_ign_cls_post.get())
+
         agent.setdefault("groups_in", [])
         agent.setdefault("groups_out", [])
 
@@ -2027,6 +2094,12 @@ class FenraUI:
             "agent_class": "",
             "groups_in": [],
             "groups_out": [],
+            "ignore_global_system": False,
+            "ignore_global_pre": False,
+            "ignore_global_post": False,
+            "ignore_class_system": False,
+            "ignore_class_pre": False,
+            "ignore_class_post": False,
         }
         self._agents_model.append(new_agent)
         self._refresh_agent_listbox(select_index=len(self._agents_model) - 1)
