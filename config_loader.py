@@ -48,19 +48,67 @@ def load_pdvs(path: str = _conf_path('pdvs.json')) -> Dict[str, dict]:
     return out
 
 def load_classes(path: str = _conf_path('agent_classes.json')) -> Dict[str, dict]:
+    """Load agent classes supporting legacy and modern schemas.
+
+    Accepted schemas:
+      1) {"classes": [ {...}, {...} ]}
+      2) {"classes": {"Name": {...}, ...}}
+      3) {"Name": {...}, "Other": {...}}  # legacy top-level map
+    Returns a dict keyed by class name.
+    """
+
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError as e:
         raise FileNotFoundError(f"Missing agent classes config at {path}") from e
-    classes = data.get('classes')
-    if not isinstance(classes, list):
-        raise ValueError("agent_classes.json: 'classes' must be a list")
-    out = {}
-    for idx, c in enumerate(classes):
-        if not isinstance(c, dict) or 'name' not in c or 'triggering_pdv' not in c:
-            raise ValueError(f"classes[{idx}] missing name or triggering_pdv")
-        out[c['name']] = c
+
+    items: list[dict] = []
+
+    def _items_from_mapping(mapping: dict) -> list[dict]:
+        mapped: list[dict] = []
+        for key, cfg in mapping.items():
+            if not isinstance(cfg, dict):
+                # Skip non-dict entries (e.g., metadata) when present in legacy files.
+                continue
+            merged = {**cfg}
+            merged.setdefault("name", key)
+            mapped.append(merged)
+        return mapped
+
+    classes_val = data.get("classes") if isinstance(data, dict) else None
+
+    if isinstance(classes_val, list):
+        items = list(classes_val)
+    elif isinstance(classes_val, dict):
+        items = _items_from_mapping(classes_val)
+    elif isinstance(data, dict):
+        # Legacy schema: entire file is a mapping of class name -> config
+        dict_values = [v for v in data.values() if v is not None]
+        if dict_values and all(isinstance(v, dict) for v in dict_values):
+            items = _items_from_mapping({k: v for k, v in data.items() if isinstance(v, dict)})
+
+    if not items:
+        raise ValueError(
+            "agent_classes.json invalid. Expected 'classes' list or a mapping of class objects."
+        )
+
+    out: Dict[str, dict] = {}
+    for idx, raw in enumerate(items):
+        if not isinstance(raw, dict):
+            raise ValueError(f"classes[{idx}] must be an object")
+        raw_name = raw.get("name")
+        if raw_name is None:
+            raw_name = f"class_{idx}"
+        if not isinstance(raw_name, str):
+            raise ValueError(f"classes[{idx}] name must be a string")
+        name = raw_name.strip()
+        if not name:
+            raise ValueError(f"classes[{idx}] missing name")
+        if "triggering_pdv" not in raw:
+            raise ValueError(f"classes[{idx}] ('{name}') missing triggering_pdv")
+        norm = {**raw, "name": name}
+        out[name] = norm
     return out
 
 def save_classes(classes: Dict[str, dict], path: str = _conf_path('agent_classes.json')) -> None:

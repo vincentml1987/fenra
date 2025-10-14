@@ -591,7 +591,28 @@ class FenraUI:
 
     def _manual_refresh_required_configs(self) -> None:
         logger.debug("Manual refresh of required configs requested")
+        # First re-evaluate file presence to keep UI hints in sync.
         self._update_required_configs_state()
+        # Then re-read configuration content so edits appear immediately.
+        try:
+            self._classes_map = self._ui_classes()
+            self._build_classes_tab()
+            self._restore_class_tab_selection()
+            self._refresh_agent_class_choices()
+        except Exception as exc:
+            logger.warning("Failed reloading classes on manual refresh: %s", exc)
+        try:
+            pdvs = self._ui_pdvs()
+            self._pdv_names = sorted(pdvs.keys())
+            self._build_pdvs_tab()
+        except Exception as exc:
+            logger.warning("Failed reloading PDVs on manual refresh: %s", exc)
+        try:
+            self._agents_model = self._ui_agents()
+            self._build_agents_editor_tab()
+            self._build_simple_groups_tab()
+        except Exception as exc:
+            logger.warning("Failed reloading agents on manual refresh: %s", exc)
 
     def _schedule_required_configs_update(self) -> None:
         if self._config_update_pending:
@@ -616,6 +637,16 @@ class FenraUI:
         self._apply_required_configs_state(all_present, missing)
         if presence_changes:
             self._handle_conf_presence_changes(presence_changes)
+        else:
+            # Presence unchanged; refresh classes if file exists and editors aren't dirty.
+            if self._have_conf("agent_classes.json") and not getattr(self, "_classes_dirty", False):
+                try:
+                    self._classes_map = self._ui_classes()
+                    self._build_classes_tab()
+                    self._restore_class_tab_selection()
+                    self._refresh_agent_class_choices()
+                except Exception as exc:
+                    logger.warning("Failed refreshing classes after config update: %s", exc)
 
     def _apply_required_configs_state(self, all_present: bool, missing: list[str]) -> None:
         hint = ""
