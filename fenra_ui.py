@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 CHATLOG_DIR = "chatlogs"
 SENT_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "messages_to_humans.json")
 
+# Special entry shown at the top of group-pick lists (Agent mode)
+_NEW_GROUP_LABEL = "***Create New Group***"
+
 _discord_queue: asyncio.Queue | None = None
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
@@ -2443,8 +2446,9 @@ class FenraUI:
             ag = self._aggr_active_agent
             gin = set(ag.get("groups_in", []) or [])
             gout = set(ag.get("groups_out", []) or [])
-            left_items = [g for g in all_groups if g not in gin]
-            right_items = [g for g in all_groups if g not in gout]
+            # Prepend the "Create New Group" sentinel to both sides when in Agent mode
+            left_items = [_NEW_GROUP_LABEL] + [g for g in all_groups if g not in gin]
+            right_items = [_NEW_GROUP_LABEL] + [g for g in all_groups if g not in gout]
             left_label = "Add to groups_in"
             right_label = "Add to groups_out"
         elif mode == "group" and self._aggr_active_group is not None:
@@ -2503,7 +2507,19 @@ class FenraUI:
             idx = self._aggr_left_list.curselection()
             if not idx:
                 return
-            grp = self._aggr_left_list.get(idx[0])
+            sel = self._aggr_left_list.get(idx[0])
+            # If the sentinel is selected, prompt for a new group name
+            if sel == _NEW_GROUP_LABEL:
+                name = simpledialog.askstring(
+                    "Create New Group", "Enter new group name:", parent=self.root
+                )
+                if not name:
+                    return
+                grp = name.strip()
+                if not grp:
+                    return
+            else:
+                grp = sel
             cache = getattr(self, "_agents_cache", [])
             target = next(
                 (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
@@ -2546,7 +2562,19 @@ class FenraUI:
             idx = self._aggr_right_list.curselection()
             if not idx:
                 return
-            grp = self._aggr_right_list.get(idx[0])
+            sel = self._aggr_right_list.get(idx[0])
+            # If the sentinel is selected, prompt for a new group name
+            if sel == _NEW_GROUP_LABEL:
+                name = simpledialog.askstring(
+                    "Create New Group", "Enter new group name:", parent=self.root
+                )
+                if not name:
+                    return
+                grp = name.strip()
+                if not grp:
+                    return
+            else:
+                grp = sel
             cache = getattr(self, "_agents_cache", [])
             target = next(
                 (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
