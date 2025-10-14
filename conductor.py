@@ -765,24 +765,26 @@ def step_agent(agent_name: str) -> Optional[str]:
     return nxt["name"] if nxt else None
 
 
-def _ensure_current_agent() -> str:
-    """Ensure STATE["current_agent"] is populated and return its value."""
+def _ensure_current_agent() -> str | None:
+    """Return STATE['current_agent'] or first configured agent, else None."""
 
     cur = STATE.get("current_agent")
     if isinstance(cur, str) and cur:
         return cur
     if AGENTS:
         candidate = next((a.get("name") for a in AGENTS if a.get("name")), None)
-        if candidate is None:
-            raise RuntimeError("No agents configured; cannot start loop")
-        STATE["current_agent"] = candidate
-        save_state(STATE)
-        return candidate
-    raise RuntimeError("No agents configured; cannot start loop")
+        if candidate:
+            STATE["current_agent"] = candidate
+            save_state(STATE)
+            return candidate
+    logger.warning("No agents configured – agent loop will idle")
+    return None
 
 
 def run_loop(steps: Optional[int] = None) -> None:
     cur = _ensure_current_agent()
+    if cur is None:
+        return  # nothing to run
     hist: List[str] = [cur]
     count = 0
     while steps is None or count < steps:
