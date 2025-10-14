@@ -12,6 +12,7 @@ from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
+import queue
 
 import discord
 import requests
@@ -249,6 +250,9 @@ class FenraUI:
             send_callback,
         )
         self.root = tk.Tk()
+        self._pending_calls: queue.Queue[tuple[Callable, tuple, dict]] = queue.Queue()
+        self._ui_closed = False
+        self.root.after(20, self._process_pending)
         self.root.title("Fenra")
         self.agents = agents
         self.inject_callback = inject_callback
@@ -696,6 +700,7 @@ class FenraUI:
         self._config_watch_thread = None
 
     def _on_close(self) -> None:
+        self._ui_closed = True
         self._stop_config_watcher()
         try:
             self.root.destroy()
@@ -3407,11 +3412,22 @@ class FenraUI:
         widget.see(tk.END)
         widget.configure(state="disabled")
 
+    def _process_pending(self) -> None:
+        while not self._pending_calls.empty():
+            func, args, kwargs = self._pending_calls.get_nowait()
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                logger.exception("UI callback failed")
+        # reschedule itself so it keeps draining
+        if not getattr(self, "_ui_closed", False):
+            self.root.after(20, self._process_pending)
+
     def _threadsafe(self, func, *args, **kwargs) -> None:
         if threading.current_thread() is threading.main_thread():
             func(*args, **kwargs)
         else:
-            self.root.after(0, lambda: func(*args, **kwargs))
+            self._pending_calls.put((func, args, kwargs))
 
     def _expand_all(self):
         logger.debug("_expand_all called but tree view removed")
