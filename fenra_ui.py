@@ -598,10 +598,7 @@ class FenraUI:
             self._update_required_configs_state()
 
         self._config_update_pending = True
-        try:
-            self.root.after(150, _run)
-        except tk.TclError:
-            self._config_update_pending = False
+        self._threadsafe(self.root.after, 150, _run)
 
     def _update_required_configs_state(self) -> None:
         all_present, missing = check_required_configs(self._conf_dir)
