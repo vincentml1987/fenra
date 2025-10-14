@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 CHATLOG_DIR = "chatlogs"
 SENT_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "messages_to_humans.json")
 
+# Special entry shown at the top of group-pick lists (Agent mode)
+_NEW_GROUP_LABEL = "***Create New Group***"
+
 _discord_queue: asyncio.Queue | None = None
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
@@ -595,10 +598,7 @@ class FenraUI:
             self._update_required_configs_state()
 
         self._config_update_pending = True
-        try:
-            self.root.after(150, _run)
-        except tk.TclError:
-            self._config_update_pending = False
+        self._threadsafe(self.root.after, 150, _run)
 
     def _update_required_configs_state(self) -> None:
         all_present, missing = check_required_configs(self._conf_dir)
@@ -1563,14 +1563,15 @@ class FenraUI:
             self.cls_trig_cb.configure(values=self._pdv_names)
             if self.cls_trig.get() not in self._pdv_names:
                 self.cls_trig.set(self._pdv_names[0] if self._pdv_names else "")
+        # Be robust when the Classes tab (and its PDV rows) hasn't been built yet.
         removed = False
-        for cb, var, sc, rm in list(self._pdv_row_widgets):
+        for cb, var, sc, rm in list(getattr(self, "_pdv_row_widgets", [])):
             if not cb.winfo_exists():
                 continue
             current = cb.get()
             others = {
                 other_cb.get()
-                for other_cb, *_ in self._pdv_row_widgets
+                for other_cb, *_ in getattr(self, "_pdv_row_widgets", [])
                 if other_cb.winfo_exists() and other_cb is not cb
             }
             choices = [p for p in self._pdv_names if p not in others or p == current]
@@ -2383,8 +2384,9 @@ class FenraUI:
             ag = self._aggr_active_agent
             gin = set(ag.get("groups_in", []) or [])
             gout = set(ag.get("groups_out", []) or [])
-            left_items = [g for g in all_groups if g not in gin]
-            right_items = [g for g in all_groups if g not in gout]
+            # Prepend the "Create New Group" sentinel to both sides when in Agent mode
+            left_items = [_NEW_GROUP_LABEL] + [g for g in all_groups if g not in gin]
+            right_items = [_NEW_GROUP_LABEL] + [g for g in all_groups if g not in gout]
             left_label = "Add to groups_in"
             right_label = "Add to groups_out"
         elif mode == "group" and self._aggr_active_group is not None:
@@ -2443,7 +2445,19 @@ class FenraUI:
             idx = self._aggr_left_list.curselection()
             if not idx:
                 return
-            grp = self._aggr_left_list.get(idx[0])
+            sel = self._aggr_left_list.get(idx[0])
+            # If the sentinel is selected, prompt for a new group name
+            if sel == _NEW_GROUP_LABEL:
+                name = simpledialog.askstring(
+                    "Create New Group", "Enter new group name:", parent=self.root
+                )
+                if not name:
+                    return
+                grp = name.strip()
+                if not grp:
+                    return
+            else:
+                grp = sel
             cache = getattr(self, "_agents_cache", [])
             target = next(
                 (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
@@ -2486,7 +2500,19 @@ class FenraUI:
             idx = self._aggr_right_list.curselection()
             if not idx:
                 return
-            grp = self._aggr_right_list.get(idx[0])
+            sel = self._aggr_right_list.get(idx[0])
+            # If the sentinel is selected, prompt for a new group name
+            if sel == _NEW_GROUP_LABEL:
+                name = simpledialog.askstring(
+                    "Create New Group", "Enter new group name:", parent=self.root
+                )
+                if not name:
+                    return
+                grp = name.strip()
+                if not grp:
+                    return
+            else:
+                grp = sel
             cache = getattr(self, "_agents_cache", [])
             target = next(
                 (a for a in cache if a.get("name") == self._aggr_active_agent.get("name")),
