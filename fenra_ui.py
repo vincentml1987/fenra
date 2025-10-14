@@ -2568,11 +2568,11 @@ class FenraUI:
             )
             if not target:
                 return
-            # flipped on purpose: left side shows outbound wiring
+            # In agent mode, canvas shows groups_in on the left and groups_out on the right
             lst = (
-                target.setdefault("groups_out", [])
+                target.setdefault("groups_in", [])
                 if side == "left"
-                else target.setdefault("groups_in", [])
+                else target.setdefault("groups_out", [])
             )
             if _safe_pop(lst, name, f"{target['name']} {side} list"):
                 changed = True
