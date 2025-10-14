@@ -1566,14 +1566,15 @@ class FenraUI:
             self.cls_trig_cb.configure(values=self._pdv_names)
             if self.cls_trig.get() not in self._pdv_names:
                 self.cls_trig.set(self._pdv_names[0] if self._pdv_names else "")
+        # Be robust when the Classes tab (and its PDV rows) hasn't been built yet.
         removed = False
-        for cb, var, sc, rm in list(self._pdv_row_widgets):
+        for cb, var, sc, rm in list(getattr(self, "_pdv_row_widgets", [])):
             if not cb.winfo_exists():
                 continue
             current = cb.get()
             others = {
                 other_cb.get()
-                for other_cb, *_ in self._pdv_row_widgets
+                for other_cb, *_ in getattr(self, "_pdv_row_widgets", [])
                 if other_cb.winfo_exists() and other_cb is not cb
             }
             choices = [p for p in self._pdv_names if p not in others or p == current]
