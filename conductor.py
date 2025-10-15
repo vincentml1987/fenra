@@ -780,14 +780,29 @@ def step_agent(agent_name: str) -> Optional[str]:
 
 
 def run_loop(steps: Optional[int] = None) -> None:
-    cur = STATE["current_agent"]
-    hist: List[str] = [cur]
+    # Defer reading state until Start is pressed and configs are loaded.
+    cur: Optional[str] = None
+    hist: List[str] = []
     count = 0
     while steps is None or count < steps:
         # Respect Start/Stop toggle: idle until started.
         if not _RUN_EVENT.is_set():
             time.sleep(0.1)
             continue
+        # First tick after Start: ensure configs are present and seed current agent.
+        if not _CONFIGS_LOADED:
+            ensure_configs_loaded()
+        if cur is None:
+            candidate = STATE.get("current_agent")
+            if isinstance(candidate, str) and candidate in AGENTS_BY_NAME:
+                cur = candidate
+            else:
+                # Pick a reasonable default or bail with a clear error.
+                cur = next(iter(AGENTS_BY_NAME), None)
+            if cur is None:
+                logger.error("No current_agent available after config load; check confs/state.json and agents.")
+                return
+            hist = [cur]
         if UI is not None:
             try:
                 UI.set_active_agent(cur)
