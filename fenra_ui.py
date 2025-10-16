@@ -8,6 +8,7 @@ import threading
 import time
 import hashlib
 import colorsys
+import math
 from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
@@ -270,6 +271,8 @@ class FenraUI:
         self.metric_bars: dict[str, ttk.Progressbar] = {}
         self.metric_labels: dict[str, tk.Label] = {}
         self.metrics_rows: ttk.Frame | None = None
+        self.metrics_canvas: tk.Canvas | None = None
+        self.metrics_legend: ttk.Frame | None = None
         self._conf_presence: dict[str, bool] = {}
         self._config_watch_stop = threading.Event()
         self._config_watch_thread: threading.Thread | None = None
@@ -394,10 +397,12 @@ class FenraUI:
         # ----- Live Metrics Tab -----
         self.metrics_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.metrics_tab, text="Live Metrics")
-        # container for PDV rows so we can rebuild
-        self.metrics_rows = ttk.Frame(self.metrics_tab)
+
+        # container that holds the pie and a legend
+        self.metrics_rows = ttk.Frame(self.metrics_tab)  # reuse name to minimize ripple
         self.metrics_rows.pack(fill=tk.BOTH, expand=True)
         self._rebuild_live_metrics_rows()
+
         limit = self.global_config.get("max_context_tokens", 8192)
         self.token_usage_var = tk.StringVar(value=f"Tokens: 0 / {limit}")
         tk.Label(self.metrics_tab, textvariable=self.token_usage_var).pack(anchor="w", padx=4, pady=2)
@@ -838,16 +843,26 @@ class FenraUI:
         logger.debug("Entering update_pdvs pdv_values=%s", pdv_values)
 
         def _update():
-            for name, value in pdv_values.items():
-                bar = self.metric_bars.get(name)
-                label = self.metric_labels.get(name)
-                if bar and label:
-                    pct = max(0.0, min(100.0, value * 100.0))
-                    bar["value"] = pct
-                    label.config(text=f"{value:.2f}")
+            # Store and redraw the pie immediately
+            self.pdv_values = dict(pdv_values or {})
+            self._draw_pdv_pie(self.pdv_values)
 
         self._threadsafe(_update)
         logger.debug("Exiting update_pdvs")
+
+    # --- helper: write live PDVs for the poller / other components
+    def _write_pdvs_live(self, values_map: dict[str, float]) -> None:
+        """
+        Persist current PDV values so the Live Metrics poller (and anything else)
+        sees the changes immediately after clicking Save in the PDVs tab.
+        """
+        try:
+            live_path = os.path.join("chatlogs", "pdvs_live.json")
+            os.makedirs(os.path.dirname(live_path), exist_ok=True)
+            with open(live_path, "w", encoding="utf-8") as f:
+                json.dump(values_map, f, indent=2)
+        except Exception as e:
+            logger.exception("Failed writing pdvs_live.json: %s", e)
 
     def set_token_usage(self, used: int, limit: int) -> None:
         def _update():
@@ -1062,11 +1077,14 @@ class FenraUI:
         row.pack(fill=tk.X, padx=4, pady=2)
         name_var = tk.StringVar(value=name)
         desc_var = tk.StringVar(value=cfg.get("description", ""))
-        val_var = tk.DoubleVar(value=cfg.get("value", 0.0))
+        val_var = tk.StringVar(value=str(cfg.get("value", 0.0)))
+
         ttk.Entry(row, textvariable=name_var, width=15).pack(side=tk.LEFT)
         ttk.Entry(row, textvariable=desc_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Scale(row, from_=0.0, to=1.0, variable=val_var, orient=tk.HORIZONTAL).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Entry(row, textvariable=val_var, width=10).pack(side=tk.LEFT, padx=2)
+
         ttk.Button(row, text="Remove", command=lambda r=row: r.destroy()).pack(side=tk.LEFT, padx=2)
+        # store the row parts (note: val_var is now StringVar)
         self._pdv_rows.append((row, name_var, desc_var, val_var))
 
     def _save_pdvs(self) -> None:
@@ -1077,14 +1095,24 @@ class FenraUI:
             name = name_var.get().strip()
             if not name:
                 continue
+            # Accept numeric values typed into the Entry; clamp negatives to 0.
+            try:
+                v = float(str(val_var.get()).strip())
+            except Exception:
+                v = 0.0
+            if v < 0.0:
+                v = 0.0
             data[name] = {
                 "name": name,
                 "description": desc_var.get(),
-                "value": float(val_var.get()),
+                "value": v,
             }
         save_pdvs(data)
         self._update_required_configs_state()
+        # Update in-memory PDVs, write chatlogs/pdvs_live.json, and redraw immediately.
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        self._write_pdvs_live(self.pdv_values)      # persist live values now
+        self._draw_pdv_pie(self.pdv_values)         # force immediate pie redraw
         self._pdv_names = sorted(data.keys())
         for cls in self._classes_map.values():
             if "pdv_adjustments" in cls:
@@ -1092,9 +1120,8 @@ class FenraUI:
                     a for a in cls["pdv_adjustments"] if a.get("name") in self._pdv_names
                 ]
         self._refresh_class_pdv_choices()
-        # Rebuild rows to reflect added/removed PDVs, then update values
-        self._rebuild_live_metrics_rows()
-        self.update_pdvs(self.pdv_values)
+        # If the Live Metrics tab was rebuilt earlier, keep it; just ensure canvas is in sync.
+        # update_pdvs() would also redraw, but we already did a direct draw above.
 
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
@@ -3200,7 +3227,7 @@ class FenraUI:
                     pdv_vals = json.load(f)
                 if isinstance(pdv_vals, dict):
                     # If new PDVs appear, rebuild rows first
-                    if set(pdv_vals.keys()) != set(self.metric_bars.keys()):
+                    if set(pdv_vals.keys()) != set(self.pdv_values.keys()):
                         self.pdv_values = dict(pdv_vals)
                         self._rebuild_live_metrics_rows()
                     self.update_pdvs(pdv_vals)
@@ -3546,24 +3573,102 @@ class FenraUI:
             t.join()
         logger.debug("Exiting start")
     def _rebuild_live_metrics_rows(self) -> None:
-        """Recreate the PDV bars based on current self.pdv_values."""
+        """Rebuild the Live Metrics pie chart container."""
 
         def _do():
             if not getattr(self, "metrics_rows", None):
                 return
             for child in self.metrics_rows.winfo_children():
                 child.destroy()
+
             self.metric_bars.clear()
             self.metric_labels.clear()
-            for name in self.pdv_values.keys():
-                frame = ttk.Frame(self.metrics_rows)
-                frame.pack(fill=tk.X, padx=4, pady=2)
-                ttk.Label(frame, text=name + ":", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
-                bar = ttk.Progressbar(frame, maximum=100, mode="determinate")
-                bar.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-                val = ttk.Label(frame, text="0.00")
-                val.pack(side=tk.LEFT, padx=4)
-                self.metric_bars[name] = bar
-                self.metric_labels[name] = val
+
+            container = ttk.Frame(self.metrics_rows)
+            container.pack(fill=tk.BOTH, expand=True)
+
+            # Left: pie canvas
+            self.metrics_canvas = tk.Canvas(container, background="white", highlightthickness=0)
+            self.metrics_canvas.grid(row=0, column=0, sticky="nsew")
+
+            # Right: legend
+            self.metrics_legend = ttk.Frame(container)
+            self.metrics_legend.grid(row=0, column=1, sticky="ns", padx=(8, 4))
+
+            container.columnconfigure(0, weight=1)
+            container.rowconfigure(0, weight=1)
+
+            def _on_resize(_evt=None):
+                self._draw_pdv_pie(self.pdv_values)
+
+            self.metrics_canvas.bind("<Configure>", _on_resize)
+            self._draw_pdv_pie(self.pdv_values)
 
         self._threadsafe(_do)
+
+    def _color_for_pdv(self, name: str) -> str:
+        # Reuse existing color helpers
+        try:
+            return pastel_for_class(name)
+        except Exception:
+            return "#cccccc"
+
+    def _draw_pdv_pie(self, pdv_values: dict[str, float]) -> None:
+        if not self.metrics_canvas or not self.metrics_canvas.winfo_exists():
+            return
+
+        c = self.metrics_canvas
+        c.delete("all")
+
+        # Guard: avoid negatives; treat missing/NaN as 0
+        names = sorted(pdv_values.keys())
+        vals = [max(0.0, float(pdv_values.get(n, 0.0) or 0.0)) for n in names]
+        total = sum(vals)
+
+        w = c.winfo_width() or 1
+        h = c.winfo_height() or 1
+        size = min(w, h) - 16
+        size = max(size, 10)
+        cx, cy = w // 2, h // 2
+        r = size // 2
+        bbox = (cx - r, cy - r, cx + r, cy + r)
+
+        # Legend
+        for child in (self.metrics_legend.winfo_children() if self.metrics_legend else []):
+            child.destroy()
+
+        if total <= 0.0:
+            c.create_text(cx, cy, text="No PDV values", font=("TkDefaultFont", 10))
+            return
+
+        angle = 0.0
+        for name, value in zip(names, vals):
+            if value <= 0:
+                continue
+            frac = value / total
+            extent = frac * 360.0
+            color = self._color_for_pdv(name)
+
+            # Slice:
+            # Tkinter quirk: an arc with exactly ~360° extent won't render as a filled wedge.
+            # If this slice covers (almost) the whole circle, draw a filled oval instead.
+            if extent >= 359.9:
+                c.create_oval(bbox, fill=color, outline="")
+            else:
+                c.create_arc(bbox, start=angle, extent=extent, fill=color, outline="")
+            # Label position — center of the slice
+            mid = math.radians(angle + extent / 2.0)
+            rx = cx + int(r * 0.55 * math.cos(mid))
+            ry = cy - int(r * 0.55 * math.sin(mid))  # y inverted in canvas
+            c.create_text(rx, ry, text=f"{value:.2f}", font=("TkDefaultFont", 9, "bold"))
+
+            # Legend row
+            if self.metrics_legend:
+                row = ttk.Frame(self.metrics_legend)
+                swatch = tk.Canvas(row, width=14, height=14, highlightthickness=0, bg=color)
+                swatch.pack(side=tk.LEFT, padx=(0, 6))
+                ttk.Label(row, text=f"{name}").pack(side=tk.LEFT)
+                ttk.Label(row, text=f"{value:.2f}", foreground="#555").pack(side=tk.LEFT, padx=(6, 0))
+                row.pack(anchor="w", pady=2)
+
+            angle += extent

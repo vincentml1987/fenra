@@ -141,6 +141,8 @@ def load_all_configs() -> None:
     PDV_META.clear()
     PDV_META.update(raw_pdvs)
     PDVS = {name: cfg.get("value", 0.5) for name, cfg in raw_pdvs.items()}
+    # Persist a clean live snapshot at startup so the UI pie is correct after restart.
+    _persist_pdvs_live()
     CLASSES = load_classes()
     AGENTS = load_agents()
     changed = False
@@ -170,6 +172,16 @@ def load_all_configs() -> None:
         save_state(STATE)
 
 
+def _persist_pdvs_live() -> None:
+    """Write current PDV values to chatlogs/pdvs_live.json for the UI."""
+    try:
+        os.makedirs("chatlogs", exist_ok=True)
+        with open("chatlogs/pdvs_live.json", "w", encoding="utf-8") as f:
+            json.dump(PDVS, f)
+    except Exception as exc:
+        logger.warning("failed to write pdvs_live.json: %s", exc)
+
+
 def _refresh_pdvs_from_disk() -> None:
     """Synchronize in-memory PDV state with confs/pdvs.json."""
     global PDV_META, PDVS
@@ -179,6 +191,8 @@ def _refresh_pdvs_from_disk() -> None:
         return
     PDV_META = dict(raw_pdvs)
     PDVS = {name: cfg.get("value", 0.5) for name, cfg in raw_pdvs.items()}
+    # Ensure the UI's Live Metrics reflects the latest config immediately.
+    _persist_pdvs_live()
 
 
 def effective_params(agent: dict):
@@ -311,8 +325,8 @@ def apply_pdv_adjustments(adjs: List[dict], *, scale: float = 1.0) -> None:
         os.makedirs("chatlogs", exist_ok=True)
         with open("chatlogs/pdv_history.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.time(), "pdvs": PDVS}, ensure_ascii=False) + "\n")
-        with open("chatlogs/pdvs_live.json", "w", encoding="utf-8") as f:
-            json.dump(PDVS, f)
+        # Live snapshot after any adjustments as well.
+        _persist_pdvs_live()
 
 
 # ----------------------------------------------------------------------------
