@@ -1095,6 +1095,7 @@ class FenraUI:
             name = name_var.get().strip()
             if not name:
                 continue
+            # Accept numeric values typed into the Entry; clamp negatives to 0.
             try:
                 v = float(str(val_var.get()).strip())
             except Exception:
@@ -1108,11 +1109,10 @@ class FenraUI:
             }
         save_pdvs(data)
         self._update_required_configs_state()
-        # Update in-memory PDVs, write the live file, and force an immediate redraw.
+        # Update in-memory PDVs, write chatlogs/pdvs_live.json, and redraw immediately.
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
-        self._write_pdvs_live(self.pdv_values)
-        # Redraw the pie now (no need to wait for the poller)
-        self._draw_pdv_pie(self.pdv_values)
+        self._write_pdvs_live(self.pdv_values)      # persist live values now
+        self._draw_pdv_pie(self.pdv_values)         # force immediate pie redraw
         self._pdv_names = sorted(data.keys())
         for cls in self._classes_map.values():
             if "pdv_adjustments" in cls:
