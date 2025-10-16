@@ -5,7 +5,6 @@ import random
 import shutil
 import argparse
 import threading
-import math
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 import sys as _sys
@@ -277,29 +276,26 @@ def post_to_discord_via_webhook(content: str) -> None:
 # PDV mechanics
 # ----------------------------------------------------------------------------
 
-def apply_pdv_adjustments(adjs: List[dict]) -> None:
-    # Ensure we never apply deltas on stale values.
+def apply_pdv_adjustments(adjs: List[dict], *, scale: float = 1.0) -> None:
+    """Apply linear PDV updates with a floor at zero and no upper bound."""
     _refresh_pdvs_from_disk()
-    gamma = float(GLOBALS.get("pdv_gamma", 2.0))
     changed = False
-    for adj in adjs:
+    for adj in adjs or []:
         name = adj["name"]
+        coeff = float(adj.get("delta", 0.0))
         if name not in PDVS:
-            PDV_META.setdefault(name, {"name": name, "description": "", "value": 0.5})
-            PDVS[name] = PDV_META[name].get("value", 0.5)
+            PDV_META.setdefault(name, {"name": name, "description": "", "value": 0.0})
+            PDVS[name] = float(PDV_META[name].get("value", 0.0))
             changed = True
-        m = float(adj.get("delta", 0.0))
-        x = float(PDVS.get(name, 0.5))
-        g_base = (4 * x * (1 - x)) ** gamma
-        beta = float(GLOBALS.get("pdv_directional_beta", 0.75))   # 0..1 (how strong the toward/away effect is)
-        alpha = float(GLOBALS.get("pdv_directional_alpha", 0.05)) # scale of typical |delta|
-        boost = 1.0 + beta * math.tanh(((0.5 - x) * m) / max(alpha, 1e-9))
-        x2 = min(1.0, max(0.0, x + m * g_base * boost))
-
-        if abs(x2 - x) > 1e-9:
-            PDVS[name] = x2
+        current = float(PDVS.get(name, 0.0))
+        delta = coeff * float(scale)
+        updated = current + delta
+        if updated < 0.0:
+            updated = 0.0
+        if updated != current:
+            PDVS[name] = updated
             PDV_META.setdefault(name, {"name": name, "description": ""})
-            PDV_META[name]["value"] = x2
+            PDV_META[name]["value"] = updated
             changed = True
     if changed:
         save_pdvs(
@@ -347,22 +343,57 @@ def _flag_no_downstream(agent: dict, groups: Iterable[str]) -> None:
 
 
 def select_next_agent(curr_name: str) -> Optional[dict]:
+    """Select the next agent using weighted randomness over downstream classes."""
+
     D = downstream_candidates(curr_name)
     if not D:
         cur = AGENTS_BY_NAME[curr_name]
         _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
 
-    pdvs = {CLASSES[a["agent_class"]]["triggering_pdv"] for a in D}
-    target = max(pdvs, key=lambda p: PDVS.get(p, 0.0))
-    C = [a for a in D if CLASSES[a["agent_class"]]["triggering_pdv"] == target] or D
-    random.shuffle(C)
-    for cand in C:
-        outs = set(cand.get("groups_out", []))
-        consumers = [b for b in AGENTS if b["name"] != cand["name"] and outs & set(b.get("groups_in", []))]
-        if consumers:
-            return cand
-        _flag_no_downstream(cand, outs)
+    class_to_agents: Dict[str, List[dict]] = {}
+    for agent in D:
+        class_to_agents.setdefault(agent["agent_class"], []).append(agent)
+
+    classes: List[str] = []
+    weights: List[float] = []
+    for class_name, _agents in class_to_agents.items():
+        trig = CLASSES[class_name]["triggering_pdv"]
+        weight = max(0.0, float(PDVS.get(trig, 0.0)))
+        classes.append(class_name)
+        weights.append(weight)
+
+    def _weighted_choice(options: List[str], probs: List[float]) -> str:
+        total = sum(probs)
+        if total <= 0.0:
+            return random.choice(options)
+        r = random.random() * total
+        acc = 0.0
+        for opt, weight in zip(options, probs):
+            acc += weight
+            if r <= acc:
+                return opt
+        return options[-1]
+
+    attempted: set[str] = set()
+    while len(attempted) < len(classes):
+        chosen_class = _weighted_choice(classes, weights)
+        attempted.add(chosen_class)
+        candidates = list(class_to_agents.get(chosen_class, []))
+        random.shuffle(candidates)
+        for cand in candidates:
+            outs = set(cand.get("groups_out", []))
+            consumers = [
+                other
+                for other in AGENTS
+                if other["name"] != cand["name"] and outs & set(other.get("groups_in", []))
+            ]
+            if consumers:
+                return cand
+            _flag_no_downstream(cand, outs)
+        idx = classes.index(chosen_class)
+        weights[idx] = 0.0
+
     cur = AGENTS_BY_NAME[curr_name]
     _flag_no_downstream(cur, cur.get("groups_out", []))
     return None
@@ -722,7 +753,7 @@ def step_agent(agent_name: str) -> Optional[str]:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(text_block)
-    apply_pdv_adjustments(cls.get("pdv_adjustments", []))
+    apply_pdv_adjustments(cls.get("pdv_adjustments", []), scale=len(reply))
     if cls.get("is_archivist"):
         targets = agent.get("groups_out") or [None]
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
