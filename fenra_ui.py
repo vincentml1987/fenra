@@ -843,12 +843,26 @@ class FenraUI:
         logger.debug("Entering update_pdvs pdv_values=%s", pdv_values)
 
         def _update():
-            # Store and redraw pie
+            # Store and redraw the pie immediately
             self.pdv_values = dict(pdv_values or {})
             self._draw_pdv_pie(self.pdv_values)
 
         self._threadsafe(_update)
         logger.debug("Exiting update_pdvs")
+
+    # --- helper: write live PDVs for the poller / other components
+    def _write_pdvs_live(self, values_map: dict[str, float]) -> None:
+        """
+        Persist current PDV values so the Live Metrics poller (and anything else)
+        sees the changes immediately after clicking Save in the PDVs tab.
+        """
+        try:
+            live_path = os.path.join("chatlogs", "pdvs_live.json")
+            os.makedirs(os.path.dirname(live_path), exist_ok=True)
+            with open(live_path, "w", encoding="utf-8") as f:
+                json.dump(values_map, f, indent=2)
+        except Exception as e:
+            logger.exception("Failed writing pdvs_live.json: %s", e)
 
     def set_token_usage(self, used: int, limit: int) -> None:
         def _update():
@@ -1094,7 +1108,11 @@ class FenraUI:
             }
         save_pdvs(data)
         self._update_required_configs_state()
+        # Update in-memory PDVs, write the live file, and force an immediate redraw.
         self.pdv_values = {n: cfg["value"] for n, cfg in data.items()}
+        self._write_pdvs_live(self.pdv_values)
+        # Redraw the pie now (no need to wait for the poller)
+        self._draw_pdv_pie(self.pdv_values)
         self._pdv_names = sorted(data.keys())
         for cls in self._classes_map.values():
             if "pdv_adjustments" in cls:
@@ -1102,8 +1120,8 @@ class FenraUI:
                     a for a in cls["pdv_adjustments"] if a.get("name") in self._pdv_names
                 ]
         self._refresh_class_pdv_choices()
-        self._rebuild_live_metrics_rows()
-        self.update_pdvs(self.pdv_values)
+        # If the Live Metrics tab was rebuilt earlier, keep it; just ensure canvas is in sync.
+        # update_pdvs() would also redraw, but we already did a direct draw above.
 
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
@@ -3631,8 +3649,13 @@ class FenraUI:
             extent = frac * 360.0
             color = self._color_for_pdv(name)
 
-            # Slice
-            c.create_arc(bbox, start=angle, extent=extent, fill=color, outline="")
+            # Slice:
+            # Tkinter quirk: an arc with exactly ~360° extent won't render as a filled wedge.
+            # If this slice covers (almost) the whole circle, draw a filled oval instead.
+            if extent >= 359.9:
+                c.create_oval(bbox, fill=color, outline="")
+            else:
+                c.create_arc(bbox, start=angle, extent=extent, fill=color, outline="")
             # Label position — center of the slice
             mid = math.radians(angle + extent / 2.0)
             rx = cx + int(r * 0.55 * math.cos(mid))
