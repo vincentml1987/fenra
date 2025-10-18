@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 import threading
+import queue
 import time
 import hashlib
 import colorsys
@@ -275,6 +276,10 @@ class FenraUI:
         self._config_watch_thread: threading.Thread | None = None
         self._config_observer = None
         self._config_update_pending = False
+        # --- UI thread handoff queue ---
+        self._ui_queue: "queue.Queue[tuple[Callable, tuple, dict]]" = queue.Queue()
+        # Start a pump that runs ONLY on the Tk thread and executes queued callables.
+        self.root.after(0, self._pump_ui_queue)
         self._missing_configs: list[str] = []
 
         self._classes_map: dict[str, dict] = self._ui_classes()
@@ -599,10 +604,8 @@ class FenraUI:
             self._update_required_configs_state()
 
         self._config_update_pending = True
-        try:
-            self.root.after(150, _run)
-        except tk.TclError:
-            self._config_update_pending = False
+        # Post the timer creation to the UI thread so Tk is only touched from main.
+        self._threadsafe(self.root.after, 150, _run)
 
     def _update_required_configs_state(self) -> None:
         # Compute presence strictly by existence on disk.
@@ -3486,10 +3489,34 @@ class FenraUI:
         widget.configure(state="disabled")
 
     def _threadsafe(self, func, *args, **kwargs) -> None:
+        """
+        Execute `func` on the Tk main thread. If already on the main thread,
+        run immediately; otherwise, enqueue for the UI pump.
+        """
         if threading.current_thread() is threading.main_thread():
-            func(*args, **kwargs)
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                logger.exception("UI task failed")
         else:
-            self.root.after(0, lambda: func(*args, **kwargs))
+            self._ui_queue.put((func, args, kwargs))
+
+    def _pump_ui_queue(self) -> None:
+        """
+        Drain the cross-thread queue from the Tk main loop and re-schedule
+        itself. This avoids calling any Tk APIs from worker threads.
+        """
+        try:
+            while True:
+                func, args, kwargs = self._ui_queue.get_nowait()
+                try:
+                    func(*args, **kwargs)
+                except Exception:
+                    logger.exception("Queued UI task failed")
+        except queue.Empty:
+            pass
+        # ~60 FPS cadence is overkill; 16–50ms is fine. Keep it light:
+        self.root.after(16, self._pump_ui_queue)
 
     def _expand_all(self):
         logger.debug("_expand_all called but tree view removed")
