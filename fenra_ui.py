@@ -301,9 +301,14 @@ class FenraUI:
         self._agent_text_fields: dict[str, scrolledtext.ScrolledText] = {}
         self.agent_list: tk.Listbox | None = None
         self._agent_class_cb: ttk.Combobox | None = None
+        self.cls_model_cb: ttk.Combobox | None = None
+        self.ag_model_cb: ttk.Combobox | None = None
         self._agent_model_hint: ttk.Label | None = None
         self._loading_agent_form = False
         self._pdv_row_widgets: list[tuple[ttk.Combobox, tk.DoubleVar, ttk.Scale, ttk.Button]] = []
+
+        self._MODEL_INHERIT_GLOBAL = "<inherit global>"
+        self._MODEL_INHERIT_CLASS = "<inherit class/global>"
 
         # ── Run Control Toolbar ───────────────────────────────────────────────
         toolbar = ttk.Frame(self.root)
@@ -1231,13 +1236,21 @@ class FenraUI:
 
         ttk.Label(form, text="Model").grid(row=2, column=0, sticky="w")
         self.cls_model = tk.StringVar()
-        models = ["<inherit global>"] + self._fetch_models()
-        self.cls_model_cb = ttk.Combobox(form, textvariable=self.cls_model, values=models, state="readonly")
         model_row = ttk.Frame(form)
         model_row.grid(row=2, column=1, sticky="ew", padx=4)
-        self.cls_model_cb.pack(in_=model_row, side=tk.LEFT, fill=tk.X, expand=True)
+        model_row.columnconfigure(0, weight=1)
+        models = [self._MODEL_INHERIT_GLOBAL] + self._candidate_models()
+        self.cls_model_cb = ttk.Combobox(
+            model_row,
+            textvariable=self.cls_model,
+            values=models,
+            state="readonly",
+        )
+        self.cls_model_cb.grid(row=0, column=0, sticky="ew")
         self.cls_model_cb.bind("<<ComboboxSelected>>", lambda _e: self._mark_classes_dirty())
-        ttk.Button(model_row, text="Refresh models", command=self._reload_model_choices).pack(side=tk.LEFT, padx=6)
+        ttk.Button(model_row, text="Refresh models", command=self._reload_model_choices).grid(
+            row=0, column=1, padx=6
+        )
 
         ttk.Label(form, text="Temperature").grid(row=3, column=0, sticky="w")
         self.cls_temp = tk.DoubleVar(value=1.0)
@@ -1358,7 +1371,7 @@ class FenraUI:
             self.cls_name.set("")
             default_trig = self._pdv_names[0] if self._pdv_names else ""
             self.cls_trig.set(default_trig)
-            self.cls_model.set("<inherit global>")
+            self.cls_model.set(self._MODEL_INHERIT_GLOBAL)
             self.cls_temp.set(1.0)
             self.cls_temp_inherit.set(True)
             self._clear_pdv_rows()
@@ -1412,7 +1425,8 @@ class FenraUI:
             if not trig and self._pdv_names:
                 trig = self._pdv_names[0]
             self.cls_trig.set(trig)
-            model = c.get("model") or "<inherit global>"
+            model_val = c.get("model")
+            model = str(model_val).strip() if model_val else self._MODEL_INHERIT_GLOBAL
             values = list(self.cls_model_cb["values"])
             if model not in values:
                 values.append(model)
@@ -1576,7 +1590,6 @@ class FenraUI:
         c = {
             "name": self.cls_name.get().strip(),
             "triggering_pdv": self.cls_trig.get().strip(),
-            "model": (None if self.cls_model.get() == "<inherit global>" else (self.cls_model.get().strip() or None)),
             "temperature": (
                 None
                 if self.cls_temp_inherit.get()
@@ -1589,6 +1602,9 @@ class FenraUI:
             "ignore_global_pre": bool(self.cls_ign_pre.get()),
             "ignore_global_post": bool(self.cls_ign_post.get()),
         }
+        model_sel = (self.cls_model.get() or "").strip()
+        if model_sel and model_sel != self._MODEL_INHERIT_GLOBAL:
+            c["model"] = model_sel
         sys_txt = self.cls_sys.get("1.0", tk.END).strip()
         pre_txt = self.cls_pre.get("1.0", tk.END).strip()
         post_txt = self.cls_post.get("1.0", tk.END).strip()
@@ -1683,8 +1699,15 @@ class FenraUI:
                 return
             seen.add(n)
             c["name"] = n
-            if not c.get("model"):
-                c["model"] = None
+            model_val = c.get("model")
+            if model_val:
+                model_str = str(model_val).strip()
+                if model_str:
+                    c["model"] = model_str
+                else:
+                    c.pop("model", None)
+            else:
+                c.pop("model", None)
             if "temperature" in c and c["temperature"] is None:
                 pass
             elif "temperature" in c:
@@ -1776,11 +1799,65 @@ class FenraUI:
 
     def _reload_model_choices(self) -> None:
         try:
-            self.cls_model_cb["values"] = ["<inherit global>"] + self._fetch_models()
+            choices = self._candidate_models()
+        except Exception:
+            choices = []
+
+        try:
+            if self.cls_model_cb is not None:
+                values = [self._MODEL_INHERIT_GLOBAL] + choices
+                current = (self.cls_model.get() or "").strip() if hasattr(self, "cls_model") else ""
+                if current and current not in values:
+                    values.append(current)
+                self.cls_model_cb.configure(values=values)
         except Exception:
             pass
-        if not self._loading_class:
-            self._set_classes_dirty(True)
+
+        try:
+            if self.ag_model_cb is not None:
+                values = [self._MODEL_INHERIT_CLASS] + choices
+                model_var = self._agent_form_vars.get("model") if self._agent_form_vars else None
+                current = (model_var.get() or "").strip() if model_var is not None else ""
+                if current and current not in values:
+                    values.append(current)
+                self.ag_model_cb.configure(values=values)
+        except Exception:
+            pass
+
+    def _candidate_models(self) -> list[str]:
+        seen: set[str] = set()
+        try:
+            for name in self._fetch_models():
+                if name:
+                    seen.add(str(name))
+        except Exception:
+            pass
+
+        try:
+            glob = getattr(self, "global_config", {}) or {}
+            g_model = (glob.get("model") or "").strip()
+            if g_model:
+                seen.add(g_model)
+        except Exception:
+            pass
+
+        for cls in getattr(self, "_classes_map", {}).values():
+            try:
+                c_model = (cls.get("model") or "").strip()
+                if c_model:
+                    seen.add(c_model)
+            except Exception:
+                continue
+
+        for agent in getattr(self, "_agents_model", []):
+            try:
+                a_model = (agent.get("model") or "").strip()
+                if a_model:
+                    seen.add(a_model)
+            except Exception:
+                continue
+
+        return sorted(seen)
 
     def _save_ui_state(self, data: dict) -> None:
         try:
@@ -1866,8 +1943,19 @@ class FenraUI:
         row += 1
 
         ttk.Label(form, text="Model").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
-        ttk.Entry(form, textvariable=self._agent_form_vars["model"]).grid(
-            row=row, column=1, sticky="ew", pady=2
+        model_row = ttk.Frame(form)
+        model_row.grid(row=row, column=1, sticky="ew", pady=2)
+        model_row.columnconfigure(0, weight=1)
+        self.ag_model_cb = ttk.Combobox(
+            model_row,
+            textvariable=self._agent_form_vars["model"],
+            state="readonly",
+            values=[self._MODEL_INHERIT_CLASS] + self._candidate_models(),
+        )
+        self.ag_model_cb.grid(row=0, column=0, sticky="ew")
+        self.ag_model_cb.bind("<<ComboboxSelected>>", lambda _e=None: self._update_agent_model_hint())
+        ttk.Button(model_row, text="Refresh models", command=self._reload_model_choices).grid(
+            row=0, column=1, padx=6
         )
         row += 1
 
@@ -2003,7 +2091,16 @@ class FenraUI:
         model_var = self._agent_form_vars.get("model")
         if model_var is not None:
             model_val = agent.get("model")
-            model_var.set("" if model_val is None else str(model_val))
+            if model_val:
+                model_str = str(model_val)
+                model_var.set(model_str)
+                if self.ag_model_cb is not None:
+                    values = list(self.ag_model_cb["values"])
+                    if model_str not in values:
+                        values.append(model_str)
+                        self.ag_model_cb.configure(values=values)
+            else:
+                model_var.set(self._MODEL_INHERIT_CLASS)
         temp_var = self._agent_form_vars.get("temperature")
         if temp_var is not None:
             temp_val = agent.get("temperature")
@@ -2043,6 +2140,9 @@ class FenraUI:
         self._loading_agent_form = True
         for var in self._agent_form_vars.values():
             var.set("")
+        model_var = self._agent_form_vars.get("model")
+        if model_var is not None:
+            model_var.set(self._MODEL_INHERIT_CLASS)
         for widget in self._agent_text_fields.values():
             widget.delete("1.0", tk.END)
         if hasattr(self, "ag_ign_glob_sys"):
@@ -2077,6 +2177,8 @@ class FenraUI:
             if var is None:
                 return
             value = var.get().strip()
+            if field == "model" and value == self._MODEL_INHERIT_CLASS:
+                value = ""
             if value:
                 agent[field] = value
             else:
@@ -2260,7 +2362,9 @@ class FenraUI:
         if model_var is None:
             self._agent_model_hint.config(text="")
             return
-        text = "Use class/global default" if not model_var.get().strip() else ""
+        val = (model_var.get() or "").strip()
+        is_inherit = (not val) or val == self._MODEL_INHERIT_CLASS
+        text = "(inherit from class/global)" if is_inherit else ""
         self._agent_model_hint.config(text=text)
 
     def _refresh_agent_class_choices(self) -> None:
