@@ -10,8 +10,8 @@ def test_delta_pct_and_persistence(tmp_path, monkeypatch):
 
     globals_cfg = {
         'model': 'm',
-        'pdv_gamma': 2.0,
-        'incoming_message_pdvms': []
+        'discord_pdv_name': '',
+        'discord_pdv_scale': 0.0,
     }
     (tmp_path / 'confs' / 'globals.json').write_text(
         json.dumps(globals_cfg), encoding='utf-8'
@@ -35,12 +35,17 @@ def test_delta_pct_and_persistence(tmp_path, monkeypatch):
     ])
     assert abs(res['Attentiveness'] - 0.55) < 1e-9
 
+    res2 = apply_and_persist_pdv_adjustments([
+        {'pdv': 'Attentiveness', 'delta': 0.1}
+    ])
+    assert res2['Attentiveness'] > res['Attentiveness']
+
     hist_path = tmp_path / 'chatlogs' / 'pdv_history.jsonl'
     live_path = tmp_path / 'chatlogs' / 'pdvs_live.json'
     assert hist_path.exists()
     assert live_path.exists()
 
     last_entry = json.loads(hist_path.read_text().strip().splitlines()[-1])
-    assert last_entry['pdvs']['Attentiveness'] == res['Attentiveness']
+    assert last_entry['pdvs']['Attentiveness'] == res2['Attentiveness']
     live_vals = json.loads(live_path.read_text())
-    assert live_vals['Attentiveness'] == res['Attentiveness']
+    assert live_vals['Attentiveness'] == res2['Attentiveness']
