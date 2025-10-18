@@ -3,7 +3,7 @@ import time
 import json
 import math
 from typing import List, Dict
-from config_loader import load_globals, load_pdvs, save_pdvs
+from config_loader import load_pdvs, save_pdvs
 
 
 def _clamp01(x: float) -> float:
@@ -19,15 +19,8 @@ def _pdv_values_map(pdvs_cfg: Dict[str, dict]) -> Dict[str, float]:
 
 
 def apply_and_persist_pdv_adjustments(adjs: List[dict]) -> Dict[str, float]:
-    """Apply gamma-scaled PDV deltas and persist to pdvs.json + history/live files."""
-    try:
-        globals_cfg = load_globals()
-    except Exception:
-        globals_cfg = {}
-    try:
-        gamma = float(globals_cfg.get("pdv_gamma", 2.0))
-    except Exception:
-        gamma = 2.0
+    """Apply PDV deltas with logistic shaping and persist history/live files."""
+    gamma = 2.0
 
     try:
         pdvs_cfg = load_pdvs()
@@ -39,7 +32,7 @@ def apply_and_persist_pdv_adjustments(adjs: List[dict]) -> Dict[str, float]:
 
     changed = False
     for item in adjs or []:
-        name = item.get("name")
+        name = item.get("name") or item.get("pdv")
         if not isinstance(name, str) or not name.strip():
             continue
 

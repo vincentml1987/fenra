@@ -9,6 +9,29 @@ from typing import Dict
 from config import CONF_DIR
 
 
+LEGACY_MSG_PDV_KEYS = [
+    "incoming_message_pdvms",
+    "incoming_message_dpvms",
+    "incoming_messages_pdvms",
+]
+
+
+def _strip_legacy_message_pdvms(data: dict) -> dict:
+    if not isinstance(data, dict):
+        return data
+    removed = False
+    for key in LEGACY_MSG_PDV_KEYS:
+        if key in data:
+            data.pop(key, None)
+            removed = True
+    if removed:
+        try:
+            print("[Globals] Removed legacy incoming_message_*pdvms config keys")
+        except Exception:
+            pass
+    return data
+
+
 def _ensure_parent(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -31,11 +54,11 @@ def load_globals(path: str = _conf_path('globals.json')) -> dict:
         raise FileNotFoundError(f"Missing globals config at {path}") from e
     if not isinstance(data, dict) or 'model' not in data:
         raise ValueError("globals.json missing required fields")
-    return data
+    return _strip_legacy_message_pdvms(data)
 
 def save_globals(globals_cfg: dict, path: str = _conf_path('globals.json')) -> None:
     _ensure_parent(path)
-    data = globals_cfg or {}
+    data = _strip_legacy_message_pdvms(dict(globals_cfg or {}))
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
 

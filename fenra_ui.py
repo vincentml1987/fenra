@@ -96,32 +96,31 @@ class _DiscordInUI(discord.Client):
 
         await get_discord_queue().put(entry)
 
+        # Legacy incoming_message_*pdvms removed — only Discord-controlled PDV adjustments remain.
+
+        # Discord-controlled PDV based on message length
         try:
             g = load_globals() or {}
-            adjs = g.get("incoming_message_pdvms") or g.get("incoming_message_dpvms") or []
-            if isinstance(adjs, list) and adjs:
-                norm = []
-                for item in adjs:
-                    if "delta_pct" in item and "delta" not in item:
-                        try:
-                            pct = float(item["delta_pct"])
-                            item = {**item, "delta": pct / 100.0}
-                            item.pop("delta_pct", None)
-                        except Exception:
-                            continue
-                    norm.append(item)
-                if norm:
-                    apply_and_persist_pdv_adjustments(norm)
-                    # Best-effort push to keep conductor in sync immediately.
+            pdv_name = (g.get("discord_pdv_name") or "").strip()
+            scale_val = g.get("discord_pdv_scale", 0.0)
+            scale = float(scale_val or 0.0)
+            if scale < 0:
+                scale = 0.0
+            elif scale > 1:
+                scale = 1.0
+            if pdv_name and scale > 0:
+                delta = len(msg.content or "") * scale
+                if delta != 0:
+                    apply_and_persist_pdv_adjustments([{"pdv": pdv_name, "delta": delta}])
                     try:
                         c = _get_conductor()
                         if hasattr(c, "_refresh_pdvs_from_disk"):
                             c._refresh_pdvs_from_disk()
                     except Exception:
                         pass
-                    print("[PDVM] Applied incoming_message_pdvms on Discord message.")
+                    print(f"[PDVM] Discord adjusted {pdv_name} by +{delta:.3f}")
         except Exception as e:
-            print(f"[PDVM] Failed applying incoming_message_pdvms: {e}")
+            print(f"[Discord→Fenra] Discord PDV update failed: {e}")
 
 
 async def _discord_consumer_loop():
@@ -958,6 +957,17 @@ class FenraUI:
         self._globals_vars = {}
         self.global_config = self._ui_globals()
         models = self._fetch_models()
+        def _clamp_scale(value: float) -> float:
+            try:
+                val = float(value)
+            except Exception:
+                return 0.0
+            if val < 0.0:
+                return 0.0
+            if val > 1.0:
+                return 1.0
+            return val
+
         self._globals_vars = {
             "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
             "model": tk.StringVar(value=self.global_config.get("model", "")),
@@ -966,9 +976,16 @@ class FenraUI:
             "pre_context_message": tk.StringVar(value=self.global_config.get("pre_context_message", "")),
             "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
             "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
-            "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+            "discord_pdv_name": tk.StringVar(value=self.global_config.get("discord_pdv_name", "")),
+            "discord_pdv_scale": tk.DoubleVar(
+                value=_clamp_scale(self.global_config.get("discord_pdv_scale", 0.0))
+            ),
             "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
         }
+        pdv_names = sorted(self._ui_pdvs().keys())
+        pdv_choices = [""] + pdv_names if pdv_names else [""]
+        if self._globals_vars["discord_pdv_name"].get() not in pdv_names:
+            self._globals_vars["discord_pdv_name"].set("")
         row = 0
         for label, key in [
             ("Debug Level", "debug_level"),
@@ -978,7 +995,6 @@ class FenraUI:
             ("Pre Context", "pre_context_message"),
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
-            ("PDV Gamma", "pdv_gamma"),
             ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
         ]:
             tk.Label(self.globals_tab, text=label).grid(row=row, column=0, sticky="w")
@@ -994,6 +1010,27 @@ class FenraUI:
                 entry = ttk.Entry(self.globals_tab, textvariable=self._globals_vars[key])
                 entry.grid(row=row, column=1, sticky="ew")
             row += 1
+        # Discord-controlled PDV controls
+        tk.Label(self.globals_tab, text="Discord-Controlled PDV").grid(row=row, column=0, sticky="w")
+        cb = ttk.Combobox(
+            self.globals_tab,
+            textvariable=self._globals_vars["discord_pdv_name"],
+            values=pdv_choices,
+            state="readonly",
+        )
+        cb.grid(row=row, column=1, sticky="ew")
+        row += 1
+        tk.Label(self.globals_tab, text="Discord PDV Scale (0–1)").grid(row=row, column=0, sticky="w")
+        sc = tk.Scale(
+            self.globals_tab,
+            from_=0.0,
+            to=1.0,
+            resolution=0.01,
+            orient=tk.HORIZONTAL,
+            variable=self._globals_vars["discord_pdv_scale"],
+        )
+        sc.grid(row=row, column=1, sticky="ew")
+        row += 1
         self.globals_tab.columnconfigure(1, weight=1)
         btn_frame = ttk.Frame(self.globals_tab)
         btn_frame.grid(row=row, column=0, columnspan=2, pady=4)
@@ -1019,14 +1056,22 @@ class FenraUI:
             box.configure(values=models)
 
     def _save_globals(self) -> None:
+        self.global_config.pop("pdv_gamma", None)
         for k, var in self._globals_vars.items():
             val = var.get()
-            if k in {"temperature", "max_context_tokens", "pdv_gamma", "watchdog_timeout"}:
+            if k in {"temperature", "max_context_tokens", "watchdog_timeout", "discord_pdv_scale"}:
                 try:
                     if k == "max_context_tokens":
                         self.global_config[k] = int(val)
                     elif k == "watchdog_timeout":
                         self.global_config[k] = int(float(val))
+                    elif k == "discord_pdv_scale":
+                        f = float(val)
+                        if f < 0.0:
+                            f = 0.0
+                        elif f > 1.0:
+                            f = 1.0
+                        self.global_config[k] = f
                     else:
                         self.global_config[k] = float(val)
                 except ValueError:
@@ -1122,6 +1167,7 @@ class FenraUI:
         self._refresh_class_pdv_choices()
         # If the Live Metrics tab was rebuilt earlier, keep it; just ensure canvas is in sync.
         # update_pdvs() would also redraw, but we already did a direct draw above.
+        self._build_globals_tab()
 
     def _build_classes_tab(self) -> None:
         for child in self.classes_tab.winfo_children():
@@ -2424,6 +2470,7 @@ class FenraUI:
                 self._build_globals_tab()
             elif name == "pdvs.json":
                 self._build_pdvs_tab()
+                self._build_globals_tab()
             elif name == "classes.json":
                 self._build_classes_tab()
                 if present:
@@ -3131,6 +3178,17 @@ class FenraUI:
         dlg = tk.Toplevel(self.root)
         dlg.title("Set Globals")
         dlg.transient(self.root)
+        def _clamp_scale(value: float) -> float:
+            try:
+                val = float(value)
+            except Exception:
+                return 0.0
+            if val < 0.0:
+                return 0.0
+            if val > 1.0:
+                return 1.0
+            return val
+
         vars = {
             "debug_level": tk.StringVar(value=self.global_config.get("debug_level", "INFO")),
             "model": tk.StringVar(value=self.global_config.get("model", "")),
@@ -3139,10 +3197,17 @@ class FenraUI:
             "pre_context_message": tk.StringVar(value=self.global_config.get("pre_context_message", "")),
             "post_context_message": tk.StringVar(value=self.global_config.get("post_context_message", "")),
             "max_context_tokens": tk.StringVar(value=str(self.global_config.get("max_context_tokens", 8192))),
-            "pdv_gamma": tk.StringVar(value=str(self.global_config.get("pdv_gamma", 2.0))),
+            "discord_pdv_name": tk.StringVar(value=self.global_config.get("discord_pdv_name", "")),
+            "discord_pdv_scale": tk.DoubleVar(
+                value=_clamp_scale(self.global_config.get("discord_pdv_scale", 0.0))
+            ),
             "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
         }
         models = self._fetch_models()
+        pdv_names = sorted(self._ui_pdvs().keys())
+        pdv_choices = [""] + pdv_names if pdv_names else [""]
+        if vars["discord_pdv_name"].get() not in pdv_names:
+            vars["discord_pdv_name"].set("")
         row = 0
         for label, key in [
             ("Debug Level", "debug_level"),
@@ -3152,7 +3217,6 @@ class FenraUI:
             ("Pre Context", "pre_context_message"),
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
-            ("PDV Gamma", "pdv_gamma"),
             ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
         ]:
             tk.Label(dlg, text=label).grid(row=row, column=0, sticky="w")
@@ -3163,6 +3227,27 @@ class FenraUI:
                 entry = ttk.Entry(dlg, textvariable=vars[key])
                 entry.grid(row=row, column=1, sticky="ew")
             row += 1
+        # Discord controls in dialog
+        tk.Label(dlg, text="Discord-Controlled PDV").grid(row=row, column=0, sticky="w")
+        cb = ttk.Combobox(
+            dlg,
+            textvariable=vars["discord_pdv_name"],
+            values=pdv_choices,
+            state="readonly",
+        )
+        cb.grid(row=row, column=1, sticky="ew")
+        row += 1
+        tk.Label(dlg, text="Discord PDV Scale (0–1)").grid(row=row, column=0, sticky="w")
+        sc = tk.Scale(
+            dlg,
+            from_=0.0,
+            to=1.0,
+            resolution=0.01,
+            orient=tk.HORIZONTAL,
+            variable=vars["discord_pdv_scale"],
+        )
+        sc.grid(row=row, column=1, sticky="ew")
+        row += 1
         dlg.columnconfigure(1, weight=1)
         btn = ttk.Frame(dlg)
         btn.grid(row=row, column=0, columnspan=2, pady=4)
@@ -3172,14 +3257,22 @@ class FenraUI:
 
         def _save() -> None:
             temp_cfg = {}
+            self.global_config.pop("pdv_gamma", None)
             for k, var in vars.items():
                 val = var.get()
-                if k in {"temperature", "max_context_tokens", "pdv_gamma", "watchdog_timeout"}:
+                if k in {"temperature", "max_context_tokens", "watchdog_timeout", "discord_pdv_scale"}:
                     try:
                         if k == "max_context_tokens":
                             temp_cfg[k] = int(val)
                         elif k == "watchdog_timeout":
                             temp_cfg[k] = int(float(val))
+                        elif k == "discord_pdv_scale":
+                            f = float(val)
+                            if f < 0.0:
+                                f = 0.0
+                            elif f > 1.0:
+                                f = 1.0
+                            temp_cfg[k] = f
                         else:
                             temp_cfg[k] = float(val)
                     except ValueError:

@@ -22,11 +22,26 @@ def test_roundtrip(tmp_path):
         "pre_context_message": "",
         "post_context_message": "",
         "max_context_tokens": 100,
-        "pdv_gamma": 2.0,
+        "discord_pdv_name": "",
+        "discord_pdv_scale": 0.25,
     }
+    legacy = {
+        "incoming_message_pdvms": [
+            {"pdv": "Attentiveness", "delta": 0.1}
+        ],
+        "incoming_message_dpvms": [
+            {"pdv": "Curiosity", "delta": 0.2}
+        ],
+        "incoming_messages_pdvms": [
+            {"pdv": "Empathy", "delta": 0.3}
+        ],
+    }
+    g_with_legacy = {**g, **legacy}
     gp = tmp_path / "globals.json"
-    save_globals(g, str(gp))
-    assert load_globals(str(gp)) == g
+    save_globals(g_with_legacy, str(gp))
+    loaded = load_globals(str(gp))
+    assert loaded == g
+    assert not any(key in loaded for key in legacy)
     assert not (tmp_path / "globals.json.tmp").exists()
 
     pd = {"pdvs": [{"name": "p", "description": "", "value": 0.5}]}

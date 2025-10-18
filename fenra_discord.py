@@ -61,17 +61,24 @@ class DiscordToFenra(discord.Client):
         queue.append(entry)
         save_queue(queue)
 
-        # After enqueueing, apply any configured PDVMs for incoming messages.
+        # Legacy incoming_message_*pdvms removed — only Discord-controlled PDV adjustments remain.
+        # Discord-controlled PDV based on message length
         try:
-            g = load_globals()
-            adjs = g.get("incoming_message_pdvms")
-            if not isinstance(adjs, list) or not adjs:
-                adjs = g.get("incoming_message_dpvms") or []
-            if adjs:
-                apply_and_persist_pdv_adjustments(adjs)
+            g = load_globals() or {}
+            pdv_name = (g.get("discord_pdv_name") or "").strip()
+            scale_val = g.get("discord_pdv_scale", 0.0)
+            scale = float(scale_val or 0.0)
+            if scale < 0:
+                scale = 0.0
+            elif scale > 1:
+                scale = 1.0
+            if pdv_name and scale > 0:
+                delta = len(msg.content or "") * scale
+                if delta != 0:
+                    apply_and_persist_pdv_adjustments([{"pdv": pdv_name, "delta": delta}])
+                    print(f"[PDVM] Discord adjusted {pdv_name} by +{delta:.3f}")
         except Exception as e:
-            # Non-fatal: log-visible but do not crash the client
-            print(f"[Discord→Fenra] PDVM apply failed: {e}")
+            print(f"[Discord→Fenra] Discord PDV update failed: {e}")
 
         print(f"[Discord→Fenra] Queued message at {entry['timestamp']}")
 
