@@ -8,6 +8,8 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 import sys as _sys
+import subprocess
+import re
 
 import requests
 from fenra_ui import FenraUI
@@ -41,6 +43,69 @@ logger = create_object_logger("Conductor")
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
+
+_PWSH_BIN_CANDIDATES = ["pwsh", "powershell", "powershell.exe"]
+
+
+def _which_pwsh() -> str:
+    for cand in _PWSH_BIN_CANDIDATES:
+        path = shutil.which(cand)
+        if path:
+            return path
+    # Fallback to plain string; subprocess will raise if not found.
+    return "powershell"
+
+
+def _clip(text: str, limit: int = 8000) -> str:
+    t = (text or "").replace("\x00", "")
+    if len(t) <= limit:
+        return t
+    head, tail = t[:4000], t[-2000:]
+    return f"{head}\n…[truncated {len(t)-6000} chars]…\n{tail}"
+
+
+def _extract_pwsh_commands(text: str) -> list[str]:
+    # Non-greedy between *~ and ~*, supports multi-line blocks.
+    return re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
+
+
+def _run_powershell(cmd: str, timeout: int | None = None) -> str:
+    """
+    Run a command via PowerShell and return combined stdout/stderr.
+    Respects optional GLOBALS['powershell_timeout'] if provided (seconds).
+    """
+
+    try:
+        if timeout is None:
+            to = GLOBALS.get("powershell_timeout", 20)
+            try:
+                timeout = int(to) if to is not None else 20
+            except Exception:
+                timeout = 20
+        exe = _which_pwsh()
+        # -NoProfile/-NonInteractive keep it clean and deterministic
+        proc = subprocess.run(
+            [exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            errors="replace",
+        )
+        out = proc.stdout.strip()
+        err = proc.stderr.strip()
+        if proc.returncode != 0:
+            joined = (out + ("\n" if out and err else "") + err).strip()
+            return _clip(
+                f"(exit {proc.returncode})\n{joined}" if joined else f"(exit {proc.returncode})"
+            )
+        return _clip(out if out else "(no output)")
+    except subprocess.TimeoutExpired:
+        return "(timeout)"
+    except FileNotFoundError:
+        return "(powershell not found)"
+    except Exception as e:
+        return _clip(f"(error) {type(e).__name__}: {e}")
+
 
 # ----------------------------------------------------------------------------
 # Config loading and precedence helpers
@@ -736,6 +801,13 @@ def step_agent(agent_name: str) -> Optional[str]:
         logger.exception("Generation failed for %s: %s", agent["name"], exc)
         nxt = select_next_agent(agent_name)
         return nxt["name"] if nxt else None
+    # Execute any PowerShell commands emitted by the agent as *~...~* blocks.
+    commands = _extract_pwsh_commands(reply)
+    if commands:
+        for cmd in commands:
+            ps_out = _run_powershell(cmd)
+            reply += f"\nCommand Run: {cmd}\nPowerShell Output: {ps_out}\n"
+
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
