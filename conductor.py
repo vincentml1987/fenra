@@ -861,7 +861,24 @@ def step_agent(agent_name: str) -> Optional[str]:
     commands = _extract_pwsh_commands(reply)
     if commands:
         for cmd in commands:
+            cwd_before = _run_powershell("(Get-Location).Path")
+            if UI is not None and hasattr(UI, "append_ps"):
+                try:
+                    UI.append_ps(f"PS {cwd_before}> {cmd}")
+                except Exception:
+                    logger.exception("UI append_ps failed for command prompt")
             ps_out = _run_powershell(cmd)
+            if UI is not None and hasattr(UI, "append_ps"):
+                try:
+                    UI.append_ps(ps_out)
+                except Exception:
+                    logger.exception("UI append_ps failed for command output")
+            cwd_after = _run_powershell("(Get-Location).Path")
+            if UI is not None and hasattr(UI, "append_ps"):
+                try:
+                    UI.append_ps(f"PS {cwd_after}> ")
+                except Exception:
+                    logger.exception("UI append_ps failed for next prompt")
             reply += f"\nCommand Run: {cmd}\nPowerShell Output: {ps_out}\n"
 
     cls = CLASSES[agent["agent_class"]]
