@@ -75,7 +75,7 @@ class DiscordToFenra(discord.Client):
             if pdv_name and scale > 0:
                 delta = len(msg.content or "") * scale
                 if delta != 0:
-                    apply_and_persist_pdv_adjustments([{"pdv": pdv_name, "delta": delta}])
+                    apply_and_persist_pdv_adjustments([{"name": pdv_name, "delta": delta}])
                     print(f"[PDVM] Discord adjusted {pdv_name} by +{delta:.3f}")
         except Exception as e:
             print(f"[Discord→Fenra] Discord PDV update failed: {e}")
