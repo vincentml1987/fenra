@@ -8,6 +8,9 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 import sys as _sys
+import subprocess
+import re
+import uuid
 
 import requests
 from fenra_ui import FenraUI
@@ -42,6 +45,117 @@ logger = create_object_logger("Conductor")
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
 
+_PWSH_BIN_CANDIDATES = ["pwsh", "powershell", "powershell.exe"]
+_PWSH_PROC: subprocess.Popen | None = None
+_PWSH_LOCK = threading.Lock()
+
+
+def _which_pwsh() -> str:
+    for cand in _PWSH_BIN_CANDIDATES:
+        path = shutil.which(cand)
+        if path:
+            return path
+    return "powershell"
+
+
+def _clip(text: str, limit: int = 8000) -> str:
+    t = (text or "").replace("\x00", "")
+    if len(t) <= limit:
+        return t
+    head, tail = t[:4000], t[-2000:]
+    return f"{head}\n…[truncated {len(t)-6000} chars]…\n{tail}"
+
+
+def _extract_pwsh_commands(text: str) -> list[str]:
+    return re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
+
+
+def _ps_timeout_seconds() -> int:
+    try:
+        to = GLOBALS.get("powershell_timeout", 20)
+        return int(to) if to is not None else 20
+    except Exception:
+        return 20
+
+
+def _start_powershell() -> subprocess.Popen:
+    exe = _which_pwsh()
+    proc = subprocess.Popen(
+        [exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-NoExit", "-Command", "-"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        errors="replace",
+    )
+    init = str(GLOBALS.get("powershell_init_script", "") or "").strip()
+    if init:
+        try:
+            _ps_invoke(init, timeout=_ps_timeout_seconds(), proc=proc)
+        except Exception:
+            pass
+    return proc
+
+
+def _ensure_powershell_running() -> subprocess.Popen:
+    global _PWSH_PROC
+    if _PWSH_PROC is None or _PWSH_PROC.poll() is not None:
+        _PWSH_PROC = _start_powershell()
+    return _PWSH_PROC
+
+
+def _ps_invoke(cmd: str, timeout: int | None = None, proc: subprocess.Popen | None = None) -> str:
+    try:
+        if timeout is None:
+            timeout = _ps_timeout_seconds()
+        ps = proc or _ensure_powershell_running()
+        if ps.stdin is None or ps.stdout is None:
+            return "(powershell stream error)"
+        fence = str(uuid.uuid4())
+        begin = f"<<<BEGIN:{fence}>>>"
+        end = f"<<<END:{fence}>>>"
+        with _PWSH_LOCK:
+            ps.stdin.write(f"Write-Output '{begin}'\n")
+            ps.stdin.write(cmd + ("\n" if not cmd.endswith("\n") else ""))
+            ps.stdin.write(f"\nWrite-Output '{end}'\n")
+            ps.stdin.flush()
+
+            t0 = time.time()
+            lines: list[str] = []
+            begun = False
+            while True:
+                if timeout and (time.time() - t0) > timeout:
+                    return "(timeout)"
+                line = ps.stdout.readline()
+                if line == "":
+                    try:
+                        ps.kill()
+                    except Exception:
+                        pass
+                    global _PWSH_PROC
+                    _PWSH_PROC = None
+                    return "(powershell exited)"
+                s = line.rstrip("\r\n")
+                if not begun:
+                    if s.strip() == begin:
+                        begun = True
+                    continue
+                if s.strip() == end:
+                    break
+                lines.append(s)
+            out = "\n".join(lines).strip()
+            return _clip(out if out else "(no output)")
+    except FileNotFoundError:
+        return "(powershell not found)"
+    except Exception as e:
+        return _clip(f"(error) {type(e).__name__}: {e}")
+
+
+def _run_powershell(cmd: str, timeout: int | None = None) -> str:
+    return _ps_invoke(cmd, timeout=timeout)
+
+
 # ----------------------------------------------------------------------------
 # Config loading and precedence helpers
 # ----------------------------------------------------------------------------
@@ -74,7 +188,7 @@ def _reset_config_state() -> None:
     """Reset in-memory config structures to harmless defaults."""
 
     global GLOBALS, PDV_META, PDVS, CLASSES, AGENTS, AGENTS_BY_NAME
-    global AGENTS_BY_GROUP_IN, STATE, CONTEXT, MODEL, _CONFIGS_LOADED
+    global AGENTS_BY_GROUP_IN, STATE, CONTEXT, MODEL, _CONFIGS_LOADED, _PWSH_PROC
 
     GLOBALS = {}
     PDV_META = {}
@@ -88,6 +202,13 @@ def _reset_config_state() -> None:
     MODEL = None
     _CONFIGS_LOADED = False
     _RUN_EVENT.clear()
+
+    try:
+        if _PWSH_PROC and _PWSH_PROC.poll() is None:
+            _PWSH_PROC.kill()
+    except Exception:
+        pass
+    _PWSH_PROC = None
 
 
 def start_processing() -> None:
@@ -736,6 +857,13 @@ def step_agent(agent_name: str) -> Optional[str]:
         logger.exception("Generation failed for %s: %s", agent["name"], exc)
         nxt = select_next_agent(agent_name)
         return nxt["name"] if nxt else None
+    # Execute any PowerShell commands emitted by the agent as *~...~* blocks.
+    commands = _extract_pwsh_commands(reply)
+    if commands:
+        for cmd in commands:
+            ps_out = _run_powershell(cmd)
+            reply += f"\nCommand Run: {cmd}\nPowerShell Output: {ps_out}\n"
+
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
