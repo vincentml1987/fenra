@@ -112,7 +112,7 @@ class _DiscordInUI(discord.Client):
             if pdv_name and scale > 0:
                 delta = len(msg.content or "") * scale
                 if delta != 0:
-                    apply_and_persist_pdv_adjustments([{"pdv": pdv_name, "delta": delta}])
+                    apply_and_persist_pdv_adjustments([{"name": pdv_name, "delta": delta}])
                     try:
                         c = _get_conductor()
                         if hasattr(c, "_refresh_pdvs_from_disk"):
