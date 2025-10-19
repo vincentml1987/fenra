@@ -14,6 +14,7 @@ from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
+from tkinter import font as tkfont
 
 import discord
 import requests
@@ -431,7 +432,20 @@ class FenraUI:
         self.thought_stream = scrolledtext.ScrolledText(thought_frame, state="disabled")
         self.thought_stream.pack(fill=tk.BOTH, expand=True)
 
-        self.events_stream = scrolledtext.ScrolledText(event_frame, state="disabled")
+        ttk.Label(event_frame, text="PowerShell Console").pack(anchor="w", padx=4, pady=(0, 2))
+
+        try:
+            console_font = tkfont.nametofont("TkFixedFont")
+        except tk.TclError:
+            console_font = tkfont.Font(family="Consolas", size=10)
+        self._console_font = console_font
+
+        self.events_stream = scrolledtext.ScrolledText(
+            event_frame,
+            state="disabled",
+            wrap=tk.NONE,
+            font=self._console_font,
+        )
         self.events_stream.pack(fill=tk.BOTH, expand=True)
 
         # Backward compatibility
@@ -895,6 +909,27 @@ class FenraUI:
 
         self._threadsafe(_append)
         logger.debug("Exiting append_event")
+
+    def append_ps(self, line: str) -> None:
+        logger.debug("Entering append_ps line=%s", line)
+
+        def _append():
+            txt = line if line.endswith("\n") else f"{line}\n"
+            self._append_text(self.events_stream, txt)
+
+        self._threadsafe(_append)
+        logger.debug("Exiting append_ps")
+
+    def clear_ps(self) -> None:
+        logger.debug("Entering clear_ps")
+
+        def _do():
+            self.events_stream.configure(state="normal")
+            self.events_stream.delete("1.0", tk.END)
+            self.events_stream.configure(state="disabled")
+
+        self._threadsafe(_do)
+        logger.debug("Exiting clear_ps")
 
     def update_queue_and_sent(self, queued: Optional[list] = None, sent: Optional[list] = None) -> None:
         logger.debug("Entering update_queue_and_sent queued=%s sent=%s", queued, sent)
