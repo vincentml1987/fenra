@@ -1024,6 +1024,9 @@ class FenraUI:
                 value=_clamp_scale(self.global_config.get("discord_pdv_scale", 0.0))
             ),
             "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
+            "discord_history_limit": tk.StringVar(
+                value=str(self.global_config.get("discord_history_limit", 10))
+            ),
         }
         pdv_names = sorted(self._ui_pdvs().keys())
         pdv_choices = [""] + pdv_names if pdv_names else [""]
@@ -1039,6 +1042,7 @@ class FenraUI:
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
             ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
+            ("Discord History Limit", "discord_history_limit"),
         ]:
             tk.Label(self.globals_tab, text=label).grid(row=row, column=0, sticky="w")
             if key == "model":
@@ -1102,12 +1106,23 @@ class FenraUI:
         self.global_config.pop("pdv_gamma", None)
         for k, var in self._globals_vars.items():
             val = var.get()
-            if k in {"temperature", "max_context_tokens", "watchdog_timeout", "discord_pdv_scale"}:
+            if k in {
+                "temperature",
+                "max_context_tokens",
+                "watchdog_timeout",
+                "discord_history_limit",
+                "discord_pdv_scale",
+            }:
                 try:
                     if k == "max_context_tokens":
                         self.global_config[k] = int(val)
                     elif k == "watchdog_timeout":
                         self.global_config[k] = int(float(val))
+                    elif k == "discord_history_limit":
+                        n = int(float(val))
+                        if n < 0:
+                            n = 0
+                        self.global_config[k] = n
                     elif k == "discord_pdv_scale":
                         f = float(val)
                         if f < 0.0:
@@ -1118,7 +1133,10 @@ class FenraUI:
                     else:
                         self.global_config[k] = float(val)
                 except ValueError:
-                    self.global_config[k] = None
+                    if k == "discord_history_limit":
+                        self.global_config[k] = 10
+                    else:
+                        self.global_config[k] = None
             else:
                 self.global_config[k] = val
         save_globals(self.global_config)
@@ -3344,6 +3362,9 @@ class FenraUI:
                 value=_clamp_scale(self.global_config.get("discord_pdv_scale", 0.0))
             ),
             "watchdog_timeout": tk.StringVar(value=str(self.global_config.get("watchdog_timeout", 900))),
+            "discord_history_limit": tk.StringVar(
+                value=str(self.global_config.get("discord_history_limit", 10))
+            ),
         }
         models = self._fetch_models()
         pdv_names = sorted(self._ui_pdvs().keys())
@@ -3360,6 +3381,7 @@ class FenraUI:
             ("Post Context", "post_context_message"),
             ("Max Tokens", "max_context_tokens"),
             ("Watchdog Timeout (s)  (0=disabled)", "watchdog_timeout"),
+            ("Discord History Limit", "discord_history_limit"),
         ]:
             tk.Label(dlg, text=label).grid(row=row, column=0, sticky="w")
             if key == "model":
@@ -3402,12 +3424,23 @@ class FenraUI:
             self.global_config.pop("pdv_gamma", None)
             for k, var in vars.items():
                 val = var.get()
-                if k in {"temperature", "max_context_tokens", "watchdog_timeout", "discord_pdv_scale"}:
+                if k in {
+                    "temperature",
+                    "max_context_tokens",
+                    "watchdog_timeout",
+                    "discord_history_limit",
+                    "discord_pdv_scale",
+                }:
                     try:
                         if k == "max_context_tokens":
                             temp_cfg[k] = int(val)
                         elif k == "watchdog_timeout":
                             temp_cfg[k] = int(float(val))
+                        elif k == "discord_history_limit":
+                            n = int(float(val))
+                            if n < 0:
+                                n = 0
+                            temp_cfg[k] = n
                         elif k == "discord_pdv_scale":
                             f = float(val)
                             if f < 0.0:
@@ -3418,8 +3451,11 @@ class FenraUI:
                         else:
                             temp_cfg[k] = float(val)
                     except ValueError:
-                        messagebox.showerror("Globals", f"Invalid value for {k}")
-                        return
+                        if k == "discord_history_limit":
+                            temp_cfg[k] = 10
+                        else:
+                            messagebox.showerror("Globals", f"Invalid value for {k}")
+                            return
                 else:
                     temp_cfg[k] = val
             if not temp_cfg.get("model") or temp_cfg.get("temperature") is None:
