@@ -8,8 +8,7 @@ import re
 import json
 from copy import deepcopy
 
-import conductor
-from config_loader import save_agents
+
 
 # ---------------------------
 # Function registry and API
@@ -145,6 +144,11 @@ def fenra_powershell(command: str) -> str:
 
 @register("duplicate_self", "Duplicate the current agent as <name>-dup and save/refresh.")
 def duplicate_self() -> str:
+
+    import importlib
+    from config_loader import save_agents
+    conductor = importlib.import_module("conductor")
+    
     """
     Create a duplicate of the calling agent with the name '<original>-dup'
     (or '<original>-dup2', etc., if needed), append it to confs/agents.json,
