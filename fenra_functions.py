@@ -212,3 +212,21 @@ def duplicate_self() -> str:
 
     return f"Duplicated {base} → {name}"
 
+
+@register("list_agents", "Return the names of all agents currently loaded.")
+def list_agents() -> str:
+    """
+    List the name of all agents within the network (one per line).
+    """
+    import importlib
+
+    conductor = importlib.import_module("conductor")
+    # Ensure configs are loaded so AGENTS/AGENTS_BY_NAME are populated
+    if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
+        try:
+            conductor.ensure_configs_loaded()
+        except Exception:
+            pass
+    names = sorted([a.get("name") for a in getattr(conductor, "AGENTS", []) if a.get("name")])
+    return "\n".join(names) if names else "(no agents loaded)"
+

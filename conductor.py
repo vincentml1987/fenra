@@ -67,8 +67,17 @@ def _clip(text: str, limit: int = 8000) -> str:
     return f"{head}\n…[truncated {len(t)-6000} chars]…\n{tail}"
 
 
+def _is_valid_call_span(span: str) -> bool:
+    """Return True if the span contains no whitespace characters."""
+
+    return not re.search(r"\s", span)
+
+
 def _extract_pwsh_commands(text: str) -> list[str]:
-    return re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
+    """Extract *~...~* call spans that obey the no-whitespace rule."""
+
+    spans = re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
+    return [s for s in spans if _is_valid_call_span(s)]
 
 
 def _ps_timeout_seconds() -> int:
