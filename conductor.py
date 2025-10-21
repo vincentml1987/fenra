@@ -15,6 +15,7 @@ import uuid
 import requests
 from fenra_ui import FenraUI
 import importlib
+import fenra_functions
 
 # Ensure that when this file is executed as a script (__main__), importing
 # "conductor" yields the running module instead of creating a duplicate.
@@ -857,29 +858,19 @@ def step_agent(agent_name: str) -> Optional[str]:
         logger.exception("Generation failed for %s: %s", agent["name"], exc)
         nxt = select_next_agent(agent_name)
         return nxt["name"] if nxt else None
-    # Execute any PowerShell commands emitted by the agent as *~...~* blocks.
+    # Execute any Fenra function calls emitted by the agent as *~...~* blocks.
     commands = _extract_pwsh_commands(reply)
     if commands:
         for cmd in commands:
-            cwd_before = _run_powershell("(Get-Location).Path")
+            expr = (cmd or "").strip()
+            fn_name, _found, result = fenra_functions.dispatch_expression(expr)
             if UI is not None and hasattr(UI, "append_ps"):
                 try:
-                    UI.append_ps(f"PS {cwd_before}> {cmd}")
+                    UI.append_ps(f"Function called: {fn_name}")
+                    UI.append_ps(f"Function result: {result}")
                 except Exception:
-                    logger.exception("UI append_ps failed for command prompt")
-            ps_out = _run_powershell(cmd)
-            if UI is not None and hasattr(UI, "append_ps"):
-                try:
-                    UI.append_ps(ps_out)
-                except Exception:
-                    logger.exception("UI append_ps failed for command output")
-            cwd_after = _run_powershell("(Get-Location).Path")
-            if UI is not None and hasattr(UI, "append_ps"):
-                try:
-                    UI.append_ps(f"PS {cwd_after}> ")
-                except Exception:
-                    logger.exception("UI append_ps failed for next prompt")
-            reply += f"\nCommand Run: {cmd}\nPowerShell Output: {ps_out}\n"
+                    logger.exception("UI append_ps failed for function dispatch")
+            reply += f"\nFunction called: {fn_name}\nFunction result: {result}\n"
 
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
