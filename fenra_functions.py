@@ -5,6 +5,11 @@ import subprocess
 import sys
 import shutil
 import re
+import json
+from copy import deepcopy
+
+import conductor
+from config_loader import save_agents
 
 # ---------------------------
 # Function registry and API
@@ -136,4 +141,70 @@ def fenra_powershell(command: str) -> str:
         return combined.strip()
     except Exception as e:
         return f"(error) {type(e).__name__}: {e}"
+
+
+@register("duplicate_self", "Duplicate the current agent as <name>-dup and save/refresh.")
+def duplicate_self() -> str:
+    """
+    Create a duplicate of the calling agent with the name '<original>-dup'
+    (or '<original>-dup2', etc., if needed), append it to confs/agents.json,
+    update Conductor's in-memory indexes, and refresh the UI like the GUI
+    would after a save.
+    """
+    # Resolve the caller
+    cur_name = (conductor.STATE or {}).get("current_agent")
+    if not isinstance(cur_name, str) or cur_name not in conductor.AGENTS_BY_NAME:
+        raise RuntimeError("duplicate_self: no current agent is set or it cannot be found")
+
+    source = conductor.AGENTS_BY_NAME[cur_name]
+
+    # Deep copy and rename
+    dup = json.loads(json.dumps(source))  # safe deep copy of plain dict
+    base = source.get("name") or "Agent"
+    proposed = f"{base}-dup"
+
+    # Ensure uniqueness (Agent1-dup, Agent1-dup2, ...)
+    existing = {a.get("name") for a in conductor.AGENTS}
+    name = proposed
+    ctr = 2
+    while name in existing:
+        name = f"{proposed}{ctr}"
+        ctr += 1
+    dup["name"] = name
+
+    # Normalize required list fields (save_agents will also setdefault, but keep tidy)
+    dup.setdefault("groups_in", list(source.get("groups_in", []) or []))
+    dup.setdefault("groups_out", list(source.get("groups_out", []) or []))
+
+    # Append and persist
+    conductor.AGENTS.append(dup)
+
+    # Rebuild in-memory indexes to mirror Conductor’s normal load path
+    conductor.AGENTS_BY_NAME = {a["name"]: a for a in conductor.AGENTS}
+    grp_map = {}
+    for a in conductor.AGENTS:
+        for g in a.get("groups_in", []):
+            grp_map.setdefault(g, set()).add(a["name"])
+    conductor.AGENTS_BY_GROUP_IN = grp_map
+
+    # Save to disk (UI file watcher will rebuild relevant tabs)
+    save_agents(conductor.AGENTS)
+
+    # Best-effort UI refresh (optional; watcher will handle this too)
+    ui = getattr(conductor, "UI", None)
+    try:
+        if ui is not None and hasattr(ui, "_threadsafe"):
+            # Re-read agents for the UI model and refresh panels
+            ui._threadsafe(lambda: setattr(ui, "_agents_model", ui._ui_agents()))
+            if hasattr(ui, "_update_required_configs_state"):
+                ui._threadsafe(ui._update_required_configs_state)
+            if hasattr(ui, "_refresh_agent_listbox"):
+                ui._threadsafe(ui._refresh_agent_listbox)
+            if hasattr(ui, "_build_simple_groups_tab"):
+                ui._threadsafe(ui._build_simple_groups_tab)
+    except Exception:
+        # Non-fatal; the filesystem watcher will still update the UI
+        pass
+
+    return f"Duplicated {base} → {name}"
 
