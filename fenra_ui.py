@@ -182,6 +182,73 @@ async def stop_discord_in_ui():
         _discord_consumer_task.cancel()
     print("[UI/Discord] Listening stopped.")
 
+
+def ensure_discord_running(timeout: float = 5.0) -> bool:
+    """Start the Discord client in a background loop when running headless."""
+
+    global _discord_client, _discord_loop, _discord_task
+
+    token = os.getenv("fenra_token")
+    chan = os.getenv("DISCORD_CHANNEL_ID")
+    if not token or not chan:
+        return False
+
+    client = _discord_client
+    if client is not None:
+        try:
+            if client.is_ready():
+                return True
+        except Exception:
+            pass
+
+    loop = _discord_loop
+    if loop is None or not loop.is_running():
+
+        def _run_loop() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            globals()["_discord_loop"] = loop
+            try:
+                loop.run_until_complete(start_discord_in_ui())
+            except Exception:
+                pass
+            try:
+                loop.run_forever()
+            finally:
+                loop.close()
+
+        threading.Thread(target=_run_loop, daemon=True).start()
+    else:
+        need_restart = _discord_client is None
+        task = _discord_task
+        if not need_restart and task is not None:
+            try:
+                need_restart = task.done()
+            except Exception:
+                need_restart = True
+        if need_restart:
+            try:
+                asyncio.run_coroutine_threadsafe(start_discord_in_ui(), loop)
+            except Exception:
+                pass
+
+    deadline = time.time() + max(0.0, float(timeout))
+    while time.time() < deadline:
+        client = _discord_client
+        if client is not None:
+            try:
+                if client.is_ready():
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.1)
+
+    client = _discord_client
+    try:
+        return bool(client and client.is_ready())
+    except Exception:
+        return False
+
 # ─── public: fetch recent discord messages for listeners ──────────────────────
 async def _discord_fetch_recent(n: int) -> list[dict]:
     """Coroutine to fetch last n messages from configured channel."""

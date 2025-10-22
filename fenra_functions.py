@@ -133,6 +133,9 @@ def get_discord_message_count() -> str:
 
     try:
         fe = importlib.import_module("fenra_ui")
+        ensure = getattr(fe, "ensure_discord_running", None)
+        if callable(ensure) and not ensure():
+            return "(error) Discord not configured or unavailable"
         if hasattr(fe, "count_discord_messages"):
             return str(int(fe.count_discord_messages()))
     except Exception as e:
@@ -151,6 +154,10 @@ def get_discord_messages(*args) -> str:
         fe = importlib.import_module("fenra_ui")
     except Exception as e:
         return f"(error) {type(e).__name__}: {e}"
+
+    ensure = getattr(fe, "ensure_discord_running", None)
+    if callable(ensure) and not ensure():
+        return "(error) Discord not configured or unavailable"
 
     if len(args) == 0:
         try:
