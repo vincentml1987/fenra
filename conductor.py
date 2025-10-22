@@ -479,9 +479,18 @@ def has_downstream(agent_name: str) -> bool:
 
 
 def downstream_candidates(curr_name: str) -> List[dict]:
-    cur = AGENTS_BY_NAME[curr_name]
+    # Be resilient if an agent was renamed/removed mid-run
+    cur = AGENTS_BY_NAME.get(curr_name)
+    if cur is None:
+        logger.warning(
+            "downstream_candidates: '%s' not found (likely renamed/removed).", curr_name
+        )
+        return []
     outs = set(cur.get("groups_out", []))
-    return [a for a in AGENTS if a["name"] != curr_name and outs & set(a.get("groups_in", []))]
+    return [
+        a for a in AGENTS
+        if a["name"] != curr_name and outs & set(a.get("groups_in", []))
+    ]
 
 
 def _flag_no_downstream(agent: dict, groups: Iterable[str]) -> None:
@@ -493,10 +502,17 @@ def _flag_no_downstream(agent: dict, groups: Iterable[str]) -> None:
 def select_next_agent(curr_name: str) -> Optional[dict]:
     """Select the next agent using weighted randomness over downstream classes."""
 
+    # If current name disappeared (e.g., renamed), just say "no selection"
+    if curr_name not in AGENTS_BY_NAME:
+        logger.warning("select_next_agent: '%s' not found; returning None", curr_name)
+        return None
+
     D = downstream_candidates(curr_name)
     if not D:
-        cur = AGENTS_BY_NAME[curr_name]
-        _flag_no_downstream(cur, cur.get("groups_out", []))
+        # Guard again in case it vanished between calls
+        cur = AGENTS_BY_NAME.get(curr_name)
+        if cur:
+            _flag_no_downstream(cur, cur.get("groups_out", []))
         return None
 
     class_to_agents: Dict[str, List[dict]] = {}
@@ -523,28 +539,8 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
                 return opt
         return options[-1]
 
-    attempted: set[str] = set()
-    while len(attempted) < len(classes):
-        chosen_class = _weighted_choice(classes, weights)
-        attempted.add(chosen_class)
-        candidates = list(class_to_agents.get(chosen_class, []))
-        random.shuffle(candidates)
-        for cand in candidates:
-            outs = set(cand.get("groups_out", []))
-            consumers = [
-                other
-                for other in AGENTS
-                if other["name"] != cand["name"] and outs & set(other.get("groups_in", []))
-            ]
-            if consumers:
-                return cand
-            _flag_no_downstream(cand, outs)
-        idx = classes.index(chosen_class)
-        weights[idx] = 0.0
-
-    cur = AGENTS_BY_NAME[curr_name]
-    _flag_no_downstream(cur, cur.get("groups_out", []))
-    return None
+    chosen_class = _weighted_choice(classes, weights)
+    return random.choice(class_to_agents[chosen_class])
 
 
 def _discord_transcript(limit: int) -> str:
