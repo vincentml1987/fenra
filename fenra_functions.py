@@ -124,6 +124,75 @@ def announce_self() -> str:
     return f"The agent who ran this function is named '{name}'"
 
 
+@register(
+    "get_discord_message_count",
+    "Return the total number of messages in the configured Discord channel.",
+)
+def get_discord_message_count() -> str:
+    import importlib
+
+    try:
+        fe = importlib.import_module("fenra_ui")
+        if hasattr(fe, "count_discord_messages"):
+            return str(int(fe.count_discord_messages()))
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+    return "0"
+
+
+@register(
+    "get_discord_messages",
+    "Get Discord messages. Forms: get_discord_messages(); get_discord_messages(n); get_discord_messages(m, n). Two-arg form is 1-based from oldest (m=start index, n=count).",
+)
+def get_discord_messages(*args) -> str:
+    import importlib
+
+    try:
+        fe = importlib.import_module("fenra_ui")
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    if len(args) == 0:
+        try:
+            msgs = fe.fetch_recent_discord_messages(1) or []
+            if not msgs:
+                return "(no messages)"
+            m = msgs[0]
+            return m.get("text") or ""
+        except Exception as e:
+            return f"(error) {type(e).__name__}: {e}"
+
+    if len(args) == 1:
+        try:
+            n = max(1, int(args[0]))
+        except Exception:
+            return "(error) ValueError: expected integer 'n'"
+        try:
+            recent = fe.fetch_recent_discord_messages(n) or []
+            recent = list(reversed(recent))
+            lines = [it.get("text", "") for it in recent if (it.get("text") or "").strip()]
+            return "\n".join(lines) if lines else "(no messages)"
+        except Exception as e:
+            return f"(error) {type(e).__name__}: {e}"
+
+    if len(args) == 2:
+        try:
+            m = max(1, int(args[0]))
+            n = max(0, int(args[1]))
+        except Exception:
+            return "(error) ValueError: expected integers 'm, n'"
+        if n == 0:
+            return ""
+        try:
+            items = fe.fetch_discord_messages_slice(m, n) or []
+            lines = [it.get("text", "") for it in items if (it.get("text") or "").strip()]
+            return "\n".join(lines) if lines else "(no messages)"
+        except Exception as e:
+            return f"(error) {type(e).__name__}: {e}"
+
+    return "(error) ValueError: get_discord_messages accepts 0, 1, or 2 arguments"
+
+
 @register("fenra_powershell", "Execute a PowerShell command string and return its output.")
 def fenra_powershell(command: str) -> str:
     """

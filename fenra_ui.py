@@ -223,6 +223,103 @@ def fetch_recent_discord_messages(n: int = 10) -> list[dict]:
         return []
 
 
+# ─── public: count all discord messages ──────────────────────────────────────
+async def _discord_count_all() -> int:
+    """Coroutine to count ALL messages in the configured channel (oldest→newest)."""
+    if _discord_client is None:
+        return 0
+    try:
+        chan_id = int(os.getenv("DISCORD_CHANNEL_ID") or "0")
+    except Exception:
+        chan_id = 0
+    if not chan_id:
+        return 0
+    ch = _discord_client.get_channel(chan_id)
+    if ch is None:
+        try:
+            ch = await _discord_client.fetch_channel(chan_id)
+        except Exception:
+            return 0
+    total = 0
+    async for _ in ch.history(limit=None, oldest_first=True):
+        total += 1
+    return total
+
+
+def count_discord_messages() -> int:
+    """Sync wrapper returning the total message count."""
+    loop = _discord_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return 0
+    fut = asyncio.run_coroutine_threadsafe(_discord_count_all(), loop)
+    try:
+        return int(fut.result(timeout=10))
+    except Exception:
+        return 0
+
+
+# ─── public: fetch arbitrary slice by (start_index, count) ───────────────────
+async def _discord_fetch_range(start_index: int, count: int) -> list[dict]:
+    """
+    Coroutine to fetch 'count' messages starting at 1-based index 'start_index'
+    (oldest→newest). Returns list of dicts: {author, text, timestamp}.
+    """
+    if _discord_client is None:
+        return []
+    try:
+        chan_id = int(os.getenv("DISCORD_CHANNEL_ID") or "0")
+    except Exception:
+        chan_id = 0
+    if not chan_id:
+        return []
+    ch = _discord_client.get_channel(chan_id)
+    if ch is None:
+        try:
+            ch = await _discord_client.fetch_channel(chan_id)
+        except Exception:
+            return []
+
+    start_index = max(1, int(start_index))
+    count = max(0, int(count))
+    if count == 0:
+        return []
+
+    out: list[dict] = []
+    idx = 0
+    async for m in ch.history(limit=None, oldest_first=True):
+        idx += 1
+        if idx < start_index:
+            continue
+        out.append({
+            "author": getattr(m.author, "display_name", str(m.author)),
+            "text": m.content,
+            "timestamp": m.created_at.isoformat(),
+        })
+        if len(out) >= count:
+            break
+    return out
+
+
+def fetch_discord_messages_slice(start_index: int, count: int) -> list[dict]:
+    """Sync wrapper for _discord_fetch_range(start_index, count)."""
+    loop = _discord_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return []
+    fut = asyncio.run_coroutine_threadsafe(
+        _discord_fetch_range(int(start_index), int(count)), loop
+    )
+    try:
+        return fut.result(timeout=10)
+    except Exception:
+        return []
+
+
 def hsl_to_hex(h: int, s: float, l: float) -> str:
     r, g, b = colorsys.hls_to_rgb(h / 360.0, l, s)
     return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
