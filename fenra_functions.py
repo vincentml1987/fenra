@@ -323,3 +323,38 @@ def list_agents() -> str:
     names = sorted([a.get("name") for a in getattr(conductor, "AGENTS", []) if a.get("name")])
     return "\n".join(names) if names else "(no agents loaded)"
 
+
+@register(
+    "call_agent",
+    "Set which agent runs next. Usage: call_agent() to re-run the caller, or call_agent(\"Agent Name\")."
+)
+def call_agent(*args) -> str:
+    import importlib, re
+    conductor = importlib.import_module("conductor")
+
+    # Ensure runtime is initialized so STATE/AGENTS_BY_NAME are available
+    if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
+        try:
+            conductor.ensure_configs_loaded()
+        except Exception:
+            pass
+
+    # Resolve target name
+    if len(args) == 0:
+        target = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
+        if not isinstance(target, str) or target not in conductor.AGENTS_BY_NAME:
+            return "call_agent: current agent is not set or cannot be found"
+    elif len(args) == 1:
+        # Back-compat: allow underscores to mean spaces
+        raw = str(args[0] or "")
+        target = re.sub(r"\s+", " ", raw.replace("_", " ")).strip()
+        if not target:
+            return "call_agent: agent name cannot be empty"
+        if target not in conductor.AGENTS_BY_NAME:
+            return f"call_agent: '{target}' not found"
+    else:
+        return 'Usage: call_agent() or call_agent("Agent Name")'
+
+    conductor.STATE["force_next_agent"] = target
+    return f"Next agent set to: {target}"
+

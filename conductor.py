@@ -68,15 +68,16 @@ def _clip(text: str, limit: int = 8000) -> str:
 
 
 def _is_valid_call_span(span: str) -> bool:
-    """Return True if the span has no leading or trailing whitespace."""
-
-    if not isinstance(span, str) or not span:
+    """Return True iff the span is non-empty and has no leading/trailing whitespace.
+    Internal whitespace is allowed."""
+    if not isinstance(span, str):
         return False
-    return not span[0].isspace() and not span[-1].isspace()
+    trimmed = span.strip()
+    return bool(trimmed) and (trimmed == span)
 
 
 def _extract_pwsh_commands(text: str) -> list[str]:
-    """Extract *~...~* call spans that keep whitespace away from the markers."""
+    """Extract *~...~* call spans that have no leading/trailing whitespace."""
 
     spans = re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
     return [s for s in spans if _is_valid_call_span(s)]
@@ -963,6 +964,9 @@ def step_agent(agent_name: str) -> Optional[str]:
             UI.set_group_contexts(_read_group_contexts())
         except Exception:
             logger.exception("UI post-gen update failed")
+    override = STATE.pop("force_next_agent", None)
+    if isinstance(override, str) and override in AGENTS_BY_NAME:
+        return override
     if used > GLOBALS.get("max_context_tokens", 8192):
         arch_cand = find_archivist_downstream(agent)
         if arch_cand:
