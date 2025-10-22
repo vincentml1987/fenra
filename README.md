@@ -35,21 +35,28 @@ User messages are queued by appending JSON objects to `chatlogs/queued_messages.
 Use the following global/system prompt so that agents emit Fenra function calls correctly:
 
 ```
-**Fenra function-call protocol (strict)**
+You can call Fenra runtime functions by outputting EXACTLY one line containing ONLY a call wrapped like:
 
-* Use `*~` and `~*` to invoke Fenra functions: `*~function_name(args)~*`.
-* **No-whitespace rule:** There must be **zero** whitespace characters (spaces, tabs, or newlines) **anywhere** between the opening `*~` and the closing `~*`.
-  If any whitespace would appear between the markers, the entire sequence must be treated as **plain text**, not a function call.
-* Emit each call on its own line. Never place calls inside code fences or other markup. Do not add commentary inside the markers.
-* Examples:
+*~function_name(arg1,arg2,kw="val")~*
 
-  * ✅ Valid: `*~list_agents()~*`
-  * ✅ Valid: `*~duplicate_self()~*`
-  * ❌ Ignore: `*~ list_agents()~*` (leading space)
-  * ❌ Ignore: `*~list_agents ()~*` (space before parentheses)
-  * ❌ Ignore: `*~list agents()~*` (space in name)
-  * ❌ Ignore: `*~some_call("two words")~*` (space inside the arguments)
-* If you cannot express something without spaces inside the markers, **do not** wrap it in `*~…~*`; write normal text instead.
+HARD RULES:
+- No whitespace anywhere inside the *~ ... ~* span (no spaces, tabs, or newlines).
+- All string arguments MUST be in double quotes.
+- If a human-readable name contains spaces, replace spaces with underscores in the string (e.g., "New_Name"). The runtime will translate underscores back to spaces.
+- After you emit a function call, immediately echo the exact call on the next line without the *~ ~* markers, prefixed by `CALL:` and with no spaces. Example:
 
-(This prompt governs how you write calls; extraction of calls is done by the Conductor after generation.)
+*~rename_agent("New_Name")~*
+CALL:rename_agent("New_Name")
+
+- Do not insert any other text between the call and the CALL echo. If you do not need to call a function, reply normally.
+- Never output more than one *~ ... ~* call per turn unless explicitly instructed.
+
+Examples (valid):
+*~list_functions()~*
+CALL:list_functions()
+
+*~rename_agent("Old_Name","New_Name")~*
+CALL:rename_agent("Old_Name","New_Name")
+
+Why these constraints? Fenra extracts function-call spans strictly as `*~ ... ~*` with **no whitespace allowed** inside the span, then dispatches them via `fenra_functions.dispatch_expression(...)`. The Conductor also logs the function name and result back into the message stream. The CALL echo makes the exact call visible too.
 ```

@@ -213,6 +213,99 @@ def duplicate_self() -> str:
     return f"Duplicated {base} → {name}"
 
 
+@register(
+    "rename_agent",
+    "Rename an agent. Usage: rename_agent(\"New_Name\") to rename the current agent, "
+    "or rename_agent(\"Old_Name\",\"New_Name\") to rename a specific agent. "
+    "Underscores in names are converted to spaces."
+)
+def rename_agent(*args) -> str:
+    """
+    Rename the calling agent (1 arg) or rename the agent with Old_Name to New_Name (2 args).
+
+    IMPORTANT: Because function-call spans must contain no whitespace, pass names
+    with underscores instead of spaces (e.g., "New_Name"). This function will
+    convert underscores back to spaces.
+    """
+    import importlib
+    import re
+    from config_loader import save_agents, save_state  # save_state is available in config_loader
+
+    conductor = importlib.import_module("conductor")
+
+    # Ensure configs/structures are loaded so AGENTS/AGENTS_BY_NAME/STATE exist
+    if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
+        try:
+            conductor.ensure_configs_loaded()
+        except Exception:
+            pass
+
+    def _norm(s: str) -> str:
+        s = str(s or "")
+        s = s.replace("_", " ")
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    if len(args) == 1:
+        # Rename current agent -> New_Name
+        cur_name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
+        if not isinstance(cur_name, str) or cur_name not in conductor.AGENTS_BY_NAME:
+            raise RuntimeError("rename_agent: current agent is not set or cannot be found")
+        old_name = cur_name
+        new_name = _norm(args[0])
+    elif len(args) == 2:
+        # Rename Old_Name -> New_Name
+        old_name = _norm(args[0])
+        new_name = _norm(args[1])
+    else:
+        return 'Usage: rename_agent("New_Name") or rename_agent("Old_Name","New_Name")'
+
+    if not new_name:
+        raise ValueError("rename_agent: new name cannot be empty")
+    if old_name not in conductor.AGENTS_BY_NAME:
+        raise KeyError(f"rename_agent: '{old_name}' not found")
+    if new_name in conductor.AGENTS_BY_NAME:
+        raise ValueError(f"rename_agent: name '{new_name}' already exists")
+
+    # Update the agent object in-place
+    agent = conductor.AGENTS_BY_NAME[old_name]
+    agent["name"] = new_name
+
+    # Rebuild indexes to mirror Conductor’s normal load path
+    conductor.AGENTS_BY_NAME = {a["name"]: a for a in conductor.AGENTS}
+    grp_map: dict[str, set[str]] = {}
+    for a in conductor.AGENTS:
+        for g in a.get("groups_in", []) or []:
+            grp_map.setdefault(g, set()).add(a["name"])
+    conductor.AGENTS_BY_GROUP_IN = grp_map
+
+    # Update STATE.current_agent if needed
+    try:
+        if (conductor.STATE or {}).get("current_agent") == old_name:
+            conductor.STATE["current_agent"] = new_name
+            save_state(conductor.STATE)
+    except Exception:
+        pass
+
+    # Persist agents to disk; the UI watcher will refresh
+    save_agents(conductor.AGENTS)
+
+    # Best-effort UI refresh (optional)
+    ui = getattr(conductor, "UI", None)
+    try:
+        if ui is not None and hasattr(ui, "_threadsafe"):
+            ui._threadsafe(lambda: setattr(ui, "_agents_model", ui._ui_agents()))
+            if hasattr(ui, "_refresh_agent_listbox"):
+                ui._threadsafe(ui._refresh_agent_listbox)
+            if hasattr(ui, "_build_simple_groups_tab"):
+                ui._threadsafe(ui._build_simple_groups_tab)
+    except Exception:
+        # Non-fatal; the filesystem watcher will still update the UI
+        pass
+
+    return f"Renamed {old_name} → {new_name}"
+
+
 @register("list_agents", "Return the names of all agents currently loaded.")
 def list_agents() -> str:
     """
