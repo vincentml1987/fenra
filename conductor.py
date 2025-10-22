@@ -68,13 +68,15 @@ def _clip(text: str, limit: int = 8000) -> str:
 
 
 def _is_valid_call_span(span: str) -> bool:
-    """Return True if the span contains no whitespace characters."""
+    """Return True if the span has no leading or trailing whitespace."""
 
-    return not re.search(r"\s", span)
+    if not isinstance(span, str) or not span:
+        return False
+    return not span[0].isspace() and not span[-1].isspace()
 
 
 def _extract_pwsh_commands(text: str) -> list[str]:
-    """Extract *~...~* call spans that obey the no-whitespace rule."""
+    """Extract *~...~* call spans that keep whitespace away from the markers."""
 
     spans = re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
     return [s for s in spans if _is_valid_call_span(s)]
