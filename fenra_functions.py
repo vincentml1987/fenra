@@ -113,6 +113,17 @@ def list_functions(search: str = "") -> str:
     return "\n".join(items) if items else "(no matching functions)"
 
 
+@register("announce_self", "Announce the name of the current agent.")
+def announce_self() -> str:
+    import importlib
+
+    conductor = importlib.import_module("conductor")
+    name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
+    if not isinstance(name, str) or not name:
+        name = "unknown"
+    return f"The agent who ran this function is named '{name}'"
+
+
 @register("fenra_powershell", "Execute a PowerShell command string and return its output.")
 def fenra_powershell(command: str) -> str:
     """
