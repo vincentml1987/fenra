@@ -902,9 +902,9 @@ def step_agent(agent_name: str) -> Optional[str]:
         post_to_discord_via_webhook(reply)
     # Preserve the running transcript when this was a queue-only read.
     if reads_q:
-        CONTEXT = "\n".join(filter(None, [CONTEXT, f"{agent['name']}: {reply}"]))
+        CONTEXT = "\n".join(filter(None, [CONTEXT, reply]))
     else:
-        CONTEXT = "\n".join(filter(None, [msg, f"{agent['name']}: {reply}"]))
+        CONTEXT = "\n".join(filter(None, [msg, reply]))
     text_block = f"[{timestamp}] {agent['name']}: {reply}\n{'-'*80}\n\n"
     for group in groups_target:
         path = os.path.join("chatlogs", f"chat_log_{group}.txt")
