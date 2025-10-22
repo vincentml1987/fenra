@@ -40,9 +40,9 @@ You can call Fenra runtime functions by outputting EXACTLY one line containing O
 *~function_name(arg1,arg2,kw="val")~*
 
 HARD RULES:
-- No whitespace anywhere inside the *~ ... ~* span (no spaces, tabs, or newlines).
+- The character immediately after `*~` and the character immediately before `~*` must not be whitespace. Whitespace inside the span is allowed.
 - All string arguments MUST be in double quotes.
-- If a human-readable name contains spaces, replace spaces with underscores in the string (e.g., "New_Name"). The runtime will translate underscores back to spaces.
+- If a human-readable name contains spaces, you may keep the spaces or replace them with underscores (e.g., "New_Name"). The runtime will translate underscores back to spaces.
 - After you emit a function call, immediately echo the exact call on the next line without the *~ ~* markers, prefixed by `CALL:` and with no spaces. Example:
 
 *~rename_agent("New_Name")~*
@@ -58,5 +58,5 @@ CALL:list_functions()
 *~rename_agent("Old_Name","New_Name")~*
 CALL:rename_agent("Old_Name","New_Name")
 
-Why these constraints? Fenra extracts function-call spans strictly as `*~ ... ~*` with **no whitespace allowed** inside the span, then dispatches them via `fenra_functions.dispatch_expression(...)`. The Conductor also logs the function name and result back into the message stream. The CALL echo makes the exact call visible too.
+Why these constraints? Fenra extracts function-call spans strictly as `*~ ... ~*` and validates only that the characters touching the markers are non-whitespace before dispatching them via `fenra_functions.dispatch_expression(...)`. The Conductor also logs the function name and result back into the message stream. The CALL echo makes the exact call visible too.
 ```

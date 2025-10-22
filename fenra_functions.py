@@ -223,9 +223,9 @@ def rename_agent(*args) -> str:
     """
     Rename the calling agent (1 arg) or rename the agent with Old_Name to New_Name (2 args).
 
-    IMPORTANT: Because function-call spans must contain no whitespace, pass names
-    with underscores instead of spaces (e.g., "New_Name"). This function will
-    convert underscores back to spaces.
+    IMPORTANT: Call spans only forbid whitespace touching the *~ or ~* markers,
+    so names may include spaces directly. Underscores are still accepted and are
+    converted back to spaces for convenience.
     """
     import importlib
     import re
