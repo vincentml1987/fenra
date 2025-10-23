@@ -125,27 +125,10 @@ def announce_self() -> str:
 
 
 @register(
-    "get_discord_message_count",
-    "Return the total number of messages in the configured Discord channel.",
-)
-def get_discord_message_count() -> str:
-    import importlib
-
-    try:
-        fe = importlib.import_module("fenra_ui")
-        ensure = getattr(fe, "ensure_discord_running", None)
-        if callable(ensure) and not ensure():
-            return "(error) Discord not configured or unavailable"
-        if hasattr(fe, "count_discord_messages"):
-            return str(int(fe.count_discord_messages()))
-    except Exception as e:
-        return f"(error) {type(e).__name__}: {e}"
-    return "0"
-
-
-@register(
     "get_discord_messages",
-    "Get Discord messages. Forms: get_discord_messages(); get_discord_messages(n); get_discord_messages(m, n). Two-arg form is 1-based from oldest (m=start index, n=count).",
+    "Get Discord messages. Forms: get_discord_messages(); get_discord_messages(n); get_discord_messages(m, n). "
+    "Zero-arg returns the latest message. One-arg returns the last n messages (newest→older). "
+    "Two-arg skips the last m messages, then returns the next n messages going backward from the end.",
 )
 def get_discord_messages(*args) -> str:
     import importlib
@@ -159,41 +142,47 @@ def get_discord_messages(*args) -> str:
     if callable(ensure) and not ensure():
         return "(error) Discord not configured or unavailable"
 
+    def _fmt(items):
+        lines = []
+        for it in items or []:
+            author = (it.get("author") or it.get("sender") or "user") or "user"
+            text = (it.get("text") or it.get("message") or "").strip()
+            if text:
+                lines.append(f"{author}: {text}")
+        return "\n".join(lines) if lines else "(no messages)"
+
+    # 0 args → latest only
     if len(args) == 0:
         try:
-            msgs = fe.fetch_recent_discord_messages(1) or []
-            if not msgs:
-                return "(no messages)"
-            m = msgs[0]
-            return m.get("text") or ""
+            items = fe.fetch_recent_discord_messages(1) or []
+            return _fmt(items[:1])
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
+    # 1 arg (N) → last N messages (newest→older)
     if len(args) == 1:
         try:
             n = max(1, int(args[0]))
         except Exception:
             return "(error) ValueError: expected integer 'n'"
         try:
-            recent = fe.fetch_recent_discord_messages(n) or []
-            recent = list(reversed(recent))
-            lines = [it.get("text", "") for it in recent if (it.get("text") or "").strip()]
-            return "\n".join(lines) if lines else "(no messages)"
+            items = fe.fetch_recent_discord_messages(n) or []
+            return _fmt(items)
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
+    # 2 args (M, N) → skip last M, then take next N (newest→older)
     if len(args) == 2:
         try:
-            m = max(1, int(args[0]))
-            n = max(0, int(args[1]))
+            m = max(0, int(args[0]))
+            n = max(1, int(args[1]))
         except Exception:
             return "(error) ValueError: expected integers 'm, n'"
-        if n == 0:
-            return ""
         try:
-            items = fe.fetch_discord_messages_slice(m, n) or []
-            lines = [it.get("text", "") for it in items if (it.get("text") or "").strip()]
-            return "\n".join(lines) if lines else "(no messages)"
+            items = fe.fetch_recent_discord_messages(m + n) or []
+            # items are newest→older; drop the newest M, keep next N
+            sliced = items[m:m + n]
+            return _fmt(sliced)
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
