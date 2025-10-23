@@ -15,6 +15,13 @@ from copy import deepcopy
 # ---------------------------
 
 _REGISTRY: Dict[str, tuple[Callable[..., str], str]] = {}
+_DETAILS_REGISTRY: Dict[str, list[dict[str, str]]] = {}
+
+
+def register_details(name: str, details: list[dict[str, str]]) -> None:
+    """Register extended usage metadata for a Fenra function."""
+
+    _DETAILS_REGISTRY[name] = details
 
 
 def register(name: str, description: str):
@@ -444,4 +451,50 @@ def call_agent(*args) -> str:
 
     conductor.STATE["force_next_agent"] = target
     return f"Next agent set to: {target}"
+
+
+@register("speak_to_discord", "Post the agent's visible output to Discord and return that text.")
+def speak_to_discord(*args, **kwargs) -> str:
+    import importlib, os
+
+    # Enforce zero-arg contract
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    # Fetch the message the user actually sees (with *~...~* stripped)
+    conductor = importlib.import_module("conductor")
+    text = getattr(conductor, "_LAST_VISIBLE_OUTPUT", "")
+    text = (text or "").strip()
+    if not text:
+        return "(no output)"
+
+    # Post via existing webhook helper if configured
+    webhook = os.getenv("DISCORD_WEBHOOK_URL")
+    post = getattr(conductor, "post_to_discord_via_webhook", None)
+    if webhook and callable(post):
+        try:
+            post(text)
+        except Exception as e:
+            return f"(error) Discord post failed: {type(e).__name__}: {e}"
+    else:
+        return "(error) Discord webhook not configured"
+
+    # Also return the visible text as the function output
+    return text
+
+
+register_details(
+    "speak_to_discord",
+    [
+        {
+            "parameters": "",
+            "usage": "Send the agent's visible output (with any *~...~* removed) to Discord. "
+            "Place *~speak_to_discord()~* at the end of your message.",
+            "returns": "The exact text that was sent to Discord, or an error description.",
+        }
+    ],
+)
 
