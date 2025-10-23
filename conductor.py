@@ -878,9 +878,12 @@ def step_agent(agent_name: str) -> Optional[str]:
             )
             calls_log.append((fn_name, params_display, result))
         if calls_log:
-            reply = reply.rstrip("\n")
-            notice = f"(Executed {len(calls_log)} function call(s). See the \"Function Calls\" tab.)"
-            reply = f"{reply}\n\n{notice}" if reply else notice
+            # Inline only the results (no names, no timestamps) into the agent-visible text.
+            results = "\n\n".join(
+                (res if isinstance(res, str) else json.dumps(res, ensure_ascii=False))
+                for _, _, res in calls_log
+            )
+            reply = f"{reply.rstrip()}\n\n{results}" if reply else results
 
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
