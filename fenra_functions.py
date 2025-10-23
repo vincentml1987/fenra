@@ -88,15 +88,33 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
         if "(" in call_str and call_str.endswith(")"):
             params_string = call_str[call_str.find("(") + 1 : call_str.rfind(")")]
     except Exception:
-        return (guessed_name, False, "Function does not exist.", "")
+        name_display = guessed_name or "<unknown>"
+        return (
+            guessed_name,
+            False,
+            f"Function {name_display} does not exist.",
+            "",
+        )
 
     entry = _REGISTRY.get(name)
     if not entry:
-        return (name, False, "Function does not exist.", params_string)
+        name_display = name or "<unknown>"
+        return (
+            name,
+            False,
+            f"Function {name_display} does not exist.",
+            params_string,
+        )
 
     func = entry.get("func")
     if func is None:
-        return (name, False, "Function does not exist.", params_string)
+        name_display = name or "<unknown>"
+        return (
+            name,
+            False,
+            f"Function {name_display} does not exist.",
+            params_string,
+        )
     try:
         res = func(*args, **kwargs)
         result = "(No Output)" if res is None else str(res)
