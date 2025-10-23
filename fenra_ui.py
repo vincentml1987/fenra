@@ -182,6 +182,73 @@ async def stop_discord_in_ui():
         _discord_consumer_task.cancel()
     print("[UI/Discord] Listening stopped.")
 
+
+def ensure_discord_running(timeout: float = 5.0) -> bool:
+    """Start the Discord client in a background loop when running headless."""
+
+    global _discord_client, _discord_loop, _discord_task
+
+    token = os.getenv("fenra_token")
+    chan = os.getenv("DISCORD_CHANNEL_ID")
+    if not token or not chan:
+        return False
+
+    client = _discord_client
+    if client is not None:
+        try:
+            if client.is_ready():
+                return True
+        except Exception:
+            pass
+
+    loop = _discord_loop
+    if loop is None or not loop.is_running():
+
+        def _run_loop() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            globals()["_discord_loop"] = loop
+            try:
+                loop.run_until_complete(start_discord_in_ui())
+            except Exception:
+                pass
+            try:
+                loop.run_forever()
+            finally:
+                loop.close()
+
+        threading.Thread(target=_run_loop, daemon=True).start()
+    else:
+        need_restart = _discord_client is None
+        task = _discord_task
+        if not need_restart and task is not None:
+            try:
+                need_restart = task.done()
+            except Exception:
+                need_restart = True
+        if need_restart:
+            try:
+                asyncio.run_coroutine_threadsafe(start_discord_in_ui(), loop)
+            except Exception:
+                pass
+
+    deadline = time.time() + max(0.0, float(timeout))
+    while time.time() < deadline:
+        client = _discord_client
+        if client is not None:
+            try:
+                if client.is_ready():
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.1)
+
+    client = _discord_client
+    try:
+        return bool(client and client.is_ready())
+    except Exception:
+        return False
+
 # ─── public: fetch recent discord messages for listeners ──────────────────────
 async def _discord_fetch_recent(n: int) -> list[dict]:
     """Coroutine to fetch last n messages from configured channel."""
@@ -219,6 +286,103 @@ def fetch_recent_discord_messages(n: int = 10) -> list[dict]:
     fut = asyncio.run_coroutine_threadsafe(_discord_fetch_recent(int(n)), loop)
     try:
         return fut.result(timeout=5)
+    except Exception:
+        return []
+
+
+# ─── public: count all discord messages ──────────────────────────────────────
+async def _discord_count_all() -> int:
+    """Coroutine to count ALL messages in the configured channel (oldest→newest)."""
+    if _discord_client is None:
+        return 0
+    try:
+        chan_id = int(os.getenv("DISCORD_CHANNEL_ID") or "0")
+    except Exception:
+        chan_id = 0
+    if not chan_id:
+        return 0
+    ch = _discord_client.get_channel(chan_id)
+    if ch is None:
+        try:
+            ch = await _discord_client.fetch_channel(chan_id)
+        except Exception:
+            return 0
+    total = 0
+    async for _ in ch.history(limit=None, oldest_first=True):
+        total += 1
+    return total
+
+
+def count_discord_messages() -> int:
+    """Sync wrapper returning the total message count."""
+    loop = _discord_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return 0
+    fut = asyncio.run_coroutine_threadsafe(_discord_count_all(), loop)
+    try:
+        return int(fut.result(timeout=10))
+    except Exception:
+        return 0
+
+
+# ─── public: fetch arbitrary slice by (start_index, count) ───────────────────
+async def _discord_fetch_range(start_index: int, count: int) -> list[dict]:
+    """
+    Coroutine to fetch 'count' messages starting at 1-based index 'start_index'
+    (oldest→newest). Returns list of dicts: {author, text, timestamp}.
+    """
+    if _discord_client is None:
+        return []
+    try:
+        chan_id = int(os.getenv("DISCORD_CHANNEL_ID") or "0")
+    except Exception:
+        chan_id = 0
+    if not chan_id:
+        return []
+    ch = _discord_client.get_channel(chan_id)
+    if ch is None:
+        try:
+            ch = await _discord_client.fetch_channel(chan_id)
+        except Exception:
+            return []
+
+    start_index = max(1, int(start_index))
+    count = max(0, int(count))
+    if count == 0:
+        return []
+
+    out: list[dict] = []
+    idx = 0
+    async for m in ch.history(limit=None, oldest_first=True):
+        idx += 1
+        if idx < start_index:
+            continue
+        out.append({
+            "author": getattr(m.author, "display_name", str(m.author)),
+            "text": m.content,
+            "timestamp": m.created_at.isoformat(),
+        })
+        if len(out) >= count:
+            break
+    return out
+
+
+def fetch_discord_messages_slice(start_index: int, count: int) -> list[dict]:
+    """Sync wrapper for _discord_fetch_range(start_index, count)."""
+    loop = _discord_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return []
+    fut = asyncio.run_coroutine_threadsafe(
+        _discord_fetch_range(int(start_index), int(count)), loop
+    )
+    try:
+        return fut.result(timeout=10)
     except Exception:
         return []
 
