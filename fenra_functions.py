@@ -252,7 +252,8 @@ def get_discord_messages(*args) -> str:
     if len(args) == 0:
         try:
             items = fe.fetch_recent_discord_messages(1) or []
-            return _fmt(items[:1])
+            body = _fmt(items[:1])
+            return f"The following is the most recent Discord message:\n{body}"
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
@@ -264,7 +265,8 @@ def get_discord_messages(*args) -> str:
             return "(error) ValueError: expected integer 'n'"
         try:
             items = fe.fetch_recent_discord_messages(n) or []
-            return _fmt(items)
+            body = _fmt(items)
+            return f"The following are the {n} most recent Discord messages:\n{body}"
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
@@ -279,7 +281,12 @@ def get_discord_messages(*args) -> str:
             items = fe.fetch_recent_discord_messages(m + n) or []
             # items are newest→older; drop the newest M, keep next N
             sliced = items[m:m + n]
-            return _fmt(sliced)
+            body = _fmt(sliced)
+            return (
+                "The following are the {n} requested messages, end at the {m}th most recent message:\n"
+                .format(n=n, m=m)
+                + body
+            )
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
@@ -540,7 +547,10 @@ def list_agents() -> str:
         except Exception:
             pass
     names = sorted([a.get("name") for a in getattr(conductor, "AGENTS", []) if a.get("name")])
-    return "\n".join(names) if names else "(no agents loaded)"
+    header = "The following agents currently exist."
+    if names:
+        return header + "\n" + "\n".join(names)
+    return header + "\n(no agents loaded)"
 
 
 register_details(
