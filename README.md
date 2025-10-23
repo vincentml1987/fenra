@@ -58,5 +58,5 @@ CALL:list_functions()
 *~rename_agent("Old_Name","New_Name")~*
 CALL:rename_agent("Old_Name","New_Name")
 
-Why these constraints? Fenra extracts function-call spans strictly as `*~ ... ~*` and validates only that the characters touching the markers are non-whitespace before dispatching them via `fenra_functions.dispatch_expression(...)`. The Conductor also logs the function name and result back into the message stream. The CALL echo makes the exact call visible too.
+Why these constraints? Fenra extracts function-call spans strictly as `*~ ... ~*` and validates only that the characters touching the markers are non-whitespace before dispatching them via `fenra_functions.dispatch_expression(...)`. The runtime records each executed call in the Function Calls tab and appends a summary note to the agent reply, so the explicit `CALL:` echo keeps the exact invocation visible to humans reviewing the transcript.
 ```
