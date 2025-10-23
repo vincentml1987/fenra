@@ -1,10 +1,10 @@
 from __future__ import annotations
-from typing import Callable, Dict, Tuple, Any
+
+from typing import Callable, Dict, Any, List
 import ast
 import subprocess
 import sys
 import shutil
-import re
 import json
 from copy import deepcopy
 
@@ -14,24 +14,38 @@ from copy import deepcopy
 # Function registry and API
 # ---------------------------
 
-_REGISTRY: Dict[str, tuple[Callable[..., str], str]] = {}
+_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
 def register(name: str, description: str):
     """Decorator to register a callable Fenra function with a human-readable description."""
 
-    def _wrap(func: Callable[..., str]):
-        _REGISTRY[name] = (func, description)
+    def _wrap(func: Callable[..., Any]):
+        entry = _REGISTRY.get(name, {})
+        entry.update({"func": func, "description": description})
+        entry.setdefault("forms", [])
+        _REGISTRY[name] = entry
         return func
 
     return _wrap
 
 
-def _like_to_regex(pattern: str) -> re.Pattern:
-    """Translate a % wildcard pattern to a case-insensitive regex."""
-    escaped = re.escape(pattern)
-    rx = ".*" if not escaped else escaped.replace(r"\%", ".*")
-    return re.compile(rx, re.IGNORECASE)
+def register_details(name: str, forms: List[Dict[str, str]]) -> None:
+    """Register rich metadata for a Fenra function."""
+
+    normalized: list[dict[str, str]] = []
+    for form in forms or []:
+        normalized.append(
+            {
+                "parameters": str(form.get("parameters", "")),
+                "usage": str(form.get("usage", "")),
+                "returns": str(form.get("returns", "")),
+            }
+        )
+
+    entry = _REGISTRY.setdefault(name, {"forms": []})
+    entry.setdefault("description", "")
+    entry["forms"] = normalized
 
 
 def _literalize(node: ast.AST) -> Any:
@@ -58,7 +72,7 @@ def _parse_call(expr: str) -> tuple[str, list[Any], dict[str, Any]]:
     return fn_name, args, kwargs
 
 
-def dispatch_expression(expr: str) -> tuple[str, bool, str]:
+def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
     """
     Dispatch a Fenra function expression found inside *~...~*.
     Returns (function_name_or_guess, found, result_string).
@@ -66,22 +80,29 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str]:
     - found=True for executed or error-returning calls (errors are returned as strings).
     """
     guessed_name = expr.strip()
+    params_string = ""
     try:
         name, args, kwargs = _parse_call(expr)
         guessed_name = name
+        call_str = expr.strip()
+        if "(" in call_str and call_str.endswith(")"):
+            params_string = call_str[call_str.find("(") + 1 : call_str.rfind(")")]
     except Exception:
-        return (guessed_name, False, "Function does not exist.")
+        return (guessed_name, False, "Function does not exist.", "")
 
     entry = _REGISTRY.get(name)
     if not entry:
-        return (name, False, "Function does not exist.")
+        return (name, False, "Function does not exist.", params_string)
 
-    func, _desc = entry
+    func = entry.get("func")
+    if func is None:
+        return (name, False, "Function does not exist.", params_string)
     try:
         res = func(*args, **kwargs)
-        return (name, True, "" if res is None else str(res))
+        result = "(No Output)" if res is None else str(res)
+        return (name, True, result, params_string)
     except Exception as e:
-        return (name, True, f"(error) {type(e).__name__}: {e}")
+        return (name, True, f"(error) {type(e).__name__}: {e}", params_string)
 
 
 # --------------------------------
@@ -89,28 +110,74 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str]:
 # --------------------------------
 
 
-@register("list_functions", "List available Fenra functions; supports % wildcard on name/description.")
+@register("list_functions", "List available Fenra functions.")
 def list_functions(search: str = "") -> str:
-    """
-    Return a newline-separated list of 'name: description'.
-    If search is provided, use % as wildcard and match name/description (case-insensitive).
-    Always includes this function in the registry.
-    """
-    _REGISTRY.setdefault(
-        "list_functions",
-        (list_functions, "List available Fenra functions; supports % wildcard on name/description."),
-    )
+    """Return the structured catalog of Fenra functions, optionally filtered by search."""
 
-    items = []
-    if search:
-        rx = _like_to_regex(search)
-        for name, (_fn, desc) in _REGISTRY.items():
-            if rx.search(name) or rx.search(desc or ""):
-                items.append(f"{name}: {desc}")
-    else:
-        for name in sorted(_REGISTRY):
-            items.append(f"{name}: {_REGISTRY[name][1]}")
-    return "\n".join(items) if items else "(no matching functions)"
+    entry = _REGISTRY.setdefault(
+        "list_functions",
+        {"func": list_functions, "description": "List available Fenra functions.", "forms": []},
+    )
+    if not entry.get("forms"):
+        register_details(
+            "list_functions",
+            [
+                {
+                    "parameters": 'search: str=""',
+                    "usage": "Return the catalog of available Fenra functions or the subset matching the search string.",
+                    "returns": "A formatted list of functions, their usage forms, and return values.",
+                }
+            ],
+        )
+
+    def _format_entry(name: str, info: Dict[str, Any]) -> str:
+        forms = info.get("forms") or []
+        if not forms:
+            forms = [
+                {
+                    "parameters": "",
+                    "usage": info.get("description", ""),
+                    "returns": "(No Output)",
+                }
+            ]
+
+        lines: list[str] = [name, "Usage:"]
+        for idx, form in enumerate(forms):
+            params = form.get("parameters", "")
+            params_display = params if params else ""
+            call_line = f"\t{name}({params_display})" if params_display else f"\t{name}()"
+            lines.append(f"{call_line}:")
+            lines.append(f"\t\t{form.get('usage', '')}")
+            lines.append("")
+            returns_text = form.get("returns", "") or "(No Output)"
+            lines.append(f"\t\tReturns: {returns_text}")
+            if idx != len(forms) - 1:
+                lines.append("")
+        return "\n".join(lines)
+
+    search_text = (search or "").strip().lower()
+    formatted: list[str] = []
+    for name in sorted(_REGISTRY):
+        info = _REGISTRY[name]
+        if search_text:
+            haystacks = [name.lower(), str(info.get("description", "")).lower()]
+            for form in info.get("forms") or []:
+                haystacks.extend(
+                    [
+                        str(form.get("parameters", "")).lower(),
+                        str(form.get("usage", "")).lower(),
+                        str(form.get("returns", "")).lower(),
+                    ]
+                )
+            if not any(search_text in hay for hay in haystacks):
+                continue
+        formatted.append(_format_entry(name, info))
+
+    if not formatted:
+        return "(no matching functions)"
+
+    body = "\n\n".join(formatted)
+    return f"You have access to the following functions:\n\n{body}"
 
 
 @register("announce_self", "Announce the name of the current agent.")
@@ -122,6 +189,18 @@ def announce_self() -> str:
     if not isinstance(name, str) or not name:
         name = "unknown"
     return f"The agent who ran this function is named '{name}'"
+
+
+register_details(
+    "announce_self",
+    [
+        {
+            "parameters": "",
+            "usage": "Return the name of the agent currently executing this function.",
+            "returns": "The calling agent's name as text.",
+        }
+    ],
+)
 
 
 @register(
@@ -189,6 +268,28 @@ def get_discord_messages(*args) -> str:
     return "(error) ValueError: get_discord_messages accepts 0, 1, or 2 arguments"
 
 
+register_details(
+    "get_discord_messages",
+    [
+        {
+            "parameters": "",
+            "usage": "Return the most recent Discord message.",
+            "returns": "The latest Discord message text or an error description.",
+        },
+        {
+            "parameters": "n: int",
+            "usage": "Return the last n Discord messages from newest to oldest.",
+            "returns": "A newline-separated list of Discord messages or an error description.",
+        },
+        {
+            "parameters": "m: int, n: int",
+            "usage": "Skip the most recent m Discord messages, then return the next n messages (newest to older).",
+            "returns": "A newline-separated list of Discord messages or an error description.",
+        },
+    ],
+)
+
+
 @register("fenra_powershell", "Execute a PowerShell command string and return its output.")
 def fenra_powershell(command: str) -> str:
     """
@@ -216,6 +317,18 @@ def fenra_powershell(command: str) -> str:
         return combined.strip()
     except Exception as e:
         return f"(error) {type(e).__name__}: {e}"
+
+
+register_details(
+    "fenra_powershell",
+    [
+        {
+            "parameters": "command: str",
+            "usage": "Execute the provided PowerShell command string and capture its output.",
+            "returns": "The combined stdout/stderr from PowerShell or an error message. Returns (No Output) when the command produced no text.",
+        }
+    ],
+)
 
 
 @register("duplicate_self", "Duplicate the current agent as <name>-dup and save/refresh.")
@@ -287,6 +400,18 @@ def duplicate_self() -> str:
         pass
 
     return f"Duplicated {base} → {name}"
+
+
+register_details(
+    "duplicate_self",
+    [
+        {
+            "parameters": "",
+            "usage": "Clone the calling agent with a '-dup' suffix (adding a number if needed) and refresh runtime state.",
+            "returns": "Confirmation of the original and duplicated agent names.",
+        }
+    ],
+)
 
 
 @register(
@@ -400,6 +525,18 @@ def list_agents() -> str:
     return "\n".join(names) if names else "(no agents loaded)"
 
 
+register_details(
+    "list_agents",
+    [
+        {
+            "parameters": "",
+            "usage": "Return the names of all currently loaded agents, one per line.",
+            "returns": "A newline-separated list of agent names or '(no agents loaded)'.",
+        }
+    ],
+)
+
+
 @register(
     "call_agent",
     "Set which agent runs next. Usage: call_agent() to re-run the caller, or call_agent(\"Agent Name\")."
@@ -433,4 +570,21 @@ def call_agent(*args) -> str:
 
     conductor.STATE["force_next_agent"] = target
     return f"Next agent set to: {target}"
+
+
+register_details(
+    "call_agent",
+    [
+        {
+            "parameters": "",
+            "usage": "Schedule the current agent to take another turn immediately after this one.",
+            "returns": "Confirmation of the next agent to run or an error message.",
+        },
+        {
+            "parameters": "name: str",
+            "usage": "Select the named agent to run next.",
+            "returns": "Confirmation of the next agent to run or an error message.",
+        },
+    ],
+)
 

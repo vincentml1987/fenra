@@ -585,18 +585,8 @@ class FenraUI:
         thoughts_tab = ttk.Frame(self.notebook)
         self.notebook.add(thoughts_tab, text="Internal Thoughts")
 
-        paned = ttk.Panedwindow(thoughts_tab, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True)
-
-        thought_frame = ttk.Frame(paned)
-        event_frame = ttk.Frame(paned)
-        paned.add(thought_frame, weight=1)
-        paned.add(event_frame, weight=1)
-
-        self.thought_stream = scrolledtext.ScrolledText(thought_frame, state="disabled")
+        self.thought_stream = scrolledtext.ScrolledText(thoughts_tab, state="disabled")
         self.thought_stream.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(event_frame, text="PowerShell Console").pack(anchor="w", padx=4, pady=(0, 2))
 
         try:
             console_font = tkfont.nametofont("TkFixedFont")
@@ -604,15 +594,19 @@ class FenraUI:
             console_font = tkfont.Font(family="Consolas", size=10)
         self._console_font = console_font
 
-        self.events_stream = scrolledtext.ScrolledText(
-            event_frame,
+        function_calls_tab = ttk.Frame(self.notebook)
+        self.notebook.add(function_calls_tab, text="Function Calls")
+
+        self.function_calls_stream = scrolledtext.ScrolledText(
+            function_calls_tab,
             state="disabled",
             wrap=tk.NONE,
             font=self._console_font,
         )
-        self.events_stream.pack(fill=tk.BOTH, expand=True)
+        self.function_calls_stream.pack(fill=tk.BOTH, expand=True)
 
         # Backward compatibility
+        self.events_stream = self.function_calls_stream
         self.output = self.thought_stream
 
         self.base_timeout = self.global_config.get("watchdog_timeout", 900)
@@ -1074,12 +1068,56 @@ class FenraUI:
         self._threadsafe(_append)
         logger.debug("Exiting append_event")
 
+    def append_function_calls_block(
+        self, agent: str, timestamp: str, calls: list[tuple[str, str, str]]
+    ) -> None:
+        logger.debug(
+            "Entering append_function_calls_block agent=%s timestamp=%s calls=%s",
+            agent,
+            timestamp,
+            calls,
+        )
+        if not calls:
+            logger.debug("No calls provided; exiting append_function_calls_block")
+            return
+
+        def _append():
+            lines: list[str] = [f"-----{agent} {timestamp}-----"]
+            total = len(calls)
+            for idx, (fn_name, params_text, result_text) in enumerate(calls):
+                params_render = (
+                    params_text if params_text and params_text.strip() else '""'
+                )
+                result_render = "(No Output)" if result_text is None else str(result_text)
+                lines.append(f"{fn_name}({params_render}):")
+                lines.append(result_render)
+                if idx != total - 1:
+                    lines.append("")
+                    lines.append("")
+            block = "\n".join(lines)
+            if not block.endswith("\n"):
+                block += "\n"
+            self._append_text(self.function_calls_stream, block)
+
+        self._threadsafe(_append)
+        logger.debug("Exiting append_function_calls_block")
+
     def append_ps(self, line: str) -> None:
         logger.debug("Entering append_ps line=%s", line)
 
+        stripped = (line or "").strip()
+        if not stripped:
+            logger.debug("append_ps received empty line; exiting")
+            return
+
+        legacy_prefixes = ("Function called:", "Function result:")
+        if not stripped.startswith(legacy_prefixes):
+            logger.debug("append_ps ignoring non-legacy line")
+            return
+
         def _append():
             txt = line if line.endswith("\n") else f"{line}\n"
-            self._append_text(self.events_stream, txt)
+            self._append_text(self.function_calls_stream, txt)
 
         self._threadsafe(_append)
         logger.debug("Exiting append_ps")
@@ -1088,9 +1126,9 @@ class FenraUI:
         logger.debug("Entering clear_ps")
 
         def _do():
-            self.events_stream.configure(state="normal")
-            self.events_stream.delete("1.0", tk.END)
-            self.events_stream.configure(state="disabled")
+            self.function_calls_stream.configure(state="normal")
+            self.function_calls_stream.delete("1.0", tk.END)
+            self.function_calls_stream.configure(state="disabled")
 
         self._threadsafe(_do)
         logger.debug("Exiting clear_ps")

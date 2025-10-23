@@ -868,17 +868,19 @@ def step_agent(agent_name: str) -> Optional[str]:
         return nxt["name"] if nxt else None
     # Execute any Fenra function calls emitted by the agent as *~...~* blocks.
     commands = _extract_pwsh_commands(reply)
+    calls_log: list[tuple[str, str, str]] = []
     if commands:
         for cmd in commands:
             expr = (cmd or "").strip()
-            fn_name, _found, result = fenra_functions.dispatch_expression(expr)
-            if UI is not None and hasattr(UI, "append_ps"):
-                try:
-                    UI.append_ps(f"Function called: {fn_name}")
-                    UI.append_ps(f"Function result: {result}")
-                except Exception:
-                    logger.exception("UI append_ps failed for function dispatch")
-            reply += f"\nFunction called: {fn_name}\nFunction result: {result}\n"
+            fn_name, _found, result, params_string = fenra_functions.dispatch_expression(expr)
+            params_display = (
+                params_string if params_string and params_string.strip() else '""'
+            )
+            calls_log.append((fn_name, params_display, result))
+        if calls_log:
+            reply = reply.rstrip("\n")
+            notice = f"(Executed {len(calls_log)} function call(s). See the \"Function Calls\" tab.)"
+            reply = f"{reply}\n\n{notice}" if reply else notice
 
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
@@ -895,6 +897,12 @@ def step_agent(agent_name: str) -> Optional[str]:
     msgs.append(entry)
     _save_messages_to_humans(msgs)
     _append_human_log(entry)
+
+    if calls_log and UI is not None and hasattr(UI, "append_function_calls_block"):
+        try:
+            UI.append_function_calls_block(agent["name"], timestamp, calls_log)
+        except Exception:
+            logger.exception("UI append_function_calls_block failed")
 
     # Only post to Discord if the class (or agent) opts in AND the webhook is configured.
     should_post = bool(cls.get("outputs_to_discord") or agent.get("outputs_to_discord"))
