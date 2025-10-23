@@ -866,6 +866,15 @@ def step_agent(agent_name: str) -> Optional[str]:
         logger.exception("Generation failed for %s: %s", agent["name"], exc)
         nxt = select_next_agent(agent_name)
         return nxt["name"] if nxt else None
+    # Make the agent's *visible* output (with Fenra call markup stripped) available to Fenra functions.
+    try:
+        raw = reply or ""
+        visible = re.sub(r"\*~.*?~\*", "", raw, flags=re.DOTALL).strip()
+    except Exception:
+        visible = (reply or "").strip()
+
+    # Expose to fenra_functions via the conductor module namespace
+    globals()["_LAST_VISIBLE_OUTPUT"] = visible
     # Execute any Fenra function calls emitted by the agent as *~...~* blocks.
     commands = _extract_pwsh_commands(reply)
     if commands:
