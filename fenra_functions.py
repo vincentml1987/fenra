@@ -294,12 +294,20 @@ def get_discord_messages(*args, **kwargs) -> str:
         return "(error) Discord not configured or unavailable"
 
     def _fmt(items):
+        ordered = list(items or [])
+        ordered.reverse()  # convert from newest→oldest to oldest→newest
         lines = []
-        for it in items or []:
+        for it in ordered:
             author = (it.get("author") or it.get("sender") or "user") or "user"
             text = (it.get("text") or it.get("message") or "").strip()
+            timestamp = (it.get("timestamp") or it.get("time") or "").strip()
+            if not text and not timestamp:
+                continue
+            prefix = timestamp if timestamp else "(unknown time)"
             if text:
-                lines.append(f"{author}: {text}")
+                lines.append(f"[{prefix}] {author}: {text}")
+            else:
+                lines.append(f"[{prefix}] {author}")
         return "\n".join(lines) if lines else "(no messages)"
 
     if not args and not kwargs:
@@ -341,12 +349,15 @@ def get_discord_messages(*args, **kwargs) -> str:
         items = fe.fetch_recent_discord_messages(m + n) or []
         if m == 0:
             body = _fmt(items[:n])
-            return f"The following are the {n} most recent Discord messages:\n{body}"
+            return (
+                "The following are the {n} most recent Discord messages (oldest to newest):\n".format(n=n)
+                + body
+            )
 
-        sliced = items[m:m + n]
+        sliced = items[m : m + n]
         body = _fmt(sliced)
         return (
-            "The following are the {n} requested messages, end at the {m}th most recent message:\n".format(
+            "The following are the {n} requested messages after skipping the {m} most recent (oldest to newest):\n".format(
                 n=n, m=m
             )
             + body
@@ -365,12 +376,12 @@ register_details(
         },
         {
             "parameters": "n: int",
-            "usage": "Return the last n Discord messages from newest to oldest. Accepts positional or keyword arguments (e.g., get_discord_messages(5) or get_discord_messages(n=5)).",
+            "usage": "Return the last n Discord messages, displayed from oldest to newest. Accepts positional or keyword arguments (e.g., get_discord_messages(5) or get_discord_messages(n=5)).",
             "returns": "A newline-separated list of Discord messages or an error description.",
         },
         {
             "parameters": "m: int, n: int",
-            "usage": "Skip the most recent m Discord messages, then return the next n messages (newest to older). Accepts positional or keyword arguments (e.g., get_discord_messages(2, 5) or get_discord_messages(m=2, n=5)).",
+            "usage": "Skip the most recent m Discord messages, then return the next n messages, displayed from oldest to newest. Accepts positional or keyword arguments (e.g., get_discord_messages(2, 5) or get_discord_messages(m=2, n=5)).",
             "returns": "A newline-separated list of Discord messages or an error description.",
         },
     ],
