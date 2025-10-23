@@ -17,6 +17,34 @@ from copy import deepcopy
 _REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
+def _get_param(
+    args: list[Any],
+    kwargs: dict[str, Any],
+    name: str,
+    *,
+    default: Any = None,
+    cast: Callable[[Any], Any] | None = None,
+    coerce_underscores: bool = False,
+):
+    if name in kwargs:
+        val = kwargs.pop(name)
+    elif args:
+        val = args.pop(0)
+    else:
+        val = default
+
+    if coerce_underscores and isinstance(val, str):
+        val = val.replace("_", " ")
+
+    if cast is not None and val is not None:
+        try:
+            val = cast(val)
+        except Exception:
+            raise ValueError(f"expected {name} to be {cast.__name__}")
+
+    return val
+
+
 def register(name: str, description: str):
     """Decorator to register a callable Fenra function with a human-readable description."""
 
@@ -129,8 +157,21 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
 
 
 @register("list_functions", "List available Fenra functions.")
-def list_functions(search: str = "") -> str:
+def list_functions(*args, **kwargs) -> str:
     """Return the structured catalog of Fenra functions, optionally filtered by search."""
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        search = _get_param(args, kwargs, "search", default="", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
 
     entry = _REGISTRY.setdefault(
         "list_functions",
@@ -142,7 +183,7 @@ def list_functions(search: str = "") -> str:
             [
                 {
                     "parameters": 'search: str=""',
-                    "usage": "Return the catalog of available Fenra functions or the subset matching the search string.",
+                    "usage": "Return the catalog of available Fenra functions or the subset matching the search string. Arguments may be provided positionally or as keywords (e.g., list_functions(\"agents\") or list_functions(search=\"agents\")).",
                     "returns": "A formatted list of functions, their usage forms, and return values.",
                 }
             ],
@@ -199,8 +240,16 @@ def list_functions(search: str = "") -> str:
 
 
 @register("announce_self", "Announce the name of the current agent.")
-def announce_self() -> str:
+def announce_self(*args, **kwargs) -> str:
     import importlib
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
 
     conductor = importlib.import_module("conductor")
     name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
@@ -214,7 +263,7 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Return the name of the agent currently executing this function.",
+            "usage": "Return the name of the agent currently executing this function. Arguments may be provided positionally or as keywords—this function takes none.",
             "returns": "The calling agent's name as text.",
         }
     ],
@@ -227,8 +276,13 @@ register_details(
     "Zero-arg returns the latest message. One-arg returns the last n messages (newest→older). "
     "Two-arg skips the last m messages, then returns the next n messages going backward from the end.",
 )
-def get_discord_messages(*args) -> str:
+def get_discord_messages(*args, **kwargs) -> str:
     import importlib
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    original_args_count = len(args)
+    provided_kwargs = set(kwargs.keys())
 
     try:
         fe = importlib.import_module("fenra_ui")
@@ -240,16 +294,23 @@ def get_discord_messages(*args) -> str:
         return "(error) Discord not configured or unavailable"
 
     def _fmt(items):
+        ordered = list(items or [])
+        ordered.reverse()  # convert from newest→oldest to oldest→newest
         lines = []
-        for it in items or []:
+        for it in ordered:
             author = (it.get("author") or it.get("sender") or "user") or "user"
             text = (it.get("text") or it.get("message") or "").strip()
+            timestamp = (it.get("timestamp") or it.get("time") or "").strip()
+            if not text and not timestamp:
+                continue
+            prefix = timestamp if timestamp else "(unknown time)"
             if text:
-                lines.append(f"{author}: {text}")
+                lines.append(f"[{prefix}] {author}: {text}")
+            else:
+                lines.append(f"[{prefix}] {author}")
         return "\n".join(lines) if lines else "(no messages)"
 
-    # 0 args → latest only
-    if len(args) == 0:
+    if not args and not kwargs:
         try:
             items = fe.fetch_recent_discord_messages(1) or []
             body = _fmt(items[:1])
@@ -257,40 +318,52 @@ def get_discord_messages(*args) -> str:
         except Exception as e:
             return f"(error) {type(e).__name__}: {e}"
 
-    # 1 arg (N) → last N messages (newest→older)
-    if len(args) == 1:
-        try:
-            n = max(1, int(args[0]))
-        except Exception:
-            return "(error) ValueError: expected integer 'n'"
-        try:
-            items = fe.fetch_recent_discord_messages(n) or []
-            body = _fmt(items)
-            return f"The following are the {n} most recent Discord messages:\n{body}"
-        except Exception as e:
-            return f"(error) {type(e).__name__}: {e}"
+    try:
+        m = _get_param(args, kwargs, "m", default=None, cast=int)
+        n = _get_param(args, kwargs, "n", default=None, cast=int)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
 
-    # 2 args (M, N) → skip last M, then take next N (newest→older)
-    if len(args) == 2:
-        try:
-            m = max(0, int(args[0]))
-            n = max(1, int(args[1]))
-        except Exception:
-            return "(error) ValueError: expected integers 'm, n'"
-        try:
-            items = fe.fetch_recent_discord_messages(m + n) or []
-            # items are newest→older; drop the newest M, keep next N
-            sliced = items[m:m + n]
-            body = _fmt(sliced)
+    if original_args_count == 1 and "m" not in provided_kwargs and "n" not in provided_kwargs:
+        n = m
+        m = None
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    if n is None:
+        return "(error) ValueError: expected n to be int"
+
+    m = 0 if m is None else m
+
+    try:
+        n = max(1, int(n))
+        m = max(0, int(m))
+    except Exception:
+        return "(error) ValueError: expected integers 'm, n'"
+
+    try:
+        items = fe.fetch_recent_discord_messages(m + n) or []
+        if m == 0:
+            body = _fmt(items[:n])
             return (
-                "The following are the {n} requested messages, end at the {m}th most recent message:\n"
-                .format(n=n, m=m)
+                "The following are the {n} most recent Discord messages (oldest to newest):\n".format(n=n)
                 + body
             )
-        except Exception as e:
-            return f"(error) {type(e).__name__}: {e}"
 
-    return "(error) ValueError: get_discord_messages accepts 0, 1, or 2 arguments"
+        sliced = items[m : m + n]
+        body = _fmt(sliced)
+        return (
+            "The following are the {n} requested messages after skipping the {m} most recent (oldest to newest):\n".format(
+                n=n, m=m
+            )
+            + body
+        )
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
 
 
 register_details(
@@ -298,17 +371,17 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Return the most recent Discord message.",
+            "usage": "Return the most recent Discord message. Arguments may be provided positionally or as keywords—this function takes none.",
             "returns": "The latest Discord message text or an error description.",
         },
         {
             "parameters": "n: int",
-            "usage": "Return the last n Discord messages from newest to oldest.",
+            "usage": "Return the last n Discord messages, displayed from oldest to newest. Accepts positional or keyword arguments (e.g., get_discord_messages(5) or get_discord_messages(n=5)).",
             "returns": "A newline-separated list of Discord messages or an error description.",
         },
         {
             "parameters": "m: int, n: int",
-            "usage": "Skip the most recent m Discord messages, then return the next n messages (newest to older).",
+            "usage": "Skip the most recent m Discord messages, then return the next n messages, displayed from oldest to newest. Accepts positional or keyword arguments (e.g., get_discord_messages(2, 5) or get_discord_messages(m=2, n=5)).",
             "returns": "A newline-separated list of Discord messages or an error description.",
         },
     ],
@@ -316,11 +389,25 @@ register_details(
 
 
 @register("fenra_powershell", "Execute a PowerShell command string and return its output.")
-def fenra_powershell(command: str) -> str:
+def fenra_powershell(*args, **kwargs) -> str:
     """
     Execute a PowerShell command and return its output as text.
     This is the ONLY path for running PowerShell from agent replies.
     """
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        command = _get_param(args, kwargs, "command", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
     if not isinstance(command, str) or not command.strip():
         return "(no command)"
 
@@ -349,7 +436,7 @@ register_details(
     [
         {
             "parameters": "command: str",
-            "usage": "Execute the provided PowerShell command string and capture its output.",
+            "usage": "Execute the provided PowerShell command string and capture its output. Arguments may be provided positionally or as keywords (e.g., fenra_powershell(\"Get-Date\") or fenra_powershell(command=\"Get-Date\")).",
             "returns": "The combined stdout/stderr from PowerShell or an error message. Returns (No Output) when the command produced no text.",
         }
     ],
@@ -357,11 +444,19 @@ register_details(
 
 
 @register("duplicate_self", "Duplicate the current agent as <name>-dup and save/refresh.")
-def duplicate_self() -> str:
+def duplicate_self(*args, **kwargs) -> str:
 
     import importlib
     from config_loader import save_agents
     conductor = importlib.import_module("conductor")
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
     
     """
     Create a duplicate of the calling agent with the name '<original>-dup'
@@ -372,7 +467,7 @@ def duplicate_self() -> str:
     # Resolve the caller
     cur_name = (conductor.STATE or {}).get("current_agent")
     if not isinstance(cur_name, str) or cur_name not in conductor.AGENTS_BY_NAME:
-        raise RuntimeError("duplicate_self: no current agent is set or it cannot be found")
+        return "(error) RuntimeError: duplicate_self: no current agent is set or it cannot be found"
 
     source = conductor.AGENTS_BY_NAME[cur_name]
 
@@ -432,7 +527,7 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Clone the calling agent with a '-dup' suffix (adding a number if needed) and refresh runtime state.",
+            "usage": "Clone the calling agent with a '-dup' suffix (adding a number if needed) and refresh runtime state. Arguments may be provided positionally or as keywords—this function takes none.",
             "returns": "Confirmation of the original and duplicated agent names.",
         }
     ],
@@ -445,7 +540,7 @@ register_details(
     "or rename_agent(\"Old_Name\",\"New_Name\") to rename a specific agent. "
     "Underscores in names are converted to spaces."
 )
-def rename_agent(*args) -> str:
+def rename_agent(*args, **kwargs) -> str:
     """
     Rename the calling agent (1 arg) or rename the agent with Old_Name to New_Name (2 args).
 
@@ -459,6 +554,11 @@ def rename_agent(*args) -> str:
 
     conductor = importlib.import_module("conductor")
 
+    args = list(args)
+    kwargs = dict(kwargs)
+    provided_kwargs = set(kwargs.keys())
+    original_args_count = len(args)
+
     # Ensure configs/structures are loaded so AGENTS/AGENTS_BY_NAME/STATE exist
     if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
         try:
@@ -466,32 +566,45 @@ def rename_agent(*args) -> str:
         except Exception:
             pass
 
-    def _norm(s: str) -> str:
+    try:
+        old_name = _get_param(args, kwargs, "old_name", default=None, coerce_underscores=True)
+        new_name = _get_param(args, kwargs, "new_name", default=None, coerce_underscores=True)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if original_args_count == 1 and "old_name" not in provided_kwargs and "new_name" not in provided_kwargs:
+        # Single positional argument -> new name for current agent
+        new_name = old_name
+        old_name = None
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    def _norm(s: str | None) -> str:
         s = str(s or "")
         s = s.replace("_", " ")
         s = re.sub(r"\s+", " ", s).strip()
         return s
 
-    if len(args) == 1:
-        # Rename current agent -> New_Name
+    new_name = _norm(new_name)
+    if not new_name:
+        return "(error) ValueError: rename_agent: new name cannot be empty"
+
+    if old_name is None:
         cur_name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
         if not isinstance(cur_name, str) or cur_name not in conductor.AGENTS_BY_NAME:
-            raise RuntimeError("rename_agent: current agent is not set or cannot be found")
+            return "(error) RuntimeError: rename_agent: current agent is not set or cannot be found"
         old_name = cur_name
-        new_name = _norm(args[0])
-    elif len(args) == 2:
-        # Rename Old_Name -> New_Name
-        old_name = _norm(args[0])
-        new_name = _norm(args[1])
     else:
-        return 'Usage: rename_agent("New_Name") or rename_agent("Old_Name","New_Name")'
+        old_name = _norm(old_name)
 
-    if not new_name:
-        raise ValueError("rename_agent: new name cannot be empty")
     if old_name not in conductor.AGENTS_BY_NAME:
-        raise KeyError(f"rename_agent: '{old_name}' not found")
+        return f"(error) KeyError: rename_agent: '{old_name}' not found"
     if new_name in conductor.AGENTS_BY_NAME:
-        raise ValueError(f"rename_agent: name '{new_name}' already exists")
+        return f"(error) ValueError: rename_agent: name '{new_name}' already exists"
 
     # Update the agent object in-place
     agent = conductor.AGENTS_BY_NAME[old_name]
@@ -532,12 +645,37 @@ def rename_agent(*args) -> str:
     return f"Renamed {old_name} → {new_name}"
 
 
+register_details(
+    "rename_agent",
+    [
+        {
+            "parameters": "new_name: str",
+            "usage": "Rename the current agent to the provided name. Arguments may be provided positionally or as keywords (e.g., rename_agent(\"New Name\") or rename_agent(new_name=\"New Name\")).",
+            "returns": "Confirmation of the old and new agent names or an error message.",
+        },
+        {
+            "parameters": "old_name: str, new_name: str",
+            "usage": "Rename the specified agent to the provided name. Arguments may be provided positionally or as keywords (e.g., rename_agent(\"Old\", \"New\") or rename_agent(old_name=\"Old\", new_name=\"New\")).",
+            "returns": "Confirmation of the old and new agent names or an error message.",
+        },
+    ],
+)
+
+
 @register("list_agents", "Return the names of all agents currently loaded.")
-def list_agents() -> str:
+def list_agents(*args, **kwargs) -> str:
     """
     List the name of all agents within the network (one per line).
     """
     import importlib
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
 
     conductor = importlib.import_module("conductor")
     # Ensure configs are loaded so AGENTS/AGENTS_BY_NAME are populated
@@ -558,7 +696,7 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Return the names of all currently loaded agents, one per line.",
+            "usage": "Return the names of all currently loaded agents, one per line. Arguments may be provided positionally or as keywords—this function takes none.",
             "returns": "A newline-separated list of agent names or '(no agents loaded)'.",
         }
     ],
@@ -569,9 +707,22 @@ register_details(
     "call_agent",
     "Set which agent runs next. Usage: call_agent() to re-run the caller, or call_agent(\"Agent Name\")."
 )
-def call_agent(*args) -> str:
+def call_agent(*args, **kwargs) -> str:
     import importlib, re
     conductor = importlib.import_module("conductor")
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        target = _get_param(args, kwargs, "name", default=None, coerce_underscores=True)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
 
     # Ensure runtime is initialized so STATE/AGENTS_BY_NAME are available
     if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
@@ -580,21 +731,20 @@ def call_agent(*args) -> str:
         except Exception:
             pass
 
-    # Resolve target name
-    if len(args) == 0:
+    def _norm(name: str | None) -> str:
+        raw = str(name or "")
+        return re.sub(r"\s+", " ", raw).strip()
+
+    if target is None:
         target = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
         if not isinstance(target, str) or target not in conductor.AGENTS_BY_NAME:
             return "call_agent: current agent is not set or cannot be found"
-    elif len(args) == 1:
-        # Back-compat: allow underscores to mean spaces
-        raw = str(args[0] or "")
-        target = re.sub(r"\s+", " ", raw.replace("_", " ")).strip()
+    else:
+        target = _norm(target)
         if not target:
             return "call_agent: agent name cannot be empty"
         if target not in conductor.AGENTS_BY_NAME:
             return f"call_agent: '{target}' not found"
-    else:
-        return 'Usage: call_agent() or call_agent("Agent Name")'
 
     conductor.STATE["force_next_agent"] = target
     return f"Next agent set to: {target}"
@@ -605,12 +755,12 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Schedule the current agent to take another turn immediately after this one.",
+            "usage": "Schedule the current agent to take another turn immediately after this one. Arguments may be provided positionally or as keywords—this function takes none.",
             "returns": "Confirmation of the next agent to run or an error message.",
         },
         {
             "parameters": "name: str",
-            "usage": "Select the named agent to run next.",
+            "usage": "Select the named agent to run next. Arguments may be provided positionally or as keywords (e.g., call_agent(\"Agent1\") or call_agent(name=\"Agent1\")).",
             "returns": "Confirmation of the next agent to run or an error message.",
         },
     ],
