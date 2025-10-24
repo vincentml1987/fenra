@@ -6,6 +6,7 @@ import subprocess
 import sys
 import shutil
 import json
+import os
 from copy import deepcopy
 
 
@@ -98,6 +99,36 @@ def _parse_call(expr: str) -> tuple[str, list[Any], dict[str, Any]]:
     args = [_literalize(a) for a in tree.body.args]
     kwargs = {kw.arg: _literalize(kw.value) for kw in tree.body.keywords if kw.arg is not None}
     return fn_name, args, kwargs
+
+
+# --- New file I/O constants & helpers ---
+
+DOC_DIR = "fenra_documentation"
+DIARY_DIR = "fenra_diary"
+
+
+def _ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def _sanitize_filename(name: str) -> str:
+    base = os.path.basename(str(name or "")).strip()
+    if base in ("", ".", ".."): 
+        raise ValueError("invalid filename")
+    return base
+
+
+def _safe_path(base_dir: str, name: str) -> str:
+    return os.path.join(base_dir, _sanitize_filename(name))
+
+
+def _list_files(folder: str) -> str:
+    _ensure_dir(folder)
+    files = [
+        f for f in sorted(os.listdir(folder))
+        if os.path.isfile(os.path.join(folder, f))
+    ]
+    return "\n".join(files) if files else "(no files)"
 
 
 def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
@@ -657,6 +688,240 @@ register_details(
             "parameters": "old_name: str, new_name: str",
             "usage": "Rename the specified agent to the provided name. Arguments may be provided positionally or as keywords (e.g., rename_agent(\"Old\", \"New\") or rename_agent(old_name=\"Old\", new_name=\"New\")).",
             "returns": "Confirmation of the old and new agent names or an error message.",
+        },
+    ],
+)
+
+
+@register("read_documentation", "Read or list files in fenra_documentation.")
+def read_documentation(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        filename = _get_param(args, kwargs, "filename", default=None, cast=str)
+        m = _get_param(args, kwargs, "m", default=None, cast=int)
+        n = _get_param(args, kwargs, "n", default=None, cast=int)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    if filename is None:
+        return _list_files(DOC_DIR)
+
+    path = _safe_path(DOC_DIR, filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = f.read()
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    if m is None and n is None:
+        return f"Contents of {filename}:\n\n{data}"
+
+    if (m is None) != (n is None):
+        return "(error) ValueError: both m and n must be provided when slicing"
+    if m < 0:
+        return "(error) ValueError: m must be >= 0"
+    if n > len(data):
+        return f"(error) ValueError: n must be <= {len(data)}"
+    if m > n:
+        return "(error) ValueError: m must be <= n"
+
+    return f"Contents of {filename} from character {m} to character {n}:\n\n{data[m:n]}"
+
+
+register_details(
+    "read_documentation",
+    [
+        {
+            "parameters": "",
+            "usage": "List all files in fenra_documentation.",
+            "returns": "A newline-separated list of files, or (no files).",
+        },
+        {
+            "parameters": "filename: str",
+            "usage": "Return the full text of the named file in fenra_documentation.",
+            "returns": "File contents as text.",
+        },
+        {
+            "parameters": "filename: str, m: int, n: int",
+            "usage": "Return file text from m (inclusive) to n (exclusive). Enforces m>=0, n<=len(file), and m<=n.",
+            "returns": "The requested slice of the file.",
+        },
+    ],
+)
+
+
+@register("read_diary", "Read or list files in fenra_diary.")
+def read_diary(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        filename = _get_param(args, kwargs, "filename", default=None, cast=str)
+        m = _get_param(args, kwargs, "m", default=None, cast=int)
+        n = _get_param(args, kwargs, "n", default=None, cast=int)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    if filename is None:
+        return _list_files(DIARY_DIR)
+
+    path = _safe_path(DIARY_DIR, filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = f.read()
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    if m is None and n is None:
+        return f"Contents of {filename}:\n\n{data}"
+
+    if (m is None) != (n is None):
+        return "(error) ValueError: both m and n must be provided when slicing"
+    if m < 0:
+        return "(error) ValueError: m must be >= 0"
+    if n > len(data):
+        return f"(error) ValueError: n must be <= {len(data)}"
+    if m > n:
+        return "(error) ValueError: m must be <= n"
+
+    return f"Contents of {filename} from character {m} to character {n}:\n\n{data[m:n]}"
+
+
+register_details(
+    "read_diary",
+    [
+        {
+            "parameters": "",
+            "usage": "List all files in fenra_diary.",
+            "returns": "A newline-separated list of files, or (no files).",
+        },
+        {
+            "parameters": "filename: str",
+            "usage": "Return the full text of the named file in fenra_diary.",
+            "returns": "File contents as text.",
+        },
+        {
+            "parameters": "filename: str, m: int, n: int",
+            "usage": "Return file text from m (inclusive) to n (exclusive). Enforces m>=0, n<=len(file), and m<=n.",
+            "returns": "The requested slice of the file.",
+        },
+    ],
+)
+
+
+@register(
+    "write_diary",
+    "Append, overwrite, or insert text into a diary file in fenra_diary."
+)
+def write_diary(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        filename = _get_param(args, kwargs, "filename", cast=str)
+        text = _get_param(args, kwargs, "textToWrite", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    # Disambiguate third parameter (positional or keyword).
+    third = None
+    if args:
+        third = args.pop(0)  # could be bool overwrite or int writeLocation
+
+    # If provided as keywords, accept only one of them.
+    if "overwrite" in kwargs and "writeLocation" in kwargs:
+        return "(error) ValueError: provide either 'overwrite' or 'writeLocation', not both"
+    if "overwrite" in kwargs:
+        third = kwargs.pop("overwrite")
+    if "writeLocation" in kwargs:
+        third = kwargs.pop("writeLocation")
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    # Required params
+    if not filename or text is None:
+        return "(error) ValueError: filename and textToWrite are required"
+
+    _ensure_dir(DIARY_DIR)
+    path = _safe_path(DIARY_DIR, filename)
+
+    # Case A: overwrite flag (bool)
+    if isinstance(third, bool):
+        try:
+            if third:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                return f"Overwrote {filename} ({len(text)} chars)."
+            else:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(text)
+                # Report new size in characters
+                with open(path, "r", encoding="utf-8") as f:
+                    new_len = len(f.read())
+                return f"Appended {len(text)} chars to {filename} (now {new_len} chars)."
+        except Exception as e:
+            return f"(error) {type(e).__name__}: {e}"
+
+    # Case B: writeLocation (int)
+    if isinstance(third, int):
+        try:
+            existing = ""
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            pos = int(third)
+            if pos < 0 or pos > len(existing):
+                return f"(error) ValueError: writeLocation must be between 0 and {len(existing)}"
+            updated = existing[:pos] + text + existing[pos:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(updated)
+            return f"Wrote {len(text)} chars at position {pos} in {filename} (now {len(updated)} chars)."
+        except Exception as e:
+            return f"(error) {type(e).__name__}: {e}"
+
+    # Default: append
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text)
+        with open(path, "r", encoding="utf-8") as f:
+            new_len = len(f.read())
+        return f"Appended {len(text)} chars to {filename} (now {new_len} chars)."
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+
+register_details(
+    "write_diary",
+    [
+        {
+            "parameters": "filename: str, textToWrite: str",
+            "usage": "Append textToWrite to fenra_diary/filename.",
+            "returns": "Append confirmation with new file length.",
+        },
+        {
+            "parameters": "filename: str, textToWrite: str, overwrite: bool",
+            "usage": "If overwrite=True, replace file with textToWrite; if False, append.",
+            "returns": "Overwrite/append confirmation with file length.",
+        },
+        {
+            "parameters": "filename: str, textToWrite: str, writeLocation: int",
+            "usage": "Insert textToWrite at the given character offset (0..len(file)).",
+            "returns": "Insert confirmation with new file length.",
         },
     ],
 )
