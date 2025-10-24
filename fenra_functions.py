@@ -711,7 +711,8 @@ def read_documentation(*args, **kwargs) -> str:
         return f"(error) ValueError: unexpected keyword '{key}'"
 
     if filename is None:
-        return _list_files(DOC_DIR)
+        files = _list_files(DOC_DIR)
+        return "The following documentation is available:\n" + files
 
     path = _safe_path(DOC_DIR, filename)
     try:
