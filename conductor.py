@@ -882,10 +882,21 @@ def step_agent(agent_name: str) -> Optional[str]:
         for cmd in commands:
             expr = (cmd or "").strip()
             fn_name, _found, result, params_string = fenra_functions.dispatch_expression(expr)
-            params_display = (
-                params_string if params_string and params_string.strip() else '""'
+            name_display = fn_name or "<unknown>"
+            params_display = params_string or ""
+            call_signature = (
+                f"{name_display}({params_display})"
+                if params_display
+                else f"{name_display}()"
             )
-            calls_log.append((fn_name, params_display, result))
+            header_line = f"\\-----{call_signature} Output Begins-----/"
+            footer_line = f"\\-----{call_signature} Output Ends-----/"
+            if not isinstance(result, str):
+                result_text = json.dumps(result, ensure_ascii=False)
+            else:
+                result_text = result
+            formatted_result = "\n".join([header_line, result_text, footer_line])
+            calls_log.append((name_display, params_display, formatted_result))
         if calls_log:
             # Inline only the results (no names, no timestamps) into the agent-visible text.
             results = "\n\n".join(
