@@ -329,6 +329,38 @@ def _refresh_pdvs_from_disk() -> None:
     _persist_pdvs_live()
 
 
+def _expand_context_macros(text: str, *, agent: dict, model_id: str) -> str:
+    if not isinstance(text, str) or not text:
+        return text or ""
+
+    name = agent.get("name", "") or ""
+    groups_in = ", ".join(
+        [g for g in (agent.get("groups_in") or []) if isinstance(g, str)]
+    ) or ""
+    groups_out = ", ".join(
+        [g for g in (agent.get("groups_out") or []) if isinstance(g, str)]
+    ) or ""
+    try:
+        cls = CLASSES.get(agent.get("agent_class", ""), {}) or {}
+        trig_pdv = str(cls.get("triggering_pdv", "") or "")
+    except Exception:
+        trig_pdv = ""
+
+    try:
+        datestamp = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    except Exception:
+        datestamp = ""
+
+    out = text
+    out = out.replace("%d", datestamp)
+    out = out.replace("%a", name)
+    out = out.replace("%m", model_id)
+    out = out.replace("%i", groups_in)
+    out = out.replace("%o", groups_out)
+    out = out.replace("%p", trig_pdv)
+    return out
+
+
 def effective_params(agent: dict):
     cls = CLASSES[agent["agent_class"]]
     model = agent.get("model") or cls.get("model") or GLOBALS.get("model")
@@ -374,6 +406,9 @@ def effective_params(agent: dict):
     ).strip()
     if not model:
         raise RuntimeError(f"No model resolved for agent '{agent['name']}'. Set agent/class/global model.")
+    system_text = _expand_context_macros(system_text, agent=agent, model_id=model)
+    pre_text = _expand_context_macros(pre_text, agent=agent, model_id=model)
+    post_text = _expand_context_macros(post_text, agent=agent, model_id=model)
     return model, temp, system_text, pre_text, post_text
 
 
