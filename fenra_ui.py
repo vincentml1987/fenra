@@ -642,6 +642,34 @@ class FenraUI:
 
         self.update_queue_and_sent()
 
+        # ----- Inject Message Tab -----
+        inject_tab = ttk.Frame(self.notebook)
+        self.notebook.add(inject_tab, text="Inject Message")
+
+        top_frame = ttk.LabelFrame(
+            inject_tab,
+            text="Pending One-Time Message (will be appended to NEXT agent and then cleared)",
+        )
+        top_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        self.pending_view = scrolledtext.ScrolledText(top_frame, state="disabled", height=8, wrap=tk.WORD)
+        self.pending_view.pack(fill=tk.BOTH, expand=True)
+
+        toolbar = ttk.Frame(inject_tab)
+        toolbar.pack(fill=tk.X, padx=4, pady=(0, 4))
+        send_btn = ttk.Button(toolbar, text="Send to Pending", command=self._inject_send_to_pending)
+        send_btn.pack(side=tk.LEFT, padx=2)
+        del_btn = ttk.Button(toolbar, text="Delete Pending", command=self._inject_delete_pending)
+        del_btn.pack(side=tk.LEFT, padx=2)
+        clear_btn = ttk.Button(toolbar, text="Clear Editor", command=self._inject_clear_editor)
+        clear_btn.pack(side=tk.LEFT, padx=2)
+
+        edit_frame = ttk.LabelFrame(inject_tab, text="Compose / Edit")
+        edit_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        self.inject_editor = scrolledtext.ScrolledText(edit_frame, height=10, wrap=tk.WORD)
+        self.inject_editor.pack(fill=tk.BOTH, expand=True)
+
+        self._refresh_inject_pending()
+
         # ----- Topology Tab -----
         topology_tab = ttk.Frame(self.notebook)
         self.notebook.add(topology_tab, text="Topology")
@@ -2054,6 +2082,72 @@ class FenraUI:
         st.delete("1.0", tk.END)
         if not self._loading_class:
             self._set_classes_dirty(True)
+
+    def _inject_clear_editor(self) -> None:
+        was_loading = getattr(self, "_loading_class", False)
+        try:
+            self._loading_class = True
+            if hasattr(self, "inject_editor"):
+                self.inject_editor.delete("1.0", tk.END)
+        finally:
+            self._loading_class = was_loading
+
+    def _refresh_inject_pending(self) -> None:
+        try:
+            c = _get_conductor()
+            pending = ""
+            if hasattr(c, "get_one_time_inject"):
+                pending = str(c.get_one_time_inject() or "")
+        except Exception:
+            pending = ""
+
+        def _draw():
+            if not hasattr(self, "pending_view"):
+                return
+            self.pending_view.configure(state="normal")
+            self.pending_view.delete("1.0", tk.END)
+            content = pending.strip()
+            if content:
+                self.pending_view.insert(tk.END, content)
+            else:
+                self.pending_view.insert(tk.END, "(none)")
+            self.pending_view.configure(state="disabled")
+
+        self._threadsafe(_draw)
+
+    def refresh_inject_pending(self) -> None:
+        self._refresh_inject_pending()
+
+    def _inject_send_to_pending(self) -> None:
+        text = self.inject_editor.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showinfo("Inject Message", "Editor is empty.")
+            return
+        try:
+            c = _get_conductor()
+            if hasattr(c, "set_one_time_inject"):
+                c.set_one_time_inject(text)
+            self._refresh_inject_pending()
+        except Exception as e:
+            messagebox.showerror("Inject Message", f"Failed to set pending message: {e}")
+
+    def _inject_delete_pending(self) -> None:
+        try:
+            c = _get_conductor()
+            txt = ""
+            if hasattr(c, "delete_one_time_inject"):
+                txt = str(c.delete_one_time_inject() or "")
+        except Exception as e:
+            messagebox.showerror("Inject Message", f"Failed to delete pending message: {e}")
+            return
+
+        def _put_back():
+            self._inject_clear_editor()
+            if txt:
+                self.inject_editor.insert("1.0", txt)
+
+        self._threadsafe(_put_back)
+        self._refresh_inject_pending()
 
     def _reload_model_choices(self) -> None:
         try:
