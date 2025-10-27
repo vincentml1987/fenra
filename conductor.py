@@ -191,6 +191,41 @@ UI: Optional[FenraUI] = None
 # Queue deprecated. Kept for compatibility but unused.
 _INCOMING_QUEUE: List[Dict[str, object]] = []
 
+
+# --- One-time inject helpers ---
+def get_one_time_inject() -> str:
+    return str((STATE or {}).get("one_time_inject") or "").strip()
+
+
+def set_one_time_inject(text: str) -> None:
+    from config_loader import save_state
+
+    global STATE
+    STATE["one_time_inject"] = str(text or "")
+    save_state(STATE)
+    if UI is not None and hasattr(UI, "refresh_inject_pending"):
+        try:
+            UI.refresh_inject_pending()
+        except Exception:
+            logger.exception("UI refresh_inject_pending failed")
+
+
+def delete_one_time_inject() -> str:
+    """Remove pending message and return its text (for UI to repopulate editor)."""
+
+    from config_loader import save_state
+
+    global STATE
+    msg = str((STATE or {}).get("one_time_inject") or "")
+    STATE["one_time_inject"] = ""
+    save_state(STATE)
+    if UI is not None and hasattr(UI, "refresh_inject_pending"):
+        try:
+            UI.refresh_inject_pending()
+        except Exception:
+            logger.exception("UI refresh_inject_pending failed")
+    return msg
+
 # ----------------------------------------------------------------------------
 # Run control (Start/Stop)
 # ----------------------------------------------------------------------------
@@ -861,6 +896,15 @@ def step_agent(agent_name: str) -> Optional[str]:
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
     model_id, temp, system_text, pre, post = effective_params(agent)
+    inject = get_one_time_inject()
+    if inject:
+        set_one_time_inject("")
+        injected_block = (
+            "\n\n----- Injected One-Time Message (will not persist) -----\n"
+            f"{inject}\n"
+            "----- End Injected One-Time Message -----"
+        )
+        post = (post or "") + injected_block
     # When an agent reads the message queue, it must see ONLY the queue as its context.
     # No prior transcript or other context is included.
     reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
