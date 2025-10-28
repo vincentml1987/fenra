@@ -101,7 +101,7 @@ def _literalize(node: ast.AST) -> Any:
 
 def _parse_call(expr: str) -> tuple[str, list[Any], dict[str, Any]]:
     """
-    Parse 'fn_name(arg, kw=val, ...)' into (name, args, kwargs).
+    Parse 'fn_name(arg, kw=val, ...)' or dotted 'ns.fn(arg, ...)' into (name, args, kwargs).
     Raises ValueError on any invalid or unsafe expression.
     """
     try:
@@ -109,12 +109,25 @@ def _parse_call(expr: str) -> tuple[str, list[Any], dict[str, Any]]:
     except SyntaxError as e:
         raise ValueError(f"invalid expression: {e}") from e
 
-    if not isinstance(tree.body, ast.Call) or not isinstance(tree.body.func, ast.Name):
-        raise ValueError("expression is not a simple function call")
+    if not isinstance(tree.body, ast.Call):
+        raise ValueError("expression is not a function call")
 
-    fn_name = tree.body.func.id
+    def _attr_to_name(n: ast.AST) -> str:
+        if isinstance(n, ast.Name):
+            return n.id
+        if isinstance(n, ast.Attribute):
+            return _attr_to_name(n.value) + "." + n.attr
+        raise ValueError("expression is not a simple or dotted function name")
+
+    fn_name = _attr_to_name(tree.body.func)
     args = [_literalize(a) for a in tree.body.args]
-    kwargs = {kw.arg: _literalize(kw.value) for kw in tree.body.keywords if kw.arg is not None}
+
+    kwargs: dict[str, Any] = {}
+    for kw in tree.body.keywords:
+        if kw.arg is None:
+            raise ValueError("keyword unpacking (**kwargs) is not allowed")
+        kwargs[kw.arg] = _literalize(kw.value)
+
     return fn_name, args, kwargs
 
 
