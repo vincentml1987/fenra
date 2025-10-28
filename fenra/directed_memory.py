@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-import json
-import os
-import time
+import json, os, time
 
 from config_loader import get_path
 
@@ -86,7 +83,7 @@ class DirectedMemoryStore:
 
     def _next_id(self) -> int:
         items = self.list()
-        return max((m.id for m in items), default=0) + 1
+        return (max((m.id for m in items), default=0) + 1)
 
     def add(self, memory_text: str) -> DirectedMemory:
         mem = DirectedMemory(
@@ -97,8 +94,7 @@ class DirectedMemoryStore:
             memoryText=str(memory_text or "").strip(),
         )
         payload = self._load_payload()
-        arr = payload.setdefault("memories", [])
-        arr.append(asdict(mem))
+        payload.setdefault("memories", []).append(asdict(mem))
         self._save_payload(payload)
         return mem
 

@@ -1213,8 +1213,7 @@ def diary_tags_reindex(*args, **kwargs) -> str:
 
 @register("directed_memory.add", "Add a directed memory (defaults: isGlobal=True, empty agent lists).")
 def directed_memory_add(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         memory_text = _get_param(args, kwargs, "memory_text", cast=str, coerce_underscores=True)
     except ValueError as e:
@@ -1222,8 +1221,7 @@ def directed_memory_add(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         mem = store.add(memory_text)
@@ -1234,8 +1232,7 @@ def directed_memory_add(*args, **kwargs) -> str:
 
 @register("directed_memory.delete", "Delete a directed memory by index.")
 def directed_memory_delete(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
     except ValueError as e:
@@ -1243,8 +1240,7 @@ def directed_memory_delete(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         store.delete(index)
@@ -1255,8 +1251,7 @@ def directed_memory_delete(*args, **kwargs) -> str:
 
 @register("directed_memory.update_text", "Update the memoryText of a directed memory by index.")
 def directed_memory_update_text(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         memory_text = _get_param(args, kwargs, "memory_text", cast=str, coerce_underscores=True)
@@ -1265,8 +1260,7 @@ def directed_memory_update_text(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.update_text(index, memory_text)
@@ -1277,8 +1271,7 @@ def directed_memory_update_text(*args, **kwargs) -> str:
 
 @register("directed_memory.set_global", "Set isGlobal on a directed memory.")
 def directed_memory_set_global(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         is_global = _get_param(args, kwargs, "is_global", cast=bool)
@@ -1287,8 +1280,7 @@ def directed_memory_set_global(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.set_global(index, is_global)
@@ -1299,8 +1291,7 @@ def directed_memory_set_global(*args, **kwargs) -> str:
 
 @register("directed_memory.add_agent_class", "Add an agent class to a directed memory.")
 def directed_memory_add_agent_class(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         agent_class = _get_param(args, kwargs, "agent_class", cast=str, coerce_underscores=True)
@@ -1309,8 +1300,7 @@ def directed_memory_add_agent_class(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.add_agent_class(index, agent_class)
@@ -1321,8 +1311,7 @@ def directed_memory_add_agent_class(*args, **kwargs) -> str:
 
 @register("directed_memory.remove_agent_class", "Remove an agent class from a directed memory.")
 def directed_memory_remove_agent_class(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         agent_class = _get_param(args, kwargs, "agent_class", cast=str, coerce_underscores=True)
@@ -1331,8 +1320,7 @@ def directed_memory_remove_agent_class(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.remove_agent_class(index, agent_class)
@@ -1343,8 +1331,7 @@ def directed_memory_remove_agent_class(*args, **kwargs) -> str:
 
 @register("directed_memory.add_agent", "Add an agent name to a directed memory.")
 def directed_memory_add_agent(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         agent = _get_param(args, kwargs, "agent", cast=str, coerce_underscores=True)
@@ -1353,8 +1340,7 @@ def directed_memory_add_agent(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.add_agent(index, agent)
@@ -1365,8 +1351,7 @@ def directed_memory_add_agent(*args, **kwargs) -> str:
 
 @register("directed_memory.remove_agent", "Remove an agent name from a directed memory.")
 def directed_memory_remove_agent(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     try:
         index = _get_param(args, kwargs, "index", cast=int)
         agent = _get_param(args, kwargs, "agent", cast=str, coerce_underscores=True)
@@ -1375,8 +1360,7 @@ def directed_memory_remove_agent(*args, **kwargs) -> str:
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         item = store.remove_agent(index, agent)
@@ -1387,13 +1371,11 @@ def directed_memory_remove_agent(*args, **kwargs) -> str:
 
 @register("directed_memory.list", "List all directed memories.")
 def directed_memory_list(*args, **kwargs) -> str:
-    args = list(args)
-    kwargs = dict(kwargs)
+    args = list(args); kwargs = dict(kwargs)
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        key = next(iter(kwargs)); return f"(error) ValueError: unexpected keyword '{key}'"
     try:
         store = get_store()
         return json.dumps(store.list_raw(), ensure_ascii=False)
@@ -1406,7 +1388,7 @@ register_details(
     [
         {
             "parameters": "memory_text: str",
-            "usage": "Add a directed memory (isGlobal=True, no targets).",
+            "usage": "Add a directed memory (isGlobal=True, empty targets).",
             "returns": "The created memory as JSON.",
         }
     ],

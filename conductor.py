@@ -897,14 +897,6 @@ def step_agent(agent_name: str) -> Optional[str]:
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
     model_id, temp, system_text, pre, post = effective_params(agent)
-    # Append Directed Memories as the very last thing in the agent's context.
-    try:
-        _dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
-        if _dm_block:
-            post = "\n\n".join(filter(None, [post, _dm_block]))
-    except Exception:
-        # Never fail a run due to DM issues
-        pass
     inject = get_one_time_inject()
     if inject:
         set_one_time_inject("")
@@ -914,6 +906,14 @@ def step_agent(agent_name: str) -> Optional[str]:
             "----- End Injected One-Time Message -----"
         )
         post = (post or "") + injected_block
+    # Ensure Directed Memories are appended as the very last context segment.
+    try:
+        _dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
+        if _dm_block:
+            post = "\n\n".join(filter(None, [post, _dm_block]))
+    except Exception:
+        # Do not fail the run due to DM issues
+        pass
     # When an agent reads the message queue, it must see ONLY the queue as its context.
     # No prior transcript or other context is included.
     reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
