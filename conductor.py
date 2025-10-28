@@ -16,6 +16,7 @@ import requests
 from fenra_ui import FenraUI
 import importlib
 import fenra_functions
+from directed_memory import directed_memory_block_for_agent
 
 # Ensure that when this file is executed as a script (__main__), importing
 # "conductor" yields the running module instead of creating a duplicate.
@@ -896,6 +897,14 @@ def step_agent(agent_name: str) -> Optional[str]:
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
     model_id, temp, system_text, pre, post = effective_params(agent)
+    # Append Directed Memories as the very last thing in the agent's context.
+    try:
+        _dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
+        if _dm_block:
+            post = "\n\n".join(filter(None, [post, _dm_block]))
+    except Exception:
+        # Never fail a run due to DM issues
+        pass
     inject = get_one_time_inject()
     if inject:
         set_one_time_inject("")
