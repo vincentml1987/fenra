@@ -5,7 +5,7 @@ import json
 import os
 
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 from config import CONF_DIR
 
 
@@ -206,3 +206,33 @@ def save_agents(agents: list[dict], path: str = _conf_path('agents.json')) -> No
 
 def save_state(state: dict, path: str = _conf_path('state.json')) -> None:
     _atomic_write(path, state)
+
+
+def get_path(key: str, default: str | Path | None = None) -> Path | None:
+    """Resolve a filesystem path from the globals configuration."""
+
+    if not key:
+        raise ValueError("key must be provided")
+
+    data: Any = try_load_globals()
+    for part in key.split('.'):
+        if isinstance(data, dict) and part in data:
+            data = data[part]
+        else:
+            data = None
+            break
+
+    if data is None:
+        data = default
+
+    if data is None:
+        return None
+
+    if isinstance(data, Path):
+        path = data
+    elif isinstance(data, str):
+        path = Path(data)
+    else:
+        raise TypeError(f"Configuration value for {key!r} must be a string path.")
+
+    return path.expanduser()
