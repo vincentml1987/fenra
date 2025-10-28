@@ -8,7 +8,22 @@ import shutil
 import json
 import os
 from copy import deepcopy
+from pathlib import Path
 
+from config_loader import get_path
+from diary_tags import (
+    DiaryPaths,
+    add_file_tags,
+    get_file_tags,
+    list_tree as diary_list_tree,
+    mkdir as diary_mkdir,
+    move as diary_move,
+    reindex as diary_reindex,
+    remove as diary_remove,
+    remove_file_tags,
+    search_by_tags as diary_search_by_tags,
+    set_file_tags,
+)
 
 
 # ---------------------------
@@ -109,6 +124,21 @@ DIARY_DIR = "fenra_diary"
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
+
+
+def _diary_paths() -> DiaryPaths:
+    diary_default = Path.home() / DIARY_DIR
+    diary_root = get_path("paths.diary", default=diary_default)
+    if diary_root is None:
+        diary_root = diary_default
+    diary_root = Path(diary_root).expanduser()
+    diary_root.mkdir(parents=True, exist_ok=True)
+
+    documentation_root = get_path("paths.documentation", default=None)
+    if documentation_root is not None:
+        documentation_root = Path(documentation_root).expanduser()
+
+    return DiaryPaths(diary_root=diary_root, documentation_root=documentation_root)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -926,6 +956,257 @@ register_details(
         },
     ],
 )
+
+
+@register("diary.list_tree", "List directories and files within the diary root.")
+def diary_fn_list_tree(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_dir = _get_param(args, kwargs, "rel_dir", default=".", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        listing = diary_list_tree(_diary_paths(), rel_dir)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(listing)
+
+
+@register("diary.mkdir", "Create a directory inside the diary root.")
+def diary_fn_mkdir(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_dir = _get_param(args, kwargs, "rel_dir", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if rel_dir in ("", ".", ".."):
+        return "(error) ValueError: invalid directory name"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        created = diary_mkdir(_diary_paths(), rel_dir)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps({"path": created})
+
+
+@register("diary.move", "Move or rename diary files and directories.")
+def diary_fn_move(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_src = _get_param(args, kwargs, "rel_src", cast=str)
+        rel_dst = _get_param(args, kwargs, "rel_dst", cast=str)
+        overwrite = _get_param(args, kwargs, "overwrite", default=False)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if not isinstance(overwrite, bool):
+        return "(error) ValueError: overwrite must be a boolean"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        moved = diary_move(_diary_paths(), rel_src, rel_dst, overwrite=overwrite)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps({"path": moved})
+
+
+@register("diary.remove", "Delete a diary file or directory.")
+def diary_fn_remove(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_path = _get_param(args, kwargs, "rel_path", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        removed = diary_remove(_diary_paths(), rel_path)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps({"removed": removed})
+
+
+def _validate_tag_list(name: str, value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be a list of strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{name} must be a list of strings")
+        result.append(item)
+    return result
+
+
+@register("diary.tags.get", "Get tags for a diary file.")
+def diary_tags_get(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_file = _get_param(args, kwargs, "rel_file", cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        tags = get_file_tags(_diary_paths(), rel_file)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(tags)
+
+
+@register("diary.tags.add", "Add tags to a diary file.")
+def diary_tags_add(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_file = _get_param(args, kwargs, "rel_file", cast=str)
+        tags_raw = _get_param(args, kwargs, "tags")
+        tags = _validate_tag_list("tags", tags_raw)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        updated = add_file_tags(_diary_paths(), rel_file, tags)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(updated)
+
+
+@register("diary.tags.remove", "Remove tags from a diary file.")
+def diary_tags_remove(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_file = _get_param(args, kwargs, "rel_file", cast=str)
+        tags_raw = _get_param(args, kwargs, "tags")
+        tags = _validate_tag_list("tags", tags_raw)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        updated = remove_file_tags(_diary_paths(), rel_file, tags)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(updated)
+
+
+@register("diary.tags.set", "Replace tags for a diary file.")
+def diary_tags_set(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        rel_file = _get_param(args, kwargs, "rel_file", cast=str)
+        tags_raw = _get_param(args, kwargs, "tags")
+        tags = _validate_tag_list("tags", tags_raw)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        updated = set_file_tags(_diary_paths(), rel_file, tags)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(updated)
+
+
+@register("diary.tags.search", "Search diary files by tags.")
+def diary_tags_search(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        include_raw = _get_param(args, kwargs, "include", default=[])
+        exclude_raw = _get_param(args, kwargs, "exclude", default=[])
+        include = _validate_tag_list("include", include_raw)
+        exclude = _validate_tag_list("exclude", exclude_raw)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        matches = diary_search_by_tags(_diary_paths(), include, exclude)
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps(matches)
+
+
+@register("diary.tags.reindex", "Rebuild the diary tag index from sidecars.")
+def diary_tags_reindex(*args, **kwargs) -> str:
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    try:
+        count = diary_reindex(_diary_paths())
+    except Exception as e:
+        return f"(error) {type(e).__name__}: {e}"
+
+    return json.dumps({"indexed": count})
 
 
 @register("list_agents", "Return the names of all agents currently loaded.")
