@@ -16,6 +16,7 @@ import requests
 from fenra_ui import FenraUI
 import importlib
 import fenra_functions
+from directed_memory import directed_memory_block_for_agent
 
 # Ensure that when this file is executed as a script (__main__), importing
 # "conductor" yields the running module instead of creating a duplicate.
@@ -905,6 +906,14 @@ def step_agent(agent_name: str) -> Optional[str]:
             "----- End Injected One-Time Message -----"
         )
         post = (post or "") + injected_block
+    # Ensure Directed Memories are appended as the very last context segment.
+    try:
+        _dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
+        if _dm_block:
+            post = "\n\n".join(filter(None, [post, _dm_block]))
+    except Exception:
+        # Do not fail the run due to DM issues
+        pass
     # When an agent reads the message queue, it must see ONLY the queue as its context.
     # No prior transcript or other context is included.
     reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
