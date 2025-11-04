@@ -322,17 +322,24 @@ def awareness_awake(*args, **kwargs) -> str:
     args = list(args)
     kwargs = dict(kwargs)
 
+    # match the argument checking style of the other awareness functions
     if args:
         return "(error) ValueError: unexpected positional arguments"
     if kwargs:
         key = next(iter(kwargs))
         return f"(error) ValueError: unexpected keyword '{key}'"
 
+    # load current awareness map
     aw = awareness.get_awareness()
+
+    # turn on just these two
     aw["context.transcript"] = True
     aw["directed_memory"] = True
 
+    # persist
     awareness.set_awareness(aw)
+
+    # make sure the running conductor's STATE["awareness"] is also updated
     _sync_awareness_state_to_conductor()
 
     return "Enabled transcript and directed memories."
