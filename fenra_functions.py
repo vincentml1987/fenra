@@ -26,6 +26,8 @@ from diary_tags import (
     set_file_tags,
 )
 from directed_memory import get_store
+from fenra import awareness
+from fenra.awareness import AWARENESS_KEYS
 
 
 # ---------------------------
@@ -230,6 +232,133 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
 # --------------------------------
 # Built-in/required Fenra functions
 # --------------------------------
+
+
+def _sync_awareness_state_to_conductor() -> None:
+    import importlib
+
+    try:
+        conductor = importlib.import_module("conductor")
+    except Exception:
+        return
+
+    try:
+        conductor.STATE.setdefault("awareness", {})
+        conductor.STATE["awareness"] = dict(awareness.get_awareness())
+    except Exception:
+        pass
+
+
+@register("awareness.list", "List awareness-controlled text inputs and their status.")
+def awareness_list(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    state = awareness.get_awareness()
+    lines = [f"{name}: {'on' if state.get(name) else 'off'}" for name in AWARENESS_KEYS]
+
+    _sync_awareness_state_to_conductor()
+
+    return "\n".join(lines)
+
+
+@register("awareness.notice", "Enable a specific awareness-controlled text input.")
+def awareness_notice(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No such awareness item: {name or '<empty>'}."
+
+    awareness.set_key(name, True)
+    _sync_awareness_state_to_conductor()
+
+    return f"Noticed {name}."
+
+
+@register("awareness.ignore", "Disable a specific awareness-controlled text input.")
+def awareness_ignore(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No such awareness item: {name or '<empty>'}."
+
+    awareness.set_key(name, False)
+    _sync_awareness_state_to_conductor()
+
+    return f"Ignored {name}."
+
+
+@register("awareness.peek", "Return the text Fenra would supply for the requested awareness input.")
+def awareness_peek(*args, **kwargs) -> str:
+    import importlib
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No text for {name}."
+
+    try:
+        conductor = importlib.import_module("conductor")
+        if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
+            conductor.ensure_configs_loaded()
+    except Exception as exc:
+        return f"(error) {type(exc).__name__}: {exc}"
+
+    agent_name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
+    if not isinstance(agent_name, str) or agent_name not in getattr(conductor, "AGENTS_BY_NAME", {}):
+        return f"No text for {name}."
+
+    agent = conductor.AGENTS_BY_NAME[agent_name]
+    try:
+        text = conductor.resolve_awareness_text(agent, name)
+    except Exception as exc:
+        return f"(error) {type(exc).__name__}: {exc}"
+
+    if not text:
+        return f"No text for {name}."
+
+    return text
 
 
 @register("list_functions", "List available Fenra functions.")
