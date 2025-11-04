@@ -1024,20 +1024,10 @@ def step_agent(agent_name: str) -> Optional[str]:
         dm_block = ""
     reads_q = bool(cls.get("reads_message_queue"))
     aw = awareness.get_awareness()
-    auto_awakened = False
-
-    # Auto-enable the minimal inputs if everything is disabled so the agent can recover.
-    if all(not bool(v) for v in aw.values()):
-        aw["context.transcript"] = True
-        aw["directed_memory"] = True
-        awareness.set_awareness(aw)
-        auto_awakened = True
 
     try:
         STATE.setdefault("awareness", {})
         STATE["awareness"] = dict(aw)
-        if auto_awakened:
-            save_state(STATE)
     except Exception:
         pass
     if reads_q:
