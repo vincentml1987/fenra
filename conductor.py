@@ -34,6 +34,8 @@ from config_loader import (
     save_agents,
     save_state,
 )
+from fenra import awareness
+from fenra.awareness import AWARENESS_SLEEP_MESSAGE
 from runtime_utils import (
     init_global_logging,
     parse_log_level,
@@ -227,6 +229,113 @@ def delete_one_time_inject() -> str:
             logger.exception("UI refresh_inject_pending failed")
     return msg
 
+
+def _format_one_time_inject_block(text: str) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    return (
+        "\n\n----- Injected One-Time Message (will not persist) -----\n"
+        f"{text}\n"
+        "----- End Injected One-Time Message -----"
+    )
+
+
+def _collect_awareness_base_segments(agent: dict) -> dict[str, str]:
+    cls = CLASSES.get(agent.get("agent_class", ""), {}) or {}
+
+    ignore_global_system = bool(cls.get("ignore_global_system", False)) or bool(
+        agent.get("ignore_global_system", False)
+    )
+    ignore_global_pre = bool(cls.get("ignore_global_pre", False)) or bool(
+        agent.get("ignore_global_pre", False)
+    )
+    ignore_global_post = bool(cls.get("ignore_global_post", False)) or bool(
+        agent.get("ignore_global_post", False)
+    )
+
+    ignore_class_system = bool(agent.get("ignore_class_system", False))
+    ignore_class_pre = bool(agent.get("ignore_class_pre", False))
+    ignore_class_post = bool(agent.get("ignore_class_post", False))
+
+    segments = {
+        "system.global": "" if ignore_global_system else str(GLOBALS.get("system_prompt", "") or ""),
+        "system.class": "" if ignore_class_system else str(cls.get("system_prompt", "") or ""),
+        "system.agent": str(agent.get("system_prompt", "") or ""),
+        "pre.global": "" if ignore_global_pre else str(GLOBALS.get("pre_context_message", "") or ""),
+        "pre.class": "" if ignore_class_pre else str(cls.get("pre_context_message", "") or ""),
+        "pre.agent": str(agent.get("pre_context_message", "") or ""),
+        "post.global": "" if ignore_global_post else str(GLOBALS.get("post_context_message", "") or ""),
+        "post.class": "" if ignore_class_post else str(cls.get("post_context_message", "") or ""),
+        "post.agent": str(agent.get("post_context_message", "") or ""),
+    }
+    return segments
+
+
+def _awareness_all_off(aw: dict) -> bool:
+    return all(not bool(v) for v in (aw or {}).values())
+
+
+def _awareness_is_on(aw: dict, name: str) -> bool:
+    return bool((aw or {}).get(name, False))
+
+
+def _read_current_transcript() -> str:
+    path = os.path.join("chatlogs", "context_current.txt")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        logger.exception("Failed to read current transcript from %s", path)
+        return ""
+
+
+def resolve_awareness_text(agent: dict, item: str) -> str:
+    """Return the text block associated with a single awareness item."""
+
+    if not agent or not item:
+        return ""
+
+    name = str(item)
+    try:
+        model_id, *_ = effective_params(agent)
+    except Exception:
+        return ""
+
+    base = _collect_awareness_base_segments(agent)
+
+    if name in base:
+        raw = str(base.get(name, "") or "")
+        combined = raw.strip()
+        if not combined:
+            return ""
+        return _expand_context_macros(combined, agent=agent, model_id=model_id)
+
+    if name == "directed_memory":
+        try:
+            return directed_memory_block_for_agent(agent["name"], agent["agent_class"])
+        except Exception:
+            return ""
+
+    if name == "one_time_inject":
+        pending = str((STATE or {}).get("one_time_inject") or "").strip()
+        return _format_one_time_inject_block(pending)
+
+    if name == "context.transcript":
+        return _read_current_transcript()
+
+    if name == "context.discord_queue":
+        try:
+            limit = int(GLOBALS.get("discord_history_limit", 10))
+        except Exception:
+            limit = 10
+        return _discord_transcript(limit)
+
+    return ""
+
+
 # ----------------------------------------------------------------------------
 # Run control (Start/Stop)
 # ----------------------------------------------------------------------------
@@ -335,6 +444,12 @@ def load_all_configs() -> None:
     except Exception as exc:
         logger.warning("state.json invalid; initializing new state: %s", exc)
         STATE = {}
+    try:
+        awareness_state = awareness.get_awareness()
+        STATE.setdefault("awareness", {})
+        STATE["awareness"] = dict(awareness_state)
+    except Exception:
+        STATE.setdefault("awareness", {})
     if not STATE.get("current_agent") and AGENTS:
         earliest = min(AGENTS, key=lambda a: a.get("created_at", ""))
         STATE["current_agent"] = earliest["name"]
@@ -896,36 +1011,89 @@ def step_agent(agent_name: str) -> Optional[str]:
     global CONTEXT
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
-    model_id, temp, system_text, pre, post = effective_params(agent)
-    inject = get_one_time_inject()
-    if inject:
-        set_one_time_inject("")
-        injected_block = (
-            "\n\n----- Injected One-Time Message (will not persist) -----\n"
-            f"{inject}\n"
-            "----- End Injected One-Time Message -----"
-        )
-        post = (post or "") + injected_block
-    # Ensure Directed Memories are appended as the very last context segment.
+    cls = CLASSES[agent["agent_class"]]
+    groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    model_id, temp, *_ = effective_params(agent)
+    base_segments = _collect_awareness_base_segments(agent)
+    dm_block = ""
     try:
-        _dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
-        if _dm_block:
-            post = "\n\n".join(filter(None, [post, _dm_block]))
+        dm_block = directed_memory_block_for_agent(agent["name"], agent["agent_class"])
     except Exception:
         # Do not fail the run due to DM issues
+        dm_block = ""
+    reads_q = bool(cls.get("reads_message_queue"))
+    aw = awareness.get_awareness()
+    try:
+        STATE.setdefault("awareness", {})
+        STATE["awareness"] = dict(aw)
+    except Exception:
         pass
-    # When an agent reads the message queue, it must see ONLY the queue as its context.
-    # No prior transcript or other context is included.
-    reads_q = bool(CLASSES[agent["agent_class"]].get("reads_message_queue"))
     if reads_q:
-        limit = int(GLOBALS.get("discord_history_limit", 10))
-        msg = _discord_transcript(limit)
-        if not msg.strip():
+        try:
+            limit = int(GLOBALS.get("discord_history_limit", 10))
+        except Exception:
+            limit = 10
+        msg_source = _discord_transcript(limit)
+        if not msg_source.strip():
             logger.debug("Queue empty for %s; skipping generation", agent["name"])
             nxt = select_next_agent(agent_name)
             return nxt["name"] if nxt else None
     else:
-        msg = CONTEXT
+        msg_source = CONTEXT
+
+    system_parts = [
+        base_segments.get("system.global", "") if _awareness_is_on(aw, "system.global") else "",
+        base_segments.get("system.class", "") if _awareness_is_on(aw, "system.class") else "",
+        base_segments.get("system.agent", "") if _awareness_is_on(aw, "system.agent") else "",
+    ]
+    system_base = "\n".join(filter(None, system_parts)).strip()
+    system_text = (
+        _expand_context_macros(system_base, agent=agent, model_id=model_id) if system_base else ""
+    )
+
+    pre_parts = [
+        base_segments.get("pre.global", "") if _awareness_is_on(aw, "pre.global") else "",
+        base_segments.get("pre.class", "") if _awareness_is_on(aw, "pre.class") else "",
+        base_segments.get("pre.agent", "") if _awareness_is_on(aw, "pre.agent") else "",
+    ]
+    pre_base = "\n".join(filter(None, pre_parts)).strip()
+    pre = _expand_context_macros(pre_base, agent=agent, model_id=model_id) if pre_base else ""
+
+    post_parts = [
+        base_segments.get("post.global", "") if _awareness_is_on(aw, "post.global") else "",
+        base_segments.get("post.class", "") if _awareness_is_on(aw, "post.class") else "",
+        base_segments.get("post.agent", "") if _awareness_is_on(aw, "post.agent") else "",
+    ]
+    post_base = "\n".join(filter(None, post_parts)).strip()
+    post = _expand_context_macros(post_base, agent=agent, model_id=model_id) if post_base else ""
+
+    one_time_inject_txt = ""
+    if _awareness_is_on(aw, "one_time_inject"):
+        pending_inject = get_one_time_inject()
+        if pending_inject:
+            one_time_inject_txt = _format_one_time_inject_block(pending_inject)
+            set_one_time_inject("")
+    if one_time_inject_txt:
+        post = (post or "") + one_time_inject_txt
+
+    directed_memory_txt = dm_block if dm_block and _awareness_is_on(aw, "directed_memory") else ""
+    if directed_memory_txt:
+        post = "\n\n".join(filter(None, [post, directed_memory_txt]))
+
+    if reads_q:
+        msg = msg_source if _awareness_is_on(aw, "context.discord_queue") else ""
+    else:
+        msg = msg_source if _awareness_is_on(aw, "context.transcript") else ""
+
+    if _awareness_all_off(aw):
+        # if every awareness input is off, we still run the agent; feed the default
+        # sleep message as the only context segment.
+        system_text = ""
+        pre = ""
+        msg = AWARENESS_SLEEP_MESSAGE
+        post = ""
+
     msg = trim_message_for_budget(
         model_id,
         system_text,
@@ -935,14 +1103,16 @@ def step_agent(agent_name: str) -> Optional[str]:
         GLOBALS.get("max_context_tokens", 8192),
     )
     prompt = "\n".join(filter(None, [pre, msg, post]))
+
     if UI is not None:
-       # Do not write the pre-gen “overview” blob to Agent Context.
-       # The runtime_utils JSON watcher will overwrite the panel with the *exact*
-       # payload that is POSTed to Ollama, which is what we want to display.
-       try:
-           UI.set_active_agent(agent["name"])
-       except Exception:
-           logger.exception("UI set_active_agent failed")
+        # Do not write the pre-gen “overview” blob to Agent Context.
+        # The runtime_utils JSON watcher will overwrite the panel with the *exact*
+        # payload that is POSTed to Ollama, which is what we want to display.
+        try:
+            UI.set_active_agent(agent["name"])
+        except Exception:
+            logger.exception("UI set_active_agent failed")
+
     try:
         reply = MODEL.generate_from_prompt(
             prompt,
@@ -992,10 +1162,6 @@ def step_agent(agent_name: str) -> Optional[str]:
                 for _, _, res in calls_log
             )
             reply = f"{reply.rstrip()}\n\n{results}" if reply else results
-
-    cls = CLASSES[agent["agent_class"]]
-    groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
     # Always record the message to the “humans” log so the UI shows it.
     entry = {
@@ -1123,8 +1289,8 @@ def run_loop(steps: Optional[int] = None) -> None:
                 logger.exception("UI pre-step update failed")
         logger.info("Running agent %s", cur)
         nxt = step_agent(cur)
-        logger.info("Next agent: %s", nxt)
         count += 1
+        logger.info("Next agent: %s", nxt)
         time.sleep(0.2)
         if nxt:
             cur = nxt
