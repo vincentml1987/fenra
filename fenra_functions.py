@@ -317,6 +317,29 @@ def awareness_ignore(*args, **kwargs) -> str:
     return f"Ignored {name}."
 
 
+@register("awareness.awake", "Enable all awareness-controlled text inputs.")
+def awareness_awake(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    current = awareness.get_awareness()
+    already_enabled = all(bool(current.get(name)) for name in AWARENESS_KEYS)
+
+    new_state = {name: True for name in AWARENESS_KEYS}
+    awareness.set_awareness(new_state)
+    _sync_awareness_state_to_conductor()
+
+    if already_enabled:
+        return "Awareness inputs were already fully enabled."
+    return "Enabled all awareness inputs."
+
+
 @register("awareness.peek", "Return the text Fenra would supply for the requested awareness input.")
 def awareness_peek(*args, **kwargs) -> str:
     import importlib
