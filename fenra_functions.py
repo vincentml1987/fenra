@@ -317,7 +317,7 @@ def awareness_ignore(*args, **kwargs) -> str:
     return f"Ignored {name}."
 
 
-@register("awareness.awake", "Enable all awareness-controlled text inputs.")
+@register("awareness.awake", "Enable transcript and directed memories.")
 def awareness_awake(*args, **kwargs) -> str:
     args = list(args)
     kwargs = dict(kwargs)
@@ -328,16 +328,14 @@ def awareness_awake(*args, **kwargs) -> str:
         key = next(iter(kwargs))
         return f"(error) ValueError: unexpected keyword '{key}'"
 
-    current = awareness.get_awareness()
-    already_enabled = all(bool(current.get(name)) for name in AWARENESS_KEYS)
+    aw = awareness.get_awareness()
+    aw["context.transcript"] = True
+    aw["directed_memory"] = True
 
-    new_state = {name: True for name in AWARENESS_KEYS}
-    awareness.set_awareness(new_state)
+    awareness.set_awareness(aw)
     _sync_awareness_state_to_conductor()
 
-    if already_enabled:
-        return "Awareness inputs were already fully enabled."
-    return "Enabled all awareness inputs."
+    return "Enabled transcript and directed memories."
 
 
 @register("awareness.peek", "Return the text Fenra would supply for the requested awareness input.")
