@@ -260,7 +260,19 @@ def awareness_list(*args, **kwargs) -> str:
         return f"(error) ValueError: unexpected keyword '{key}'"
 
     state = awareness.get_awareness()
-    lines = [f"{name}: {'on' if state.get(name) else 'off'}" for name in AWARENESS_KEYS]
+
+    auto_awake_message = ""
+    if state and all(not bool(v) for v in state.values()):
+        auto_awake_message = awareness_awake()
+        state = awareness.get_awareness()
+
+    lines: list[str] = []
+    if auto_awake_message:
+        lines.append(auto_awake_message)
+
+    lines.extend(
+        f"{name}: {'on' if state.get(name) else 'off'}" for name in AWARENESS_KEYS
+    )
 
     _sync_awareness_state_to_conductor()
 
