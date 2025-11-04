@@ -1121,14 +1121,13 @@ def step_agent(agent_name: str) -> Optional[str]:
         _append_human_log(entry)
         if UI is not None:
             try:
-                UI.log({"timestamp": timestamp, "sender": agent["name"], "message": reply})
+                UI.set_active_agent(agent["name"])
             except Exception:
-                logger.exception("UI log failed for sleep message")
-        override = STATE.pop("force_next_agent", None)
-        if isinstance(override, str) and override in AGENTS_BY_NAME:
-            return override
-        nxt = select_next_agent(agent_name)
-        return nxt["name"] if nxt else None
+                logger.exception("UI set_active_agent failed for sleep message")
+        # mark for the loop and stop here
+        STATE["awareness_sleep"] = True
+        save_state(STATE)
+        return None
     else:
         try:
             reply = MODEL.generate_from_prompt(
@@ -1306,8 +1305,15 @@ def run_loop(steps: Optional[int] = None) -> None:
                 logger.exception("UI pre-step update failed")
         logger.info("Running agent %s", cur)
         nxt = step_agent(cur)
-        logger.info("Next agent: %s", nxt)
         count += 1
+        # awareness sleep short-circuit: stay on current agent without advancing
+        if STATE.get("awareness_sleep"):
+            STATE["awareness_sleep"] = False
+            save_state(STATE)
+            logger.info("Agent %s is asleep; staying on current agent.", cur)
+            time.sleep(1.0)
+            continue
+        logger.info("Next agent: %s", nxt)
         time.sleep(0.2)
         if nxt:
             cur = nxt
