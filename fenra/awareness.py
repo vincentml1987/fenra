@@ -23,7 +23,7 @@ AWARENESS_KEYS = [
 ]
 
 AWARENESS_SLEEP_MESSAGE = (
-    "You are currently asleep. Use *~awareness.list()~* to get a list of the inputs you can enable."
+    "You are currently asleep. Use ~awareness.list()~ to get a list of the inputs you can enable."
 )
 
 

@@ -80,9 +80,9 @@ def _is_valid_call_span(span: str) -> bool:
 
 
 def _extract_pwsh_commands(text: str) -> list[str]:
-    """Extract *~...~* call spans that have no leading/trailing whitespace."""
+    """Extract ~...~ call spans that have no leading/trailing whitespace."""
 
-    spans = re.findall(r"\*~(.*?)~\*", text or "", flags=re.DOTALL)
+    spans = re.findall(r"~(.*?)~", text or "", flags=re.DOTALL)
     return [s for s in spans if _is_valid_call_span(s)]
 
 
@@ -1138,13 +1138,13 @@ def step_agent(agent_name: str) -> Optional[str]:
     # Make the agent's *visible* output (with Fenra call markup stripped) available to Fenra functions.
     try:
         raw = reply or ""
-        visible = re.sub(r"\*~.*?~\*", "", raw, flags=re.DOTALL).strip()
+        visible = re.sub(r"~.*?~", "", raw, flags=re.DOTALL).strip()
     except Exception:
         visible = (reply or "").strip()
 
     # Expose to fenra_functions via the conductor module namespace
     globals()["_LAST_VISIBLE_OUTPUT"] = visible
-    # Execute any Fenra function calls emitted by the agent as *~...~* blocks.
+    # Execute any Fenra function calls emitted by the agent as ~...~ blocks.
     commands = _extract_pwsh_commands(reply)
     calls_log: list[tuple[str, str, str]] = []
     if commands:

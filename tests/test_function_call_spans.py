@@ -25,29 +25,29 @@ import conductor
 
 
 def test_extract_allows_internal_whitespace():
-    text = '*~rename_agent("Agent Prime", reason="Needs rename")~*'
+    text = '~rename_agent("Agent Prime", reason="Needs rename")~'
     assert conductor._extract_pwsh_commands(text) == [
         'rename_agent("Agent Prime", reason="Needs rename")'
     ]
 
 
 def test_extract_rejects_whitespace_touching_markers():
-    text = '*~ rename_agent("Agent")~* and *~rename_agent("Agent") ~*'
+    text = '~ rename_agent("Agent")~ and ~rename_agent("Agent") ~'
     assert conductor._extract_pwsh_commands(text) == []
 
 
 def test_extract_rejects_newline_directly_after_open():
-    text = '*~\nrename_agent("Agent")~*'
+    text = '~\nrename_agent("Agent")~'
     assert conductor._extract_pwsh_commands(text) == []
 
 
 def test_extract_rejects_newline_directly_before_close():
-    text = '*~rename_agent("Agent")\n~*'
+    text = '~rename_agent("Agent")\n~'
     assert conductor._extract_pwsh_commands(text) == []
 
 
 def test_extract_allows_newlines_inside_span():
-    text = '*~rename_agent("Agent" + "\nPrime")~*'
+    text = '~rename_agent("Agent" + "\nPrime")~'
     assert conductor._extract_pwsh_commands(text) == [
         'rename_agent("Agent" + "\nPrime")'
     ]
