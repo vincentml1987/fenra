@@ -1086,6 +1086,13 @@ def step_agent(agent_name: str) -> Optional[str]:
     else:
         msg = msg_source if _awareness_is_on(aw, "context.transcript") else ""
 
+    if _awareness_all_off(aw):
+        # All inputs disabled: keep the agent running but give only the sleep message.
+        msg = AWARENESS_SLEEP_MESSAGE
+        pre = ""
+        post = ""
+        system_text = ""
+
     msg = trim_message_for_budget(
         model_id,
         system_text,
@@ -1105,41 +1112,17 @@ def step_agent(agent_name: str) -> Optional[str]:
         except Exception:
             logger.exception("UI set_active_agent failed")
 
-    if _awareness_all_off(aw):
-        reply = AWARENESS_SLEEP_MESSAGE
-        visible = reply.strip()
-        globals()["_LAST_VISIBLE_OUTPUT"] = visible
-        entry = {
-            "sender": agent["name"],
-            "timestamp": timestamp,
-            "message": reply,
-            "groups": groups_target,
-        }
-        msgs = _load_messages_to_humans()
-        msgs.append(entry)
-        _save_messages_to_humans(msgs)
-        _append_human_log(entry)
-        if UI is not None:
-            try:
-                UI.set_active_agent(agent["name"])
-            except Exception:
-                logger.exception("UI set_active_agent failed for sleep message")
-        # mark for the loop and stop here
-        STATE["awareness_sleep"] = True
-        save_state(STATE)
-        return None
-    else:
-        try:
-            reply = MODEL.generate_from_prompt(
-                prompt,
-                override_model=model_id,
-                override_temperature=temp,
-                system_text=system_text,
-            )
-        except Exception as exc:  # keep loop alive on Ollama/network errors
-            logger.exception("Generation failed for %s: %s", agent["name"], exc)
-            nxt = select_next_agent(agent_name)
-            return nxt["name"] if nxt else None
+    try:
+        reply = MODEL.generate_from_prompt(
+            prompt,
+            override_model=model_id,
+            override_temperature=temp,
+            system_text=system_text,
+        )
+    except Exception as exc:  # keep loop alive on Ollama/network errors
+        logger.exception("Generation failed for %s: %s", agent["name"], exc)
+        nxt = select_next_agent(agent_name)
+        return nxt["name"] if nxt else None
     # Make the agent's *visible* output (with Fenra call markup stripped) available to Fenra functions.
     try:
         raw = reply or ""
@@ -1306,13 +1289,6 @@ def run_loop(steps: Optional[int] = None) -> None:
         logger.info("Running agent %s", cur)
         nxt = step_agent(cur)
         count += 1
-        # awareness sleep short-circuit: stay on current agent without advancing
-        if STATE.get("awareness_sleep"):
-            STATE["awareness_sleep"] = False
-            save_state(STATE)
-            logger.info("Agent %s is asleep; staying on current agent.", cur)
-            time.sleep(1.0)
-            continue
         logger.info("Next agent: %s", nxt)
         time.sleep(0.2)
         if nxt:
