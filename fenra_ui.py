@@ -33,6 +33,7 @@ from config_loader import (
     save_agents,
 )
 from pdv_utils import apply_and_persist_pdv_adjustments
+from fenra import awareness
 
 logger = logging.getLogger(__name__)
 
@@ -670,6 +671,11 @@ class FenraUI:
 
         self._refresh_inject_pending()
 
+        # ----- Awareness Tab -----
+        self.awareness_vars: dict[str, tk.BooleanVar] = {}
+        self._awareness_refresh_job = None
+        self._build_awareness_tab()
+
         # ----- Topology Tab -----
         topology_tab = ttk.Frame(self.notebook)
         self.notebook.add(topology_tab, text="Topology")
@@ -917,6 +923,12 @@ class FenraUI:
         self._config_watch_thread = None
 
     def _on_close(self) -> None:
+        if getattr(self, "_awareness_refresh_job", None) is not None:
+            try:
+                self.root.after_cancel(self._awareness_refresh_job)
+            except Exception:
+                pass
+            self._awareness_refresh_job = None
         self._stop_config_watcher()
         try:
             self.root.destroy()
@@ -2148,6 +2160,65 @@ class FenraUI:
 
         self._threadsafe(_put_back)
         self._refresh_inject_pending()
+
+    def _build_awareness_tab(self) -> None:
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="Awareness")
+        self.awareness_tab = tab
+        self.awareness_vars = {}
+
+        ttk.Label(
+            tab,
+            text="Enable or disable text inputs supplied to agents.",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(4, 2))
+
+        current = awareness.get_awareness()
+        row = 1
+        for name in awareness.AWARENESS_KEYS:
+            var = tk.BooleanVar(value=bool(current.get(name, False)))
+            chk = tk.Checkbutton(
+                tab,
+                text=name,
+                variable=var,
+                anchor="w",
+                command=lambda n=name, v=var: self._on_awareness_toggle(n, v),
+            )
+            chk.grid(row=row, column=0, sticky="w", padx=4, pady=1)
+            self.awareness_vars[name] = var
+            row += 1
+
+        ttk.Button(tab, text="Refresh", command=self.refresh_awareness_tab).grid(
+            row=row, column=0, sticky="w", padx=4, pady=(4, 8)
+        )
+        tab.columnconfigure(0, weight=1)
+        self._schedule_awareness_poll()
+
+    def _on_awareness_toggle(self, name: str, var: tk.BooleanVar) -> None:
+        awareness.set_key(name, bool(var.get()))
+        try:
+            c = _get_conductor()
+            if hasattr(c, "STATE"):
+                c.STATE.setdefault("awareness", {})
+                c.STATE["awareness"] = dict(awareness.get_awareness())
+        except Exception:
+            pass
+
+    def refresh_awareness_tab(self) -> None:
+        state = awareness.get_awareness()
+        for name, var in self.awareness_vars.items():
+            var.set(bool(state.get(name, False)))
+
+    def _schedule_awareness_poll(self) -> None:
+        if getattr(self, "_awareness_refresh_job", None) is not None:
+            try:
+                self.root.after_cancel(self._awareness_refresh_job)
+            except Exception:
+                pass
+        self._awareness_refresh_job = self.root.after(1500, self._poll_awareness_tab)
+
+    def _poll_awareness_tab(self) -> None:
+        self.refresh_awareness_tab()
+        self._schedule_awareness_poll()
 
     def _reload_model_choices(self) -> None:
         try:

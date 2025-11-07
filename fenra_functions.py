@@ -26,6 +26,8 @@ from diary_tags import (
     set_file_tags,
 )
 from directed_memory import get_store
+from fenra import awareness
+from fenra.awareness import AWARENESS_KEYS
 
 
 # ---------------------------
@@ -178,7 +180,7 @@ def _list_files(folder: str) -> str:
 
 def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
     """
-    Dispatch a Fenra function expression found inside *~...~*.
+    Dispatch a Fenra function expression found inside ~...~.
     Returns (function_name_or_guess, found, result_string).
     - found=False when the name is not registered -> 'Function does not exist.'
     - found=True for executed or error-returning calls (errors are returned as strings).
@@ -230,6 +232,173 @@ def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
 # --------------------------------
 # Built-in/required Fenra functions
 # --------------------------------
+
+
+def _sync_awareness_state_to_conductor() -> None:
+    import importlib
+
+    try:
+        conductor = importlib.import_module("conductor")
+    except Exception:
+        return
+
+    try:
+        conductor.STATE.setdefault("awareness", {})
+        conductor.STATE["awareness"] = dict(awareness.get_awareness())
+    except Exception:
+        pass
+
+
+@register("awareness.list", "List awareness-controlled text inputs and their status.")
+def awareness_list(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    state = awareness.get_awareness()
+
+    auto_awake_message = ""
+    if state and all(not bool(v) for v in state.values()):
+        auto_awake_message = awareness_awake()
+        state = awareness.get_awareness()
+
+    lines: list[str] = []
+    if auto_awake_message:
+        lines.append(auto_awake_message)
+
+    lines.extend(
+        f"{name}: {'on' if state.get(name) else 'off'}" for name in AWARENESS_KEYS
+    )
+
+    _sync_awareness_state_to_conductor()
+
+    return "\n".join(lines)
+
+
+@register("awareness.notice", "Enable a specific awareness-controlled text input.")
+def awareness_notice(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No such awareness item: {name or '<empty>'}."
+
+    awareness.set_key(name, True)
+    _sync_awareness_state_to_conductor()
+
+    return f"Noticed {name}."
+
+
+@register("awareness.ignore", "Disable a specific awareness-controlled text input.")
+def awareness_ignore(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No such awareness item: {name or '<empty>'}."
+
+    awareness.set_key(name, False)
+    _sync_awareness_state_to_conductor()
+
+    return f"Ignored {name}."
+
+
+@register("awareness.awake", "Enable transcript and directed memories.")
+def awareness_awake(*args, **kwargs) -> str:
+    args = list(args)
+    kwargs = dict(kwargs)
+
+    # match the argument checking style of the other awareness functions
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    # load current awareness map
+    aw = awareness.get_awareness()
+
+    # turn on just these two
+    aw["context.transcript"] = True
+    aw["directed_memory"] = True
+
+    # persist
+    awareness.set_awareness(aw)
+
+    # make sure the running conductor's STATE["awareness"] is also updated
+    _sync_awareness_state_to_conductor()
+
+    return "Enabled transcript and directed memories."
+
+
+@register("awareness.peek", "Return the text Fenra would supply for the requested awareness input.")
+def awareness_peek(*args, **kwargs) -> str:
+    import importlib
+
+    args = list(args)
+    kwargs = dict(kwargs)
+    try:
+        item = _get_param(args, kwargs, "item", default=None, cast=str)
+    except ValueError as e:
+        return f"(error) ValueError: {e}"
+
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{key}'"
+
+    name = (item or "").strip()
+    if name not in AWARENESS_KEYS:
+        return f"No text for {name}."
+
+    try:
+        conductor = importlib.import_module("conductor")
+        if not getattr(conductor, "_CONFIGS_LOADED", False) and hasattr(conductor, "ensure_configs_loaded"):
+            conductor.ensure_configs_loaded()
+    except Exception as exc:
+        return f"(error) {type(exc).__name__}: {exc}"
+
+    agent_name = (getattr(conductor, "STATE", {}) or {}).get("current_agent")
+    if not isinstance(agent_name, str) or agent_name not in getattr(conductor, "AGENTS_BY_NAME", {}):
+        return f"No text for {name}."
+
+    agent = conductor.AGENTS_BY_NAME[agent_name]
+    try:
+        text = conductor.resolve_awareness_text(agent, name)
+    except Exception as exc:
+        return f"(error) {type(exc).__name__}: {exc}"
+
+    if not text:
+        return f"No text for {name}."
+
+    return text
 
 
 @register("list_functions", "List available Fenra functions.")
@@ -620,7 +789,7 @@ def rename_agent(*args, **kwargs) -> str:
     """
     Rename the calling agent (1 arg) or rename the agent with Old_Name to New_Name (2 args).
 
-    IMPORTANT: Call spans only forbid whitespace touching the *~ or ~* markers,
+    IMPORTANT: Call spans only forbid whitespace touching the surrounding `~` markers,
     so names may include spaces directly. Underscores are still accepted and are
     converted back to spaces for convenience.
     """
@@ -1603,7 +1772,7 @@ def speak_to_discord(*args, **kwargs) -> str:
         key = next(iter(kwargs))
         return f"(error) ValueError: unexpected keyword '{key}'"
 
-    # Fetch the message the user actually sees (with *~...~* stripped)
+    # Fetch the message the user actually sees (with ~...~ stripped)
     conductor = importlib.import_module("conductor")
     text = getattr(conductor, "_LAST_VISIBLE_OUTPUT", "")
     text = (text or "").strip()
@@ -1630,7 +1799,7 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Send the agent's visible output (with any *~...~* removed) to Discord. Place *~speak_to_discord()~* at the end of your message.",
+            "usage": "Send the agent's visible output (with any ~...~ removed) to Discord. Place ~speak_to_discord()~ at the end of your message.",
             "returns": "The exact text that was sent to Discord, or an error description.",
         }
     ],
