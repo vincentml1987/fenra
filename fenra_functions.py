@@ -1646,3 +1646,89 @@ register_details(
     ],
 )
 
+
+@register(
+    "compress_memory",
+    "Archive the current context for this agent's outgoing groups and replace it with the agent's latest output.",
+)
+def compress_memory(*args, **kwargs) -> str:
+    # reject unexpected args, same pattern as other Fenra functions
+    if args:
+        return "(error) ValueError: unexpected positional arguments"
+    if kwargs:
+        bad_key = next(iter(kwargs))
+        return f"(error) ValueError: unexpected keyword '{bad_key}'"
+
+    import importlib
+    import os
+    import shutil
+    from datetime import datetime
+
+    # load the live conductor module
+    conductor = importlib.import_module("conductor")
+
+    state = getattr(conductor, "STATE", {}) or {}
+    current_agent = state.get("current_agent")
+    if not current_agent:
+        return "(error) RuntimeError: compress_memory: no current agent is set"
+
+    agents_by_name = getattr(conductor, "AGENTS_BY_NAME", {}) or {}
+    agent = agents_by_name.get(current_agent)
+    if not agent:
+        return f"(error) RuntimeError: compress_memory: agent '{current_agent}' not found"
+
+    # which groups should we archive? mirror the archivist logic
+    groups_target = agent.get("groups_out") or [None]
+
+    # this is what the agent actually said, with function calls stripped
+    visible = getattr(conductor, "_LAST_VISIBLE_OUTPUT", "") or ""
+    # keep the exact string (do not force a placeholder); allow empty but still archive
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    summarized_dir = os.path.join("chatlogs", "summarized")
+    os.makedirs(summarized_dir, exist_ok=True)
+
+    archived_files: list[str] = []
+
+    for grp in groups_target:
+        if grp:
+            src = os.path.join("chatlogs", f"chat_log_{grp}.txt")
+            base_name = f"chat_log_{grp}_{ts}.txt"
+        else:
+            # this is the “global” or “current” context
+            src = os.path.join("chatlogs", "context_current.txt")
+            base_name = f"context_current_{ts}.txt"
+
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        if not os.path.exists(src):
+            # create an empty file so we can copy it
+            with open(src, "w", encoding="utf-8") as f:
+                f.write("")
+
+        dst = os.path.join(summarized_dir, base_name)
+        shutil.copy(src, dst)
+
+        # now wipe and replace with the agent's latest visible output
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(visible)
+
+        archived_files.append(base_name)
+
+    # keep conductor's in-memory context aligned, same as in conductor's archivist branch
+    conductor.CONTEXT = visible
+    with open(os.path.join("chatlogs", "context_current.txt"), "w", encoding="utf-8") as f:
+        f.write(visible)
+
+    return f"(compress_memory) Archived {len(archived_files)} context file(s) and replaced them with the latest output."
+
+
+register_details(
+    "compress_memory",
+    [
+        {
+            "parameters": "",
+            "usage": "Compress the current conversation memory for all groups this agent sends to. Example: ~compress_memory()~",
+            "returns": "A status line stating how many context files were archived and replaced.",
+        }
+    ],
+)
+
