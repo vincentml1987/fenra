@@ -1593,46 +1593,55 @@ register_details(
     ],
 )
 
-@register("speak_to_discord", "Post the agent's visible output to Discord and return that text.")
+@register("speak_to_discord", "Send the provided text to Discord and return it.")
 def speak_to_discord(*args, **kwargs) -> str:
     import importlib, os
 
-    # Enforce zero-arg contract
-    if args:
-        return "(error) ValueError: unexpected positional arguments"
+    # accept either speak_to_discord("hi") or speak_to_discord(message="hi")
     if kwargs:
-        key = next(iter(kwargs))
-        return f"(error) ValueError: unexpected keyword '{key}'"
+        if "message" in kwargs:
+            message = kwargs["message"]
+            # if there are any other kwargs, reject them
+            if len(kwargs) > 1:
+                extra = [k for k in kwargs.keys() if k != "message"][0]
+                return f"(error) ValueError: unexpected keyword '{extra}'"
+        else:
+            bad_key = next(iter(kwargs))
+            return f"(error) ValueError: unexpected keyword '{bad_key}'"
+        # no positional args allowed when using keyword message
+        if args:
+            return "(error) ValueError: expected exactly 1 argument (the message)"
+    else:
+        # no kwargs: must be exactly 1 positional arg
+        if len(args) != 1:
+            return "(error) ValueError: speak_to_discord expects exactly 1 argument: the text to send to Discord."
+        message = args[0]
 
-    # Fetch the message the user actually sees (with ~...~ stripped)
-    conductor = importlib.import_module("conductor")
-    text = getattr(conductor, "_LAST_VISIBLE_OUTPUT", "")
-    text = (text or "").strip()
+    text = (str(message) if message is not None else "").strip()
     if not text:
-        return "(no output)"
+        return "(error) empty message"
 
-    # Post via existing webhook helper if configured
+    conductor = importlib.import_module("conductor")
     webhook = os.getenv("DISCORD_WEBHOOK_URL")
     post = getattr(conductor, "post_to_discord_via_webhook", None)
-    if webhook and callable(post):
+
+    if callable(post) and webhook:
         try:
             post(text)
+            return text
         except Exception as e:
             return f"(error) Discord post failed: {type(e).__name__}: {e}"
     else:
         return "(error) Discord webhook not configured"
-
-    # Also return the visible text as the function output
-    return text
 
 
 register_details(
     "speak_to_discord",
     [
         {
-            "parameters": "",
-            "usage": "Send the agent's visible output (with any ~...~ removed) to Discord. Place ~speak_to_discord()~ at the end of your message.",
-            "returns": "The exact text that was sent to Discord, or an error description.",
+            "parameters": "message: str",
+            "usage": 'Send arbitrary text to Discord. Example: speak_to_discord("Hello from Fenra") or ~speak_to_discord("Hello from Fenra")~.',
+            "returns": "The text that was sent to Discord, or an error description.",
         }
     ],
 )
