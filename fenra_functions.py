@@ -178,7 +178,7 @@ def _list_files(folder: str) -> str:
 
 def dispatch_expression(expr: str) -> tuple[str, bool, str, str]:
     """
-    Dispatch a Fenra function expression found inside *~...~*.
+    Dispatch a Fenra function expression found inside ~...~.
     Returns (function_name_or_guess, found, result_string).
     - found=False when the name is not registered -> 'Function does not exist.'
     - found=True for executed or error-returning calls (errors are returned as strings).
@@ -620,7 +620,8 @@ def rename_agent(*args, **kwargs) -> str:
     """
     Rename the calling agent (1 arg) or rename the agent with Old_Name to New_Name (2 args).
 
-    IMPORTANT: Call spans only forbid whitespace touching the *~ or ~* markers,
+    IMPORTANT: Call spans only forbid whitespace touching the leading or trailing
+    tilde markers,
     so names may include spaces directly. Underscores are still accepted and are
     converted back to spaces for convenience.
     """
@@ -1603,7 +1604,7 @@ def speak_to_discord(*args, **kwargs) -> str:
         key = next(iter(kwargs))
         return f"(error) ValueError: unexpected keyword '{key}'"
 
-    # Fetch the message the user actually sees (with *~...~* stripped)
+    # Fetch the message the user actually sees (with ~...~ stripped)
     conductor = importlib.import_module("conductor")
     text = getattr(conductor, "_LAST_VISIBLE_OUTPUT", "")
     text = (text or "").strip()
@@ -1630,7 +1631,7 @@ register_details(
     [
         {
             "parameters": "",
-            "usage": "Send the agent's visible output (with any *~...~* removed) to Discord. Place *~speak_to_discord()~* at the end of your message.",
+            "usage": "Send the agent's visible output (with any ~...~ removed) to Discord. Place ~speak_to_discord()~ at the end of your message.",
             "returns": "The exact text that was sent to Discord, or an error description.",
         }
     ],
