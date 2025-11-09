@@ -14,7 +14,6 @@ from typing import Optional, Callable
 import tkinter as tk
 from tkinter import scrolledtext, simpledialog, filedialog, messagebox
 from tkinter import ttk
-from tkinter import font as tkfont
 
 import discord
 import requests
@@ -37,7 +36,6 @@ from pdv_utils import apply_and_persist_pdv_adjustments
 logger = logging.getLogger(__name__)
 
 CHATLOG_DIR = "chatlogs"
-SENT_MESSAGES_PATH = os.path.join(CHATLOG_DIR, "messages_to_humans.json")
 
 # Special entry shown at the top of group-pick lists (Agent mode)
 _NEW_GROUP_LABEL = "***Create New Group***"
@@ -422,7 +420,6 @@ class FenraUI:
         self.config_path = config_path
         self.on_apply_globals = on_apply_globals
 
-        self.sent_messages = []
         self.log_messages = []
         self._agent_payloads: dict[str, str] = {}
         self._active_agent: Optional[str] = None
@@ -588,25 +585,7 @@ class FenraUI:
         self.thought_stream = scrolledtext.ScrolledText(thoughts_tab, state="disabled")
         self.thought_stream.pack(fill=tk.BOTH, expand=True)
 
-        try:
-            console_font = tkfont.nametofont("TkFixedFont")
-        except tk.TclError:
-            console_font = tkfont.Font(family="Consolas", size=10)
-        self._console_font = console_font
-
-        function_calls_tab = ttk.Frame(self.notebook)
-        self.notebook.add(function_calls_tab, text="Function Calls")
-
-        self.function_calls_stream = scrolledtext.ScrolledText(
-            function_calls_tab,
-            state="disabled",
-            wrap=tk.NONE,
-            font=self._console_font,
-        )
-        self.function_calls_stream.pack(fill=tk.BOTH, expand=True)
-
-        # Backward compatibility
-        self.events_stream = self.function_calls_stream
+        self.events_stream = self.thought_stream
         self.output = self.thought_stream
 
         self.base_timeout = self.global_config.get("watchdog_timeout", 900)
@@ -619,28 +598,6 @@ class FenraUI:
         self.timeout_label.pack(anchor="w", padx=4, pady=2)
 
         self._refresh_log_display()
-
-        # ----- Messages Tab -----
-        messages_tab = ttk.Frame(self.notebook)
-        self.notebook.add(messages_tab, text="Messages")
-
-        msg_top = ttk.Frame(messages_tab)
-        msg_top.pack(fill=tk.X, pady=2)
-        ttk.Button(msg_top, text="Refresh", command=self.update_queue_and_sent).pack(
-            side=tk.RIGHT, padx=2
-        )
-
-        queued_frame = ttk.LabelFrame(messages_tab, text="Queued (from humans)")
-        queued_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
-        self.queued_text = scrolledtext.ScrolledText(queued_frame, state="disabled", height=10)
-        self.queued_text.pack(fill=tk.BOTH, expand=True)
-
-        sent_frame = ttk.LabelFrame(messages_tab, text="Sent (to humans)")
-        sent_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
-        self.sent_text = scrolledtext.ScrolledText(sent_frame, state="disabled", height=10)
-        self.sent_text.pack(fill=tk.BOTH, expand=True)
-
-        self.update_queue_and_sent()
 
         # ----- Inject Message Tab -----
         inject_tab = ttk.Frame(self.notebook)
@@ -669,22 +626,6 @@ class FenraUI:
         self.inject_editor.pack(fill=tk.BOTH, expand=True)
 
         self._refresh_inject_pending()
-
-        # ----- Topology Tab -----
-        topology_tab = ttk.Frame(self.notebook)
-        self.notebook.add(topology_tab, text="Topology")
-
-        self.topology_header = ttk.Label(topology_tab, text="Active Agent: None")
-        self.topology_header.pack(anchor="w", padx=4, pady=2)
-
-        self.topology_canvas = tk.Canvas(topology_tab, background="white")
-        self.topology_canvas.pack(fill=tk.BOTH, expand=True)
-        self.topology_canvas.bind("<Configure>", lambda e: self._redraw_topology())
-
-        self._topology_active = None
-        self._topology_agents = []
-        self._topology_node_items = {}
-        self._topology_tooltip = None
 
         # ----- Agent Context Tab -----
         agent_tab = ttk.Frame(self.notebook)
@@ -998,17 +939,29 @@ class FenraUI:
         dialog = self._InjectDialog(self.root, group_name)
         result = dialog.result
         if result:
+            # result is usually {"message": "...", "groups": [...]}
+            if isinstance(result, dict):
+                msg = result.get("message", "")
+                groups = result.get("groups") or []
+            else:
+                msg = str(result)
+                groups = []
+
             if self.inject_callback:
+                # Keep the old callback behavior if provided
                 self.inject_callback(group_name, result)
             else:
-                items = self._enqueue_message("system", result)
-                self.update_queue(items)
                 try:
                     c = _get_conductor()
                     import asyncio
-                    asyncio.run(c.inject_external_message(result, {"author": "system"}))
+                    payload = {"author": "system", "groups": groups}
+                    if hasattr(c, "inject_external_message"):
+                        asyncio.run(c.inject_external_message(msg, payload))
+                    else:
+                        # fallback if conductor renamed it
+                        asyncio.run(c.handle_user_message(msg, payload))
                 except Exception as e:
-                    print(f"[UI] inject_external_message failed: {e}")
+                    print(f"[UI] inject message failed: {e}")
         logger.debug("Exiting _inject_message")
 
     def _send_message(self):
@@ -1023,28 +976,17 @@ class FenraUI:
                 if self.send_callback:
                     self.send_callback(result["message"], groups)
                 else:
-                    items = self._enqueue_message("user", result["message"])
-                    self.update_queue(items)
                     try:
                         c = _get_conductor()
                         import asyncio
-                        asyncio.run(
-                            c.inject_external_message(result["message"], {"author": "user", "groups": groups})
-                        )
+                        payload = {"author": "user", "groups": groups}
+                        if hasattr(c, "inject_external_message"):
+                            asyncio.run(c.inject_external_message(result["message"], payload))
+                        else:
+                            asyncio.run(c.handle_user_message(result["message"], payload))
                     except Exception as e:
-                        print(f"[UI] inject_external_message failed: {e}")
+                        print(f"[UI] send message failed: {e}")
         logger.debug("Exiting _send_message")
-
-    def update_queue(self, messages):
-        logger.debug("Entering update_queue messages=%s", messages)
-        self.update_queue_and_sent(queued=messages)
-        logger.debug("Exiting update_queue")
-
-    def update_sent(self, messages):
-        logger.debug("Entering update_sent messages=%s", messages)
-        self.sent_messages = list(messages)
-        self.update_queue_and_sent(sent=messages)
-        logger.debug("Exiting update_sent")
 
     def update_pdvs(self, pdv_values: dict[str, float]) -> None:
         logger.debug("Entering update_pdvs pdv_values=%s", pdv_values)
@@ -1095,130 +1037,6 @@ class FenraUI:
 
         self._threadsafe(_append)
         logger.debug("Exiting append_event")
-
-    def append_function_calls_block(
-        self, agent: str, timestamp: str, calls: list[tuple[str, str, str]]
-    ) -> None:
-        logger.debug(
-            "Entering append_function_calls_block agent=%s timestamp=%s calls=%s",
-            agent,
-            timestamp,
-            calls,
-        )
-        if not calls:
-            logger.debug("No calls provided; exiting append_function_calls_block")
-            return
-
-        def _append():
-            lines: list[str] = [f"-----{agent} {timestamp}-----"]
-            total = len(calls)
-            for idx, (fn_name, params_text, result_text) in enumerate(calls):
-                params_render = (
-                    params_text if params_text and params_text.strip() else '""'
-                )
-                result_render = "(No Output)" if result_text is None else str(result_text)
-                lines.append(f"{fn_name}({params_render}):")
-                lines.append(result_render)
-                if idx != total - 1:
-                    lines.append("")
-                    lines.append("")
-            block = "\n".join(lines)
-            if not block.endswith("\n"):
-                block += "\n"
-            self._append_text(self.function_calls_stream, block)
-
-        self._threadsafe(_append)
-        logger.debug("Exiting append_function_calls_block")
-
-    def append_ps(self, line: str) -> None:
-        logger.debug("Entering append_ps line=%s", line)
-
-        stripped = (line or "").strip()
-        if not stripped:
-            logger.debug("append_ps received empty line; exiting")
-            return
-
-        legacy_prefixes = ("Function called:", "Function result:")
-        if not stripped.startswith(legacy_prefixes):
-            logger.debug("append_ps ignoring non-legacy line")
-            return
-
-        def _append():
-            txt = line if line.endswith("\n") else f"{line}\n"
-            self._append_text(self.function_calls_stream, txt)
-
-        self._threadsafe(_append)
-        logger.debug("Exiting append_ps")
-
-    def clear_ps(self) -> None:
-        logger.debug("Entering clear_ps")
-
-        def _do():
-            self.function_calls_stream.configure(state="normal")
-            self.function_calls_stream.delete("1.0", tk.END)
-            self.function_calls_stream.configure(state="disabled")
-
-        self._threadsafe(_do)
-        logger.debug("Exiting clear_ps")
-
-    def update_queue_and_sent(self, queued: Optional[list] = None, sent: Optional[list] = None) -> None:
-        logger.debug("Entering update_queue_and_sent queued=%s sent=%s", queued, sent)
-
-        def _load(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:  # noqa: BLE001
-                return None
-
-        if queued is None:
-            try:
-                c = _get_conductor()
-                queued = getattr(c, "_INCOMING_QUEUE", [])
-            except Exception:
-                queued = []
-        if sent is None:
-            sent = _load(SENT_MESSAGES_PATH)
-
-        def _render():
-            # Queued messages
-            self.queued_text.configure(state="normal")
-            self.queued_text.delete("1.0", tk.END)
-            if isinstance(queued, list) and queued:
-                for entry in queued:
-                    if isinstance(entry, dict):
-                        ts = entry.get("timestamp", "unknown")
-                        msg = entry.get("raw_message") or entry.get("message") or str(entry)
-                    else:
-                        ts = "unknown"
-                        msg = str(entry)
-                    self.queued_text.insert(tk.END, f"[{ts}] {msg}\n")
-            else:
-                self.queued_text.insert(tk.END, "No queued messages.\n")
-            self.queued_text.configure(state="disabled")
-            self.queued_text.see(tk.END)
-
-            # Sent messages
-            self.sent_text.configure(state="normal")
-            self.sent_text.delete("1.0", tk.END)
-            if isinstance(sent, list) and sent:
-                for entry in sent:
-                    if isinstance(entry, dict):
-                        ts = entry.get("timestamp", "unknown")
-                        sender = entry.get("sender", "unknown")
-                        msg = entry.get("message", "")
-                    else:
-                        ts = "unknown"
-                        sender = "unknown"
-                        msg = str(entry)
-                    self.sent_text.insert(tk.END, f"[{ts}] {sender}: {msg}\n")
-            else:
-                self.sent_text.insert(tk.END, "No sent messages.\n")
-            self.sent_text.configure(state="disabled")
-            self.sent_text.see(tk.END)
-
-        self._threadsafe(_render)
-        logger.debug("Exiting update_queue_and_sent")
 
     # ------------------------------------------------------------------
     # Configuration tab builders
@@ -3944,134 +3762,6 @@ class FenraUI:
         logger.debug("Entering _clear_agent_payload")
         self._render_agent_payload("")
         logger.debug("Exiting _clear_agent_payload")
-
-    def update_topology(self, active_agent: dict, agents: list[dict]) -> None:
-        logger.debug("Entering update_topology active_agent=%s agents=%s", active_agent, agents)
-
-        def _update():
-            self._topology_active = active_agent
-            self._topology_agents = agents
-            self._redraw_topology()
-
-        self._threadsafe(_update)
-        logger.debug("Exiting update_topology")
-
-    def _compute_neighbors(self, active: dict, agents: list[dict]) -> tuple[list[dict], list[dict], int, int]:
-        upstream: list[dict] = []
-        downstream: list[dict] = []
-        active_in = set(active.get("groups_in", []) or [])
-        active_out = set(active.get("groups_out", []) or [])
-        for ag in agents:
-            if ag.get("name") == active.get("name"):
-                continue
-            ag_in = set(ag.get("groups_in", []) or [])
-            ag_out = set(ag.get("groups_out", []) or [])
-            if ag_out & active_in:
-                upstream.append(ag)
-            if active_out & ag_in:
-                downstream.append(ag)
-        extra_up = max(0, len(upstream) - 25)
-        extra_down = max(0, len(downstream) - 25)
-        return upstream[:25], downstream[:25], extra_up, extra_down
-
-    def _redraw_topology(self) -> None:
-        active = self._topology_active
-        self._hide_tooltip()
-        self.topology_canvas.delete("all")
-        if not active:
-            self.topology_header.config(text="Active Agent: None")
-            return
-        cls = active.get('agent_class') or active.get('role', '')
-        self.topology_header.config(
-            text=f"Active Agent: {active.get('name')} ({cls.title()})"
-        )
-        agents = self._topology_agents
-        upstream, downstream, extra_up, extra_down = self._compute_neighbors(active, agents)
-        width = self.topology_canvas.winfo_width() or 1
-        height = self.topology_canvas.winfo_height() or 1
-        cx_up, cx_act, cx_down = width * 0.2, width * 0.5, width * 0.8
-        active_y = height / 2
-
-        def positions(n: int) -> list[float]:
-            pad = 40
-            if n <= 0:
-                return []
-            step = (height - pad * 2) / n
-            return [pad + step / 2 + i * step for i in range(n)]
-
-        up_pos = positions(len(upstream))
-        down_pos = positions(len(downstream))
-        self._topology_node_items.clear()
-
-        for ag, y in zip(upstream, up_pos):
-            self._draw_node(cx_up, y, ag, 16)
-            self._draw_arrow(cx_up, y, cx_act, active_y)
-        if extra_up:
-            self.topology_canvas.create_text(cx_up, height - 20, text=f"+{extra_up} more…")
-        elif not upstream:
-            self.topology_canvas.create_text(
-                cx_up, active_y, text="No likely sources", fill="#888888"
-            )
-
-        for ag, y in zip(downstream, down_pos):
-            self._draw_node(cx_down, y, ag, 16)
-            self._draw_arrow(cx_act, active_y, cx_down, y)
-        if extra_down:
-            self.topology_canvas.create_text(cx_down, height - 20, text=f"+{extra_down} more…")
-        elif not downstream:
-            self.topology_canvas.create_text(
-                cx_down, active_y, text="No likely targets", fill="#888888"
-            )
-
-        self._draw_node(cx_act, active_y, active, 24)
-
-    def _draw_node(self, x: float, y: float, agent: dict, radius: int) -> None:
-        cls_name = agent.get("agent_class") or agent.get("role", "")
-        color = pastel_for_class(cls_name)
-        circle = self.topology_canvas.create_oval(
-            x - radius,
-            y - radius,
-            x + radius,
-            y + radius,
-            fill=color,
-            outline="black",
-        )
-        name = agent.get("name", "")
-        display = name if len(name) <= 18 else name[:17] + "…"
-        text = self.topology_canvas.create_text(x, y + radius + 12, text=display)
-        for item in (circle, text):
-            self.topology_canvas.tag_bind(
-                item,
-                "<Enter>",
-                lambda e, a=agent: self._show_tooltip(e.x_root, e.y_root, a),
-            )
-            self.topology_canvas.tag_bind(item, "<Leave>", lambda e: self._hide_tooltip())
-            self.topology_canvas.tag_bind(
-                item,
-                "<Double-1>",
-                lambda e, a=agent: self.update_topology(a, self._topology_agents),
-            )
-            self._topology_node_items[item] = agent
-
-    def _draw_arrow(self, x1: float, y1: float, x2: float, y2: float) -> None:
-        self.topology_canvas.create_line(x1, y1, x2, y2, arrow=tk.LAST)
-
-    def _show_tooltip(self, x: int, y: int, agent: dict) -> None:
-        self._hide_tooltip()
-        tip = tk.Toplevel(self.root)
-        tip.wm_overrideredirect(True)
-        tip.wm_geometry(f"+{x + 10}+{y + 10}")
-        info = (
-            f"{agent.get('name')}\nRole: {agent.get('role')}\n"
-            f"in: {len(agent.get('groups_in', []))}  out: {len(agent.get('groups_out', []))}"
-        )
-        ttk.Label(tip, text=info, relief=tk.SOLID, borderwidth=1, padding=2).pack()
-        self._topology_tooltip = tip
-
-    def _hide_tooltip(self) -> None:
-        if self._topology_tooltip:
-            self._topology_tooltip.destroy()
-            self._topology_tooltip = None
 
     def _append_text(self, widget: scrolledtext.ScrolledText, text: str) -> None:
         widget.configure(state="normal")
