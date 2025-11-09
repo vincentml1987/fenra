@@ -189,8 +189,38 @@ _CONFIGS_LOADED: bool = False
 
 UI: Optional[FenraUI] = None
 
-# Queue deprecated. Kept for compatibility but unused.
-_INCOMING_QUEUE: List[Dict[str, object]] = []
+
+async def inject_external_message(text: str, meta: dict | None = None):
+    """UI compatibility shim.
+
+    This used to enqueue messages and update the UI's Messages tab.
+    That tab and the queue have been removed, but the UI may still call
+    this function. Keep the name, but make it just write the message
+    straight to the appropriate chatlog file(s).
+    """
+
+    meta = meta or {}
+    ts = meta.get("timestamp") or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    sender = meta.get("author") or meta.get("sender") or "user"
+    groups = meta.get("groups") or []
+
+    entry = f"[{ts}] {sender}: {text}\n{'-'*80}\n\n"
+
+    # If no groups were specified, write to a default/current context log.
+    if not groups:
+        path = os.path.join("chatlogs", "context_current.txt")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    else:
+        # Otherwise, write to each group's chat log
+        for g in groups:
+            safe_group = str(g)
+            path = os.path.join("chatlogs", f"chat_log_{safe_group}.txt")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(entry)
+
 
 
 # --- One-time inject helpers ---
@@ -279,28 +309,6 @@ def is_processing() -> bool:
     """Return True if processing is currently enabled."""
 
     return _RUN_EVENT.is_set()
-
-
-def _queue_empty() -> bool:
-    return len(_INCOMING_QUEUE) == 0
-
-
-async def inject_external_message(text: str, meta: dict | None = None):
-    """Accept an externally sourced message and enqueue it for processing."""
-    meta = meta or {}
-    entry = {
-        "timestamp": meta.get("timestamp")
-        or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "sender": meta.get("author") or meta.get("sender") or "user",
-        "message": text,
-        "raw_message": text,
-    }
-    _INCOMING_QUEUE.append(entry)
-    if UI is not None:
-        try:
-            UI.update_queue(_INCOMING_QUEUE)
-        except Exception:
-            pass
 
 
 def load_all_configs() -> None:
@@ -634,27 +642,6 @@ def _discord_transcript(limit: int) -> str:
     return ""
 
 
-def _load_messages_to_humans(path: str = os.path.join("chatlogs", "messages_to_humans.json")) -> List[Dict[str, object]]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_messages_to_humans(items: List[Dict[str, object]], path: str = os.path.join("chatlogs", "messages_to_humans.json")) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(items, f, indent=2)
-
-
-def _append_human_log(entry: Dict[str, object], path: str = os.path.join("chatlogs", "messages_to_humans.log")) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = f"[{entry.get('timestamp','')}] {entry.get('sender','')}: {entry.get('message','')}\n{'-'*80}\n\n"
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(line)
-
-
 def _read_group_contexts() -> Dict[str, str]:
     ctxs: Dict[str, str] = {}
     os.makedirs("chatlogs", exist_ok=True)
@@ -965,55 +952,27 @@ def step_agent(agent_name: str) -> Optional[str]:
     globals()["_LAST_VISIBLE_OUTPUT"] = visible
     # Execute any Fenra function calls emitted by the agent as ~...~ blocks.
     commands = _extract_pwsh_commands(reply)
-    calls_log: list[tuple[str, str, str]] = []
     if commands:
         for cmd in commands:
             expr = (cmd or "").strip()
             fn_name, _found, result, params_string = fenra_functions.dispatch_expression(expr)
             name_display = fn_name or "<unknown>"
             params_display = params_string or ""
-            call_signature = (
-                f"{name_display}({params_display})"
-                if params_display
-                else f"{name_display}()"
-            )
-            header_line = f"\\-----{call_signature} Output Begins-----/"
-            footer_line = f"\\-----{call_signature} Output Ends-----/"
+            header_line = f"\\-----{name_display} Output Begins-----/"
+            footer_line = f"\\-----{name_display} Output Ends-----/"
             if not isinstance(result, str):
                 result_text = json.dumps(result, ensure_ascii=False)
             else:
                 result_text = result
+            if params_display:
+                header_line = f"\\-----{name_display}({params_display}) Output Begins-----/"
+                footer_line = f"\\-----{name_display}({params_display}) Output Ends-----/"
             formatted_result = "\n".join([header_line, result_text, footer_line])
-            calls_log.append((name_display, params_display, formatted_result))
-        if calls_log:
-            # Inline only the results (no names, no timestamps) into the agent-visible text.
-            results = "\n\n".join(
-                (res if isinstance(res, str) else json.dumps(res, ensure_ascii=False))
-                for _, _, res in calls_log
-            )
-            reply = f"{reply.rstrip()}\n\n{results}" if reply else results
+            reply = f"{reply.rstrip()}\n\n{formatted_result}" if reply else formatted_result
 
     cls = CLASSES[agent["agent_class"]]
     groups_target = list(agent.get("groups_out") or agent.get("groups_in") or [])
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Always record the message to the “humans” log so the UI shows it.
-    entry = {
-        "sender": agent["name"],
-        "timestamp": timestamp,
-        "message": reply,
-        "groups": groups_target,
-    }
-    msgs = _load_messages_to_humans()
-    msgs.append(entry)
-    _save_messages_to_humans(msgs)
-    _append_human_log(entry)
-
-    if calls_log and UI is not None and hasattr(UI, "append_function_calls_block"):
-        try:
-            UI.append_function_calls_block(agent["name"], timestamp, calls_log)
-        except Exception:
-            logger.exception("UI append_function_calls_block failed")
 
     # Only post to Discord if the class (or agent) opts in AND the webhook is configured.
     should_post = bool(cls.get("outputs_to_discord") or agent.get("outputs_to_discord"))
@@ -1117,7 +1076,6 @@ def run_loop(steps: Optional[int] = None) -> None:
         if UI is not None:
             try:
                 UI.set_active_agent(cur)
-                UI.update_topology(AGENTS_BY_NAME[cur], AGENTS)
                 UI.set_group_contexts(_read_group_contexts())
             except Exception:
                 logger.exception("UI pre-step update failed")
@@ -1179,7 +1137,6 @@ if __name__ == "__main__":
             cur = STATE.get("current_agent")
             if isinstance(cur, str) and cur in AGENTS_BY_NAME:
                 UI.set_active_agent(cur)
-                UI.update_topology(AGENTS_BY_NAME[cur], AGENTS)
             UI.set_group_contexts(_read_group_contexts())
 
             def _loop() -> None:
