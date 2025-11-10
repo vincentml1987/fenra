@@ -421,8 +421,14 @@ class FenraUI:
         self.on_apply_globals = on_apply_globals
 
         self.log_messages = []
-        self._agent_payloads: dict[str, str] = {}
-        self._active_agent: Optional[str] = None
+        self._servers: list[dict] = []
+        self._server_choice_map: dict[str, str] = {}
+        self._server_payloads: dict[str, str] = {}
+        self._server_contexts: dict[str, str] = {}
+        self._active_server: Optional[str] = None
+        self._active_agent_by_server: dict[str, Optional[str]] = {}
+        self._selected_server_id: Optional[str] = None
+        self._server_form_vars: dict[str, tk.Variable] = {}
         self._group_contexts: dict[str, str] = {}
 
         self._model_cache: list[str] = []
@@ -631,8 +637,21 @@ class FenraUI:
         agent_tab = ttk.Frame(self.notebook)
         self.notebook.add(agent_tab, text="Agent Context")
 
-        self.agent_header = ttk.Label(agent_tab, text="Current Agent: None")
-        self.agent_header.pack(anchor="w", padx=4, pady=2)
+        server_select = ttk.Frame(agent_tab)
+        server_select.pack(fill=tk.X, padx=4, pady=(2, 0))
+        ttk.Label(server_select, text="Server:").pack(side=tk.LEFT)
+        self.agent_server_var = tk.StringVar()
+        self.agent_server_cb = ttk.Combobox(
+            server_select,
+            textvariable=self.agent_server_var,
+            state="readonly",
+            width=40,
+        )
+        self.agent_server_cb.pack(side=tk.LEFT, padx=(4, 8))
+        self.agent_server_cb.bind("<<ComboboxSelected>>", self._on_agent_server_change)
+
+        self.agent_header = ttk.Label(agent_tab, text="Server: None — Current Agent: None")
+        self.agent_header.pack(anchor="w", padx=4, pady=(2, 2))
 
         agent_toolbar = ttk.Frame(agent_tab)
         agent_toolbar.pack(anchor="w", padx=4, pady=2)
@@ -650,6 +669,10 @@ class FenraUI:
             agent_tab, state="disabled"
         )
         self.agent_payload_view.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+
+        servers_tab = ttk.Frame(self.notebook)
+        self.notebook.add(servers_tab, text="Ollama Servers")
+        self._build_servers_tab(servers_tab)
 
         # ----- Group Context Tab -----
         group_tab = ttk.Frame(self.notebook)
@@ -670,6 +693,7 @@ class FenraUI:
         self.group_text = scrolledtext.ScrolledText(text_frame, state="disabled")
         self.group_text.pack(fill=tk.BOTH, expand=True)
 
+        self._refresh_servers_from_runtime()
         self.update_pdvs(self.pdv_values)
         self._start_metrics_poll()
         # Do not auto-open the Globals modal. Users will set values in the Globals tab.
@@ -1932,6 +1956,211 @@ class FenraUI:
             self.pending_view.configure(state="disabled")
 
         self._threadsafe(_draw)
+
+    # ----- Ollama servers management -----
+
+    def _build_servers_tab(self, tab: ttk.Frame) -> None:
+        tab.columnconfigure(0, weight=1)
+        tree_frame = ttk.Frame(tab)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(4, 2))
+        columns = ("name", "host", "port", "removable")
+        self.server_tree = ttk.Treeview(
+            tree_frame,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
+            height=6,
+        )
+        self.server_tree.heading("name", text="Name")
+        self.server_tree.heading("host", text="Host")
+        self.server_tree.heading("port", text="Port")
+        self.server_tree.heading("removable", text="Removable")
+        self.server_tree.column("name", width=140, anchor=tk.W)
+        self.server_tree.column("host", width=200, anchor=tk.W)
+        self.server_tree.column("port", width=80, anchor=tk.CENTER)
+        self.server_tree.column("removable", width=90, anchor=tk.CENTER)
+        yscroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.server_tree.yview)
+        self.server_tree.configure(yscrollcommand=yscroll.set)
+        self.server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.server_tree.bind("<<TreeviewSelect>>", self._on_server_select)
+
+        btn_frame = ttk.Frame(tab)
+        btn_frame.pack(fill=tk.X, padx=4, pady=(0, 2))
+        ttk.Button(btn_frame, text="Add Server", command=self._server_add).pack(
+            side=tk.LEFT, padx=2
+        )
+        self.server_remove_btn = ttk.Button(
+            btn_frame, text="Remove", command=self._server_remove
+        )
+        self.server_remove_btn.pack(side=tk.LEFT, padx=2)
+        self.server_save_btn = ttk.Button(
+            btn_frame, text="Save Changes", command=self._server_save
+        )
+        self.server_save_btn.pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Refresh", command=self._refresh_servers_from_runtime).pack(
+            side=tk.RIGHT, padx=2
+        )
+
+        form = ttk.LabelFrame(tab, text="Selected Server")
+        form.pack(fill=tk.X, padx=4, pady=(0, 4))
+        form.columnconfigure(1, weight=1)
+        self._server_form_vars = {
+            "id": tk.StringVar(),
+            "name": tk.StringVar(),
+            "host": tk.StringVar(),
+            "port": tk.StringVar(),
+            "removable": tk.BooleanVar(value=True),
+        }
+        ttk.Label(form, text="Name").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(form, textvariable=self._server_form_vars["name"]).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=2
+        )
+        ttk.Label(form, text="Host").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(form, textvariable=self._server_form_vars["host"]).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=2
+        )
+        ttk.Label(form, text="Port").grid(row=2, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(form, textvariable=self._server_form_vars["port"]).grid(
+            row=2, column=1, sticky="ew", padx=4, pady=2
+        )
+        self.server_removable_label = ttk.Label(form, text="Removable: Yes")
+        self.server_removable_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+
+    def _refresh_servers_from_runtime(self) -> None:
+        try:
+            c = _get_conductor()
+            if hasattr(c, "get_ollama_servers"):
+                servers = c.get_ollama_servers()
+            else:
+                servers = []
+        except Exception:
+            servers = []
+        self.set_ollama_servers(servers)
+
+    def _refresh_server_tree(self) -> None:
+        if not hasattr(self, "server_tree"):
+            return
+        self.server_tree.delete(*self.server_tree.get_children())
+        for srv in self._servers:
+            sid = str(srv.get("id") or "") or srv.get("name") or "server"
+            removable = "Yes" if srv.get("removable", True) else "No"
+            self.server_tree.insert(
+                "",
+                tk.END,
+                iid=sid,
+                values=(
+                    srv.get("name") or sid,
+                    srv.get("host", ""),
+                    srv.get("port", ""),
+                    removable,
+                ),
+            )
+        if self._selected_server_id and self._selected_server_id in self.server_tree.get_children():
+            self.server_tree.selection_set(self._selected_server_id)
+        elif self._servers:
+            first_id = str(self._servers[0].get("id") or "")
+            if first_id:
+                self.server_tree.selection_set(first_id)
+                self._selected_server_id = first_id
+                self._load_server_into_form(self._servers[0])
+        else:
+            self._selected_server_id = None
+            self._clear_server_form()
+        self._update_server_buttons()
+
+    def _load_server_into_form(self, server: dict) -> None:
+        self._server_form_vars["id"].set(str(server.get("id") or ""))
+        self._server_form_vars["name"].set(str(server.get("name") or ""))
+        self._server_form_vars["host"].set(str(server.get("host") or ""))
+        self._server_form_vars["port"].set(str(server.get("port") or ""))
+        removable = bool(server.get("removable", True))
+        self._server_form_vars["removable"].set(removable)
+        self.server_removable_label.config(text=f"Removable: {'Yes' if removable else 'No'}")
+        self._update_server_buttons()
+
+    def _clear_server_form(self) -> None:
+        for key, var in self._server_form_vars.items():
+            if isinstance(var, tk.BooleanVar):
+                var.set(False)
+            else:
+                var.set("")
+        self.server_removable_label.config(text="Removable: Unknown")
+
+    def _update_server_buttons(self) -> None:
+        removable = True
+        try:
+            removable = bool(self._server_form_vars.get("removable").get())
+        except Exception:
+            removable = True
+        try:
+            if removable:
+                self.server_remove_btn.state(["!disabled"])
+            else:
+                self.server_remove_btn.state(["disabled"])
+        except Exception:
+            pass
+
+    def _on_server_select(self, _event=None) -> None:
+        sel = self.server_tree.selection()
+        if not sel:
+            self._selected_server_id = None
+            self._clear_server_form()
+            return
+        sid = sel[0]
+        self._selected_server_id = sid
+        for srv in self._servers:
+            if str(srv.get("id") or "") == sid:
+                self._load_server_into_form(srv)
+                return
+        self._clear_server_form()
+
+    def _server_add(self) -> None:
+        try:
+            c = _get_conductor()
+            if hasattr(c, "add_ollama_server"):
+                c.add_ollama_server()
+        except Exception as exc:
+            messagebox.showerror("Add Server", f"Failed to add server: {exc}")
+        finally:
+            self._refresh_servers_from_runtime()
+
+    def _server_remove(self) -> None:
+        sid = self._server_form_vars.get("id").get() if self._server_form_vars else ""
+        if not sid:
+            return
+        if not messagebox.askyesno("Remove Server", "Remove the selected server?"):
+            return
+        try:
+            c = _get_conductor()
+            if hasattr(c, "remove_ollama_server"):
+                c.remove_ollama_server(sid)
+        except Exception as exc:
+            messagebox.showerror("Remove Server", f"Failed to remove server: {exc}")
+        finally:
+            self._refresh_servers_from_runtime()
+
+    def _server_save(self) -> None:
+        sid = self._server_form_vars.get("id").get() if self._server_form_vars else ""
+        if not sid:
+            messagebox.showinfo("Save Server", "Select a server to save changes.")
+            return
+        name = self._server_form_vars["name"].get()
+        host = self._server_form_vars["host"].get()
+        port_val = self._server_form_vars["port"].get()
+        try:
+            port = int(port_val)
+        except Exception:
+            messagebox.showerror("Save Server", "Port must be an integer")
+            return
+        try:
+            c = _get_conductor()
+            if hasattr(c, "update_ollama_server"):
+                c.update_ollama_server(sid, name=name, host=host, port=port)
+        except Exception as exc:
+            messagebox.showerror("Save Server", f"Failed to save server: {exc}")
+        finally:
+            self._refresh_servers_from_runtime()
 
     def refresh_inject_pending(self) -> None:
         self._refresh_inject_pending()
@@ -3631,34 +3860,149 @@ class FenraUI:
         self.root.after(2000, _tick)
 
 
-    def set_active_agent(self, name: str) -> None:
-        logger.debug("Entering set_active_agent name=%s", name)
+    def set_active_agent(self, server_id: str, name: str) -> None:
+        logger.debug("Entering set_active_agent server_id=%s name=%s", server_id, name)
 
         def _update():
-            self._active_agent = name or None
-            display = name or "None"
-            self.agent_header.config(text=f"Current Agent: {display}")
-            payload = self._agent_payloads.get(name) if name else ""
-            self._render_agent_payload(payload)
+            if server_id:
+                self._active_agent_by_server[server_id] = name or None
+                if self._active_server is None:
+                    self._active_server = server_id
+                if self._active_server == server_id:
+                    self._update_agent_header()
+                    self._render_combined_payload(server_id)
 
         self._threadsafe(_update)
         logger.debug("Exiting set_active_agent")
 
-    def update_agent_payload(self, agent: str, payload: dict) -> None:
+    def update_agent_payload(self, server_id: str, agent: str, payload: dict | str) -> None:
         logger.debug(
-            "Entering update_agent_payload agent=%s keys=%s",
-            agent,
-            list(payload.keys()),
+            "Entering update_agent_payload server_id=%s agent=%s", server_id, agent
         )
-        text = json.dumps(payload, indent=2, ensure_ascii=False)
-        self._agent_payloads[agent] = text
+        if isinstance(payload, str):
+            text = payload
+        else:
+            text = json.dumps(payload, indent=2, ensure_ascii=False)
+        self._server_payloads[server_id] = text
 
         def _update():
-            if self._active_agent == agent:
-                self._render_agent_payload(text)
+            if agent:
+                self._active_agent_by_server[server_id] = agent
+            if self._active_server == server_id:
+                self._update_agent_header()
+                self._render_combined_payload(server_id)
 
         self._threadsafe(_update)
         logger.debug("Exiting update_agent_payload")
+
+    def update_server_context(self, server_id: str, text: str) -> None:
+        logger.debug("Entering update_server_context server_id=%s", server_id)
+
+        def _update():
+            self._server_contexts[server_id] = text or ""
+            if self._active_server == server_id:
+                self._render_combined_payload(server_id)
+
+        self._threadsafe(_update)
+        logger.debug("Exiting update_server_context")
+
+    def set_ollama_servers(self, servers: list[dict]) -> None:
+        logger.debug(
+            "Entering set_ollama_servers count=%s",
+            len(servers) if servers is not None else 0,
+        )
+
+        def _apply():
+            self._servers = [dict(s) for s in servers or []]
+            for srv in self._servers:
+                sid = str(srv.get("id") or "")
+                if not sid:
+                    continue
+                self._server_payloads.setdefault(sid, "")
+                self._server_contexts.setdefault(sid, "")
+                self._active_agent_by_server.setdefault(sid, None)
+            existing_ids = {s.get("id") for s in self._servers}
+            if self._active_server not in existing_ids:
+                self._active_server = next(iter(existing_ids), None)
+            self._refresh_server_tree()
+            self._rebuild_server_dropdown()
+            self._update_agent_header()
+            if self._active_server:
+                self._render_combined_payload(self._active_server)
+
+        self._threadsafe(_apply)
+        logger.debug("Exiting set_ollama_servers")
+
+    def _render_combined_payload(self, server_id: str) -> None:
+        payload = self._server_payloads.get(server_id, "")
+        context = self._server_contexts.get(server_id, "")
+        parts: list[str] = []
+        if payload:
+            parts.append(payload)
+        if context:
+            if payload:
+                parts.append("\n\n===== Server Context =====\n")
+            parts.append(context)
+        text = "".join(parts)
+        self._render_agent_payload(text)
+
+    def _update_agent_header(self) -> None:
+        server_id = self._active_server
+        if not server_id:
+            self.agent_header.config(text="Server: None — Current Agent: None")
+            self._render_agent_payload("")
+            return
+        agent = self._active_agent_by_server.get(server_id) or "None"
+        server_name = self._server_display_name(server_id)
+        self.agent_header.config(
+            text=f"Server: {server_name} — Current Agent: {agent}"
+        )
+
+    def _server_display_name(self, server_id: str) -> str:
+        for srv in self._servers:
+            if srv.get("id") == server_id:
+                name = srv.get("name") or server_id
+                host = srv.get("host") or ""
+                port = srv.get("port")
+                port_text = ""
+                try:
+                    if port is not None:
+                        port_text = str(int(port))
+                except Exception:
+                    port_text = str(port or "")
+                if host and port_text:
+                    return f"{name} ({host}:{port_text})"
+                if host:
+                    return f"{name} ({host})"
+                return name
+        return server_id or "Unknown"
+
+    def _rebuild_server_dropdown(self) -> None:
+        choices: dict[str, str] = {}
+        for srv in self._servers:
+            sid = str(srv.get("id") or "")
+            if not sid:
+                continue
+            display = self._server_display_name(sid)
+            choices[display] = sid
+        self._server_choice_map = choices
+        values = list(choices.keys())
+        self.agent_server_cb.configure(values=values)
+        if self._active_server:
+            active_display = self._server_display_name(self._active_server)
+            self.agent_server_var.set(active_display)
+        elif values:
+            first = values[0]
+            self.agent_server_var.set(first)
+            self._active_server = choices.get(first)
+
+    def _on_agent_server_change(self, _event=None) -> None:
+        choice = self.agent_server_var.get()
+        server_id = self._server_choice_map.get(choice)
+        if server_id:
+            self._active_server = server_id
+            self._update_agent_header()
+            self._render_combined_payload(server_id)
 
     def set_group_contexts(self, context_by_group: dict[str, str]) -> None:
         logger.debug(

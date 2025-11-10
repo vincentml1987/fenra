@@ -4,6 +4,7 @@ import re
 import threading
 import time
 from collections import deque
+from urllib.parse import urlparse, urlunparse
 
 from typing import Dict, Optional, List, Tuple, Callable
 import ctypes
@@ -97,6 +98,47 @@ def create_object_logger(class_name: str) -> logging.Logger:
 
 class TransientModelError(Exception):
     """Raised when the model returns a transient server error."""
+
+
+class OllamaServerError(RuntimeError):
+    """Raised when a specific Ollama server fails to respond correctly."""
+
+    def __init__(self, server_id: str, message: str) -> None:
+        super().__init__(message)
+        self.server_id = server_id
+        self.message = message
+
+
+def build_ollama_url(host: str, port: int, path: str = "/api/generate") -> str:
+    """Return a normalized Ollama endpoint URL for the given host/port/path."""
+
+    if not host:
+        raise ValueError("host is required")
+    base = host.strip()
+    if not base:
+        raise ValueError("host is required")
+    if "//" not in base:
+        base = f"http://{base}"
+    parsed = urlparse(base)
+    scheme = parsed.scheme or "http"
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"invalid host {host!r}")
+    try:
+        port_int = int(port)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"invalid port {port!r}") from exc
+    if port_int <= 0:
+        raise ValueError("port must be positive")
+    if ":" in hostname and not hostname.startswith("["):
+        host_part = f"[{hostname}]"
+    else:
+        host_part = hostname
+    netloc = f"{host_part}:{port_int}"
+    normalized_path = path or "/"
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    return urlunparse((scheme, netloc, normalized_path, "", "", ""))
 
 
 class AITimeTracker:
@@ -314,8 +356,9 @@ def generate_with_watchdog(
     *,
     base_timeout: float | None = 900,
     agent_name: str | None = None,
+    server: Dict | None = None,
 ) -> str:
-    """Call Ollama. If base_timeout <= 0 or None, do not pass a requests timeout."""
+    """Call Ollama on the specified server."""
     logger.debug(
         "Entering generate_with_watchdog base_timeout=%s agent_name=%s",
         base_timeout,
@@ -340,13 +383,30 @@ def generate_with_watchdog(
     start = time.time()
     timeout = None if disabled else float(base_timeout)
     wd_logger.debug("Timeout effective=%s", "disabled" if disabled else f"{timeout:.2f}s")
+    if server is None:
+        raise OllamaServerError("", "Server information is required")
+    server_info = server
+    server_id = str(server_info.get("id") or "")
+    server_name = server_info.get("name") or server_id or "<server>"
+    host = server_info.get("host")
+    port = server_info.get("port")
+    if host is None or port is None:
+        raise OllamaServerError(server_id, "Server host and port are required")
+    try:
+        url = build_ollama_url(str(host), int(port))
+    except Exception as exc:  # noqa: BLE001
+        raise OllamaServerError(server_id, f"Invalid server configuration: {exc}") from exc
+
     try:
         if wd_logger.isEnabledFor(logging.DEBUG):
-            wd_logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        # Notify UI/watchers with the exact payload that is about to be sent
+            wd_logger.debug("Payload to Ollama (%s):\n%s", url, json.dumps(payload, indent=2))
         payload_for_watchers = dict(payload)
         if agent_name:
             payload_for_watchers["__agent"] = agent_name
+        if server_id:
+            payload_for_watchers["__server"] = server_id
+        if server_name:
+            payload_for_watchers["__server_name"] = server_name
         for func in JSON_WATCHERS:
             try:
                 func(payload_for_watchers)
@@ -355,22 +415,22 @@ def generate_with_watchdog(
         kwargs = {"json": payload}
         if timeout is not None:
             kwargs["timeout"] = timeout
-        resp = requests.post("http://localhost:11434/api/generate", **kwargs)
-        if resp.status_code >= 500:
-            raise TransientModelError(
-                f"Ollama API error: {resp.status_code} {resp.text}"
-            )
+        resp = requests.post(url, **kwargs)
         if resp.status_code != 200:
-            raise RuntimeError(
-                f"Ollama API error: {resp.status_code} {resp.text}"
-            )
+            message = f"HTTP {resp.status_code}: {resp.text}"
+            raise OllamaServerError(server_id, message)
         text = parse_response(resp)
         wd_logger.info("Generation complete")
         logger.debug("Exiting generate_with_watchdog")
         return str(text)
     except requests.Timeout as exc:
-        wd_logger.error("Timeout exceeded")
-        raise exc
-    except Exception as exc:  # noqa: BLE001
-        wd_logger.error("Exception during generation: %s", exc)
+        wd_logger.error("Timeout exceeded contacting %s", url)
+        raise OllamaServerError(server_id, f"Timeout contacting {server_name}") from exc
+    except requests.RequestException as exc:
+        wd_logger.error("Request error for %s: %s", url, exc)
+        raise OllamaServerError(server_id, f"Request error contacting {server_name}: {exc}") from exc
+    except OllamaServerError:
         raise
+    except Exception as exc:  # noqa: BLE001
+        wd_logger.error("Exception during generation for %s: %s", url, exc)
+        raise OllamaServerError(server_id, str(exc)) from exc

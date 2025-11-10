@@ -95,6 +95,7 @@ class AIModel:
         override_model: Optional[str] = None,
         override_temperature: Optional[float] = None,
         system_text: Optional[str] = None,
+        server: Optional[Dict] = None,
     ) -> str:
         """Generate a response from the model using Ollama's API."""
         self.logger.debug("Entering generate_response with chat_log=%s", chat_log)
@@ -150,14 +151,14 @@ class AIModel:
         self.logger.debug("Sending generation request")
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        try:
-            result_text = generate_with_watchdog(
-                payload,
-                base_timeout=self.watchdog_timeout,
-                agent_name=self.name,
-            )
-        except requests.Timeout:
-            raise
+        if server is None:
+            raise ValueError("server configuration is required for generation")
+        result_text = generate_with_watchdog(
+            payload,
+            base_timeout=self.watchdog_timeout,
+            agent_name=self.name,
+            server=server,
+        )
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_response")
@@ -172,6 +173,7 @@ class AIModel:
         override_model: Optional[str] = None,
         override_temperature: Optional[float] = None,
         system_text: Optional[str] = None,
+        server: Optional[Dict] = None,
     ) -> str:
         """Generate a response from a custom prompt."""
         self.logger.debug(
@@ -234,14 +236,14 @@ class AIModel:
             payload["system"] = system_text
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
-        try:
-            result_text = generate_with_watchdog(
-                payload,
-                base_timeout=self.watchdog_timeout,
-                agent_name=self.name,
-            )
-        except requests.Timeout:
-            raise
+        if server is None:
+            raise ValueError("server configuration is required for generation")
+        result_text = generate_with_watchdog(
+            payload,
+            base_timeout=self.watchdog_timeout,
+            agent_name=self.name,
+            server=server,
+        )
         result_text = strip_think_markup(result_text)
         self.logger.debug("Generated %d characters", len(result_text))
         self.logger.debug("Exiting generate_from_prompt")
@@ -251,6 +253,8 @@ class AIModel:
         self,
         messages: List[Dict[str, object]],
         tools: Optional[List[Dict[str, object]]] = None,
+        *,
+        server: Optional[Dict] = None,
     ) -> Dict[str, object]:
         """Call Ollama chat API optionally with tools."""
         self.logger.debug(
@@ -288,11 +292,14 @@ class AIModel:
             payload["system"] = system_text
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Payload to Ollama:\n%s", json.dumps(payload, indent=2))
+        if server is None:
+            raise ValueError("server configuration is required for chat completion")
         try:
             result_text = generate_with_watchdog(
                 payload,
                 base_timeout=self.watchdog_timeout,
                 agent_name=self.name,
+                server=server,
             )
         except requests.Timeout:
             raise
@@ -393,7 +400,7 @@ class Tracer(Agent):
         self.logger.debug("Tracer.step called unexpectedly; ignoring.")
         return ""
 
-    def _judge_pair(self, user_msg: str, sent_msg: str) -> bool:
+    def _judge_pair(self, user_msg: str, sent_msg: str, *, server: Optional[Dict] = None) -> bool:
         """Return True if sent_msg answers user_msg."""
         import json
 
@@ -423,10 +430,13 @@ class Tracer(Agent):
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug("Tracer _judge_pair payload:\n%s", json.dumps(payload, indent=2))
 
+        if server is None:
+            raise ValueError("server configuration is required for tracer evaluation")
         text = generate_with_watchdog(
             payload,
             base_timeout=self.model.watchdog_timeout,
             agent_name=self.name,
+            server=server,
         )
         text = strip_think_markup(text)
         cleaned = re.sub(r"[^a-zA-Z]", "", text).lower()
@@ -438,11 +448,19 @@ class Tracer(Agent):
         )
         return "yes" in cleaned
 
-    def is_answered(self, user_message: str, outputs: List[str]) -> bool:
+    def is_answered(
+        self,
+        user_message: str,
+        outputs: List[str],
+        *,
+        server: Optional[Dict] = None,
+    ) -> bool:
         """Return True iff any sent message answers user_message."""
         if not outputs:
             return False
-        result = any(self._judge_pair(user_message, out) for out in outputs)
+        result = any(
+            self._judge_pair(user_message, out, server=server) for out in outputs
+        )
         self.logger.info(
             "Tracer.is_answered: user=%r, outputs=%s → %s",
             user_message,
@@ -485,7 +503,12 @@ class ToolAgent(Agent):
         self.tools = tool_schema()
         self.logger.debug("Exiting ToolAgent.__init__")
 
-    def step(self, context: List[Dict[str, str]]) -> str:
+    def step(
+        self,
+        context: List[Dict[str, str]],
+        *,
+        server: Optional[Dict] = None,
+    ) -> str:
         self.logger.debug("Entering ToolAgent.step with context=%s", context)
         messages: List[Dict[str, object]] = []
         for entry in context:
@@ -495,7 +518,11 @@ class ToolAgent(Agent):
             messages.append({"role": role, "content": content})
 
         while True:
-            resp = self.model.chat_completion(messages, tools=self.tools)
+            resp = self.model.chat_completion(
+                messages,
+                tools=self.tools,
+                server=server,
+            )
             msg = resp.get("message", {})
             content = msg.get("content", "")
             tool_calls = msg.get("tool_calls")

@@ -5,6 +5,7 @@ import random
 import shutil
 import argparse
 import threading
+from collections import deque
 from datetime import datetime
 from typing import Dict, List, Optional, Iterable
 import sys as _sys
@@ -40,12 +41,32 @@ from runtime_utils import (
     create_object_logger,
     tokenize_text,
     add_json_watcher,
+    OllamaServerError,
 )
 
 logger = create_object_logger("Conductor")
 
 TAGS_URL = "http://localhost:11434/api/tags"
 PULL_URL = "http://localhost:11434/api/pull"
+
+DEFAULT_OLLAMA_SERVER = {
+    "id": "localhost",
+    "name": "Localhost",
+    "host": "http://localhost",
+    "port": 11434,
+    "removable": False,
+}
+
+STATE_LOCK = threading.RLock()
+SERVER_THREAD_LOCK = threading.Lock()
+SERVER_CONTEXT_LOCK = threading.Lock()
+
+SERVER_THREADS: dict[str, threading.Thread] = {}
+SERVER_STOP_EVENTS: dict[str, threading.Event] = {}
+SERVER_STEPS: dict[str, Optional[int]] = {}
+SERVER_CONTEXTS: dict[str, str] = {}
+
+_INCOMING_QUEUE: deque[dict] = deque()
 
 _PWSH_BIN_CANDIDATES = ["pwsh", "powershell", "powershell.exe"]
 _PWSH_PROC: subprocess.Popen | None = None
@@ -311,6 +332,409 @@ def is_processing() -> bool:
     return _RUN_EVENT.is_set()
 
 
+def _server_list() -> list[dict]:
+    with STATE_LOCK:
+        servers = STATE.get("ollama_servers")
+        if not isinstance(servers, list):
+            return []
+        return [dict(s) for s in servers if isinstance(s, dict)]
+
+
+def _server_by_id(server_id: str) -> Optional[dict]:
+    if not server_id:
+        return None
+    for entry in _server_list():
+        if entry.get("id") == server_id:
+            return entry
+    return None
+
+
+def _ensure_server_context_entry(server_id: str) -> None:
+    with SERVER_CONTEXT_LOCK:
+        SERVER_CONTEXTS.setdefault(server_id, "")
+
+
+def _ensure_servers_initialized() -> None:
+    changed = False
+    with STATE_LOCK:
+        servers_raw = STATE.get("ollama_servers")
+        if not isinstance(servers_raw, list):
+            servers_raw = []
+            changed = True
+        normalized: list[dict] = []
+        seen: set[str] = set()
+        for entry in servers_raw:
+            if not isinstance(entry, dict):
+                changed = True
+                continue
+            data = dict(entry)
+            sid = str(data.get("id") or "").strip()
+            if not sid:
+                sid = str(uuid.uuid4())
+                changed = True
+            if sid in seen:
+                sid = str(uuid.uuid4())
+                changed = True
+            name = str(data.get("name") or "").strip() or f"Server {len(normalized)+1}"
+            host = str(data.get("host") or "").strip() or DEFAULT_OLLAMA_SERVER["host"]
+            try:
+                port_val = int(data.get("port", DEFAULT_OLLAMA_SERVER["port"]))
+            except Exception:
+                port_val = DEFAULT_OLLAMA_SERVER["port"]
+                changed = True
+            removable = bool(data.get("removable", True)) and sid != DEFAULT_OLLAMA_SERVER["id"]
+            normalized.append(
+                {
+                    "id": sid,
+                    "name": name,
+                    "host": host,
+                    "port": port_val,
+                    "removable": removable,
+                }
+            )
+            seen.add(sid)
+        if DEFAULT_OLLAMA_SERVER["id"] not in seen:
+            normalized.insert(0, dict(DEFAULT_OLLAMA_SERVER))
+            seen.add(DEFAULT_OLLAMA_SERVER["id"])
+            changed = True
+        ctx_map = STATE.get("agent_context_by_server")
+        if not isinstance(ctx_map, dict):
+            ctx_map = {}
+            changed = True
+        for sid in list(ctx_map):
+            if sid not in seen:
+                ctx_map.pop(sid, None)
+                changed = True
+        for sid in seen:
+            ctx_map.setdefault(sid, "")
+        STATE["agent_context_by_server"] = ctx_map
+        cur_map = STATE.get("current_agent_by_server")
+        if not isinstance(cur_map, dict):
+            cur_map = {}
+            changed = True
+        for sid in list(cur_map):
+            if sid not in seen:
+                cur_map.pop(sid, None)
+                changed = True
+        default_agent = STATE.get("current_agent")
+        for sid in seen:
+            cur_map.setdefault(sid, default_agent)
+        STATE["current_agent_by_server"] = cur_map
+        STATE["ollama_servers"] = normalized
+    with SERVER_CONTEXT_LOCK:
+        for sid in seen:
+            SERVER_CONTEXTS.setdefault(sid, ctx_map.get(sid, ""))
+        for sid in list(SERVER_CONTEXTS):
+            if sid not in seen:
+                SERVER_CONTEXTS.pop(sid, None)
+    if changed:
+        save_state(STATE)
+
+
+def _set_current_agent_for_server(server_id: str, agent_name: Optional[str]) -> None:
+    if not server_id:
+        return
+    with STATE_LOCK:
+        cur_map = STATE.setdefault("current_agent_by_server", {})
+        if agent_name:
+            cur_map[server_id] = agent_name
+            STATE["current_agent"] = agent_name
+        else:
+            cur_map.pop(server_id, None)
+        save_state(STATE)
+
+
+def _get_current_agent_for_server(server_id: str) -> Optional[str]:
+    if not server_id:
+        return None
+    with STATE_LOCK:
+        cur_map = STATE.get("current_agent_by_server")
+        if not isinstance(cur_map, dict):
+            return None
+        value = cur_map.get(server_id)
+    return value if isinstance(value, str) else None
+
+
+def _set_server_context(server_id: str, text: str) -> None:
+    with SERVER_CONTEXT_LOCK:
+        SERVER_CONTEXTS[server_id] = text
+    with STATE_LOCK:
+        ctx_map = STATE.setdefault("agent_context_by_server", {})
+        ctx_map[server_id] = text
+    if UI is not None and hasattr(UI, "update_server_context"):
+        try:
+            UI.update_server_context(server_id, text)
+        except Exception:
+            logger.exception("UI update_server_context failed")
+
+
+def _append_server_context(server_id: str, text: str) -> None:
+    with SERVER_CONTEXT_LOCK:
+        combined = f"{SERVER_CONTEXTS.get(server_id, '')}{text}"
+        if len(combined) > 50000:
+            combined = combined[-50000:]
+        SERVER_CONTEXTS[server_id] = combined
+    with STATE_LOCK:
+        ctx_map = STATE.setdefault("agent_context_by_server", {})
+        ctx_map[server_id] = combined
+    if UI is not None and hasattr(UI, "update_server_context"):
+        try:
+            UI.update_server_context(server_id, combined)
+        except Exception:
+            logger.exception("UI update_server_context failed")
+
+
+def get_server_context(server_id: str) -> str:
+    with SERVER_CONTEXT_LOCK:
+        return SERVER_CONTEXTS.get(server_id, "")
+
+
+def _broadcast_server_list() -> None:
+    if UI is not None and hasattr(UI, "set_ollama_servers"):
+        try:
+            UI.set_ollama_servers(_server_list())
+        except Exception:
+            logger.exception("UI set_ollama_servers failed")
+
+
+def get_ollama_servers() -> list[dict]:
+    ensure_configs_loaded()
+    return _server_list()
+
+
+def add_ollama_server(
+    name: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> dict:
+    ensure_configs_loaded()
+    default_name = (name or "New Server").strip() or "New Server"
+    with STATE_LOCK:
+        servers = list(STATE.get("ollama_servers") or [])
+        existing_names = {str(s.get("name") or "") for s in servers}
+        base_name = default_name
+        if default_name in existing_names:
+            suffix = 2
+            while f"{base_name} {suffix}" in existing_names:
+                suffix += 1
+            default_name = f"{base_name} {suffix}"
+        entry = {
+            "id": str(uuid.uuid4()),
+            "name": default_name,
+            "host": (host or DEFAULT_OLLAMA_SERVER["host"]).strip() or DEFAULT_OLLAMA_SERVER["host"],
+            "port": int(port or DEFAULT_OLLAMA_SERVER["port"]),
+            "removable": True,
+        }
+        servers.append(entry)
+        STATE["ollama_servers"] = servers
+        cur_map = STATE.setdefault("current_agent_by_server", {})
+        cur_map[entry["id"]] = STATE.get("current_agent")
+        STATE.setdefault("agent_context_by_server", {})[entry["id"]] = ""
+        save_state(STATE)
+    _ensure_server_context_entry(entry["id"])
+    _broadcast_server_list()
+    _ensure_server_runner(entry["id"])
+    return entry
+
+
+def update_ollama_server(
+    server_id: str,
+    *,
+    name: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> dict:
+    ensure_configs_loaded()
+    updated: dict | None = None
+    with STATE_LOCK:
+        servers = list(STATE.get("ollama_servers") or [])
+        for idx, entry in enumerate(servers):
+            if entry.get("id") != server_id:
+                continue
+            new_entry = dict(entry)
+            if name is not None:
+                proposed = name.strip()
+                if proposed:
+                    new_entry["name"] = proposed
+            if host is not None:
+                proposed_host = host.strip()
+                if proposed_host:
+                    new_entry["host"] = proposed_host
+            if port is not None:
+                try:
+                    new_entry["port"] = int(port)
+                except Exception as exc:
+                    raise ValueError("port must be an integer") from exc
+            servers[idx] = new_entry
+            STATE["ollama_servers"] = servers
+            save_state(STATE)
+            updated = dict(new_entry)
+            break
+    if updated is None:
+        raise KeyError(f"Unknown server {server_id}")
+    _broadcast_server_list()
+    return updated
+
+
+def remove_ollama_server(server_id: str) -> None:
+    ensure_configs_loaded()
+    removed = False
+    with STATE_LOCK:
+        servers = list(STATE.get("ollama_servers") or [])
+        for idx, entry in enumerate(servers):
+            if entry.get("id") != server_id:
+                continue
+            if not entry.get("removable", True):
+                raise ValueError("This server cannot be removed")
+            servers.pop(idx)
+            STATE["ollama_servers"] = servers
+            STATE.setdefault("current_agent_by_server", {}).pop(server_id, None)
+            STATE.setdefault("agent_context_by_server", {}).pop(server_id, None)
+            save_state(STATE)
+            removed = True
+            break
+    if not removed:
+        raise KeyError(f"Unknown server {server_id}")
+    with SERVER_CONTEXT_LOCK:
+        SERVER_CONTEXTS.pop(server_id, None)
+    _broadcast_server_list()
+    _stop_server_runner(server_id)
+
+
+def _ensure_server_runner(server_id: str, steps: Optional[int] = None) -> None:
+    if not server_id:
+        return
+    with SERVER_THREAD_LOCK:
+        thread = SERVER_THREADS.get(server_id)
+        if thread and thread.is_alive():
+            if steps is not None:
+                SERVER_STEPS[server_id] = steps
+            return
+        stop_event = threading.Event()
+        SERVER_STOP_EVENTS[server_id] = stop_event
+        SERVER_STEPS[server_id] = steps
+        thread = threading.Thread(
+            target=_run_loop_for_server,
+            args=(server_id, stop_event),
+            name=f"FenraServer-{server_id}",
+            daemon=True,
+        )
+        SERVER_THREADS[server_id] = thread
+        thread.start()
+
+
+def _stop_server_runner(server_id: str) -> None:
+    if not server_id:
+        return
+    with SERVER_THREAD_LOCK:
+        stop_event = SERVER_STOP_EVENTS.pop(server_id, None)
+        thread = SERVER_THREADS.pop(server_id, None)
+        SERVER_STEPS.pop(server_id, None)
+    if stop_event:
+        stop_event.set()
+    if thread and thread.is_alive():
+        try:
+            thread.join(timeout=2.0)
+        except Exception:
+            pass
+
+
+def _refresh_server_runners(steps: Optional[int] = None) -> None:
+    servers = _server_list()
+    active_ids = {s.get("id") for s in servers if s.get("id")}
+    for sid in active_ids:
+        _ensure_server_runner(sid, steps)
+    with SERVER_THREAD_LOCK:
+        for sid in list(SERVER_THREADS):
+            if sid not in active_ids:
+                _stop_server_runner(sid)
+
+
+def _run_loop_for_server(server_id: str, stop_event: threading.Event) -> None:
+    cur: Optional[str] = None
+    hist: List[str] = []
+    count = 0
+    while not stop_event.is_set():
+        limit = SERVER_STEPS.get(server_id)
+        if limit is not None and count >= limit:
+            break
+        if not _RUN_EVENT.is_set():
+            time.sleep(0.1)
+            continue
+        if not _CONFIGS_LOADED:
+            ensure_configs_loaded()
+        server_cfg = _server_by_id(server_id)
+        if server_cfg is None:
+            logger.info("Server %s removed; stopping runner", server_id)
+            break
+        if cur is None:
+            candidate = _get_current_agent_for_server(server_id)
+            if isinstance(candidate, str) and candidate in AGENTS_BY_NAME:
+                cur = candidate
+            else:
+                cur = next(iter(AGENTS_BY_NAME), None)
+            if cur is None:
+                logger.error(
+                    "No current_agent available after config load; check confs/state.json and agents."
+                )
+                break
+            hist = [cur]
+            _set_current_agent_for_server(server_id, cur)
+        if UI is not None:
+            try:
+                UI.set_active_agent(server_id, cur)
+                UI.set_group_contexts(_read_group_contexts())
+            except Exception:
+                logger.exception("UI pre-step update failed")
+        logger.info(
+            "Running agent %s on server %s",
+            cur,
+            server_cfg.get("name") or server_id,
+        )
+        try:
+            nxt = step_agent(cur, server_cfg)
+        except OllamaServerError as exc:
+            logger.error("Generation failed on server %s: %s", server_id, exc)
+            _set_server_context(server_id, f"ERROR: {exc}")
+            break
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Agent loop crashed on server %s", server_id)
+            _set_server_context(server_id, f"UNEXPECTED ERROR: {exc}")
+            break
+        logger.info("Next agent on %s: %s", server_id, nxt)
+        count += 1
+        time.sleep(0.2)
+        if nxt:
+            cur = nxt
+            _set_current_agent_for_server(server_id, cur)
+            hist.append(cur)
+            continue
+        cur_agent = AGENTS_BY_NAME.get(cur)
+        if cur_agent:
+            _flag_no_downstream(cur_agent, cur_agent.get("groups_out", []))
+        while hist:
+            dead = hist.pop()
+            if not hist:
+                logger.error("All downstream paths dead-end. Please wire groups.")
+                stop_event.set()
+                return
+            prev = hist[-1]
+            alt = select_next_agent(prev)
+            if alt and alt["name"] != dead:
+                cur = alt["name"]
+                _set_current_agent_for_server(server_id, cur)
+                hist.append(cur)
+                break
+        else:
+            logger.error("All downstream paths dead-end. Please wire groups.")
+            stop_event.set()
+            return
+    with SERVER_THREAD_LOCK:
+        SERVER_STOP_EVENTS.pop(server_id, None)
+        SERVER_THREADS.pop(server_id, None)
+        SERVER_STEPS.pop(server_id, None)
+
+
 def load_all_configs() -> None:
     """Load global config data into module-level structures."""
     global GLOBALS, PDV_META, PDVS, CLASSES, AGENTS, AGENTS_BY_NAME, AGENTS_BY_GROUP_IN, STATE
@@ -348,6 +772,7 @@ def load_all_configs() -> None:
         STATE["current_agent"] = earliest["name"]
         STATE.setdefault("pdv_history_path", os.path.join("chatlogs", "pdv_history.jsonl"))
         save_state(STATE)
+    _ensure_servers_initialized()
 
 
 def _persist_pdvs_live() -> None:
@@ -503,7 +928,7 @@ def post_to_discord_via_webhook(content: str) -> None:
 # PDV mechanics
 # ----------------------------------------------------------------------------
 
-def apply_pdv_adjustments(adjs: List[dict], *, scale: float = 1.0) -> None:
+def apply_pdv_adjustments(adjs: List[dict], *, scale: float = 1.0) -> dict[str, float]:
     """Apply linear PDV updates with a floor at zero and no upper bound."""
     _refresh_pdvs_from_disk()
     changed = False
@@ -540,6 +965,7 @@ def apply_pdv_adjustments(adjs: List[dict], *, scale: float = 1.0) -> None:
             f.write(json.dumps({"ts": time.time(), "pdvs": PDVS}, ensure_ascii=False) + "\n")
         # Live snapshot after any adjustments as well.
         _persist_pdvs_live()
+    return dict(PDVS)
 
 
 # ----------------------------------------------------------------------------
@@ -597,6 +1023,16 @@ def select_next_agent(curr_name: str) -> Optional[dict]:
     class_to_agents: Dict[str, List[dict]] = {}
     for agent in D:
         class_to_agents.setdefault(agent["agent_class"], []).append(agent)
+
+    queue_empty = not _INCOMING_QUEUE
+    if queue_empty:
+        filtered: Dict[str, List[dict]] = {}
+        for class_name, _agents in class_to_agents.items():
+            if CLASSES.get(class_name, {}).get("reads_message_queue"):
+                continue
+            filtered[class_name] = _agents
+        if filtered:
+            class_to_agents = filtered
 
     classes: List[str] = []
     weights: List[float] = []
@@ -877,12 +1313,13 @@ def setup(lazy_configs: bool = False) -> None:
     ensure_configs_loaded()
 
 
-def step_agent(agent_name: str) -> Optional[str]:
+def step_agent(agent_name: str, server: dict) -> Optional[str]:
     # Pick up any PDV changes applied by UI/Discord before we compute/emit.
     _refresh_pdvs_from_disk()
     global CONTEXT
     os.makedirs("chatlogs", exist_ok=True)
     agent = AGENTS_BY_NAME[agent_name]
+    server_id = str(server.get("id") or "")
     model_id, temp, system_text, pre, post = effective_params(agent)
     inject = get_one_time_inject()
     if inject:
@@ -923,24 +1360,26 @@ def step_agent(agent_name: str) -> Optional[str]:
     )
     prompt = "\n".join(filter(None, [pre, msg, post]))
     if UI is not None:
-       # Do not write the pre-gen “overview” blob to Agent Context.
-       # The runtime_utils JSON watcher will overwrite the panel with the *exact*
-       # payload that is POSTed to Ollama, which is what we want to display.
-       try:
-           UI.set_active_agent(agent["name"])
-       except Exception:
-           logger.exception("UI set_active_agent failed")
+        # Do not write the pre-gen “overview” blob to Agent Context.
+        # The runtime_utils JSON watcher will overwrite the panel with the *exact*
+        # payload that is POSTed to Ollama, which is what we want to display.
+        try:
+            UI.set_active_agent(server_id, agent["name"])
+        except Exception:
+            logger.exception("UI set_active_agent failed")
     try:
         reply = MODEL.generate_from_prompt(
             prompt,
             override_model=model_id,
             override_temperature=temp,
             system_text=system_text,
+            server=server,
         )
-    except Exception as exc:  # keep loop alive on Ollama/network errors
+    except OllamaServerError:
+        raise
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Generation failed for %s: %s", agent["name"], exc)
-        nxt = select_next_agent(agent_name)
-        return nxt["name"] if nxt else None
+        raise
     # Make the agent's *visible* output (with Fenra call markup stripped) available to Fenra functions.
     try:
         raw = reply or ""
@@ -984,6 +1423,8 @@ def step_agent(agent_name: str) -> Optional[str]:
     else:
         CONTEXT = "\n".join(filter(None, [msg, reply]))
     text_block = f"[{timestamp}] {agent['name']}: {reply}\n{'-'*80}\n\n"
+    if server_id:
+        _append_server_context(server_id, text_block)
     for group in groups_target:
         path = os.path.join("chatlogs", f"chat_log_{group}.txt")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1025,6 +1466,7 @@ def step_agent(agent_name: str) -> Optional[str]:
             UI.log({"timestamp": timestamp, "sender": agent["name"], "message": reply})
             # Show the exact prompt that was sent (pre + msg + post), not CONTEXT.
             UI.update_agent_payload(
+                server_id,
                 agent["name"],
                 {
                     "model": model_id,
@@ -1038,7 +1480,8 @@ def step_agent(agent_name: str) -> Optional[str]:
             UI.set_group_contexts(_read_group_contexts())
         except Exception:
             logger.exception("UI post-gen update failed")
-    override = STATE.pop("force_next_agent", None)
+    with STATE_LOCK:
+        override = STATE.pop("force_next_agent", None)
     if isinstance(override, str) and override in AGENTS_BY_NAME:
         return override
     if used > GLOBALS.get("max_context_tokens", 8192):
@@ -1050,63 +1493,32 @@ def step_agent(agent_name: str) -> Optional[str]:
 
 
 def run_loop(steps: Optional[int] = None) -> None:
-    # Defer reading state until Start is pressed and configs are loaded.
-    cur: Optional[str] = None
-    hist: List[str] = []
-    count = 0
-    while steps is None or count < steps:
-        # Respect Start/Stop toggle: idle until started.
-        if not _RUN_EVENT.is_set():
-            time.sleep(0.1)
-            continue
-        # First tick after Start: ensure configs are present and seed current agent.
-        if not _CONFIGS_LOADED:
-            ensure_configs_loaded()
-        if cur is None:
-            candidate = STATE.get("current_agent")
-            if isinstance(candidate, str) and candidate in AGENTS_BY_NAME:
-                cur = candidate
-            else:
-                # Pick a reasonable default or bail with a clear error.
-                cur = next(iter(AGENTS_BY_NAME), None)
-            if cur is None:
-                logger.error("No current_agent available after config load; check confs/state.json and agents.")
-                return
-            hist = [cur]
-        if UI is not None:
-            try:
-                UI.set_active_agent(cur)
-                UI.set_group_contexts(_read_group_contexts())
-            except Exception:
-                logger.exception("UI pre-step update failed")
-        logger.info("Running agent %s", cur)
-        nxt = step_agent(cur)
-        logger.info("Next agent: %s", nxt)
-        count += 1
-        time.sleep(0.2)
-        if nxt:
-            cur = nxt
-            STATE["current_agent"] = cur
-            save_state(STATE)
-            hist.append(cur)
-            continue
-        # flag current agent as dead-end and backtrack
-        cur_agent = AGENTS_BY_NAME.get(cur)
-        if cur_agent:
-            _flag_no_downstream(cur_agent, cur_agent.get("groups_out", []))
-        while hist:
-            dead = hist.pop()
-            if not hist:
-                logger.error("All downstream paths dead-end. Please wire groups.")
-                return
-            prev = hist[-1]
-            alt = select_next_agent(prev)
-            if alt and alt["name"] != dead:
-                cur = alt["name"]
-                STATE["current_agent"] = cur
-                save_state(STATE)
-                hist.append(cur)
+    _refresh_server_runners(steps)
+    try:
+        while True:
+            with SERVER_THREAD_LOCK:
+                active = [t for t in SERVER_THREADS.values() if t.is_alive()]
+            if not active:
                 break
+            if steps is not None:
+                limits = [SERVER_STEPS.get(sid) for sid in SERVER_THREADS]
+                if not any(limit is None for limit in limits):
+                    all_done = True
+                    for sid, thread in list(SERVER_THREADS.items()):
+                        limit = SERVER_STEPS.get(sid)
+                        if limit is None:
+                            all_done = False
+                            break
+                        if thread.is_alive():
+                            all_done = False
+                            break
+                    if all_done:
+                        break
+            time.sleep(0.2)
+    finally:
+        if steps is not None:
+            for sid in list(SERVER_THREADS):
+                _stop_server_runner(sid)
 
 
 if __name__ == "__main__":
@@ -1123,20 +1535,30 @@ if __name__ == "__main__":
 
             def _ui_payload_watcher(p: dict) -> None:
                 try:
-                    # Prefer the conductor's current agent; fall back to payload tag.
-                    agent = STATE.get("current_agent") or p.get("__agent")
+                    server_id = p.get("__server") or DEFAULT_OLLAMA_SERVER["id"]
+                    agent = None
+                    with STATE_LOCK:
+                        cur_map = STATE.get("current_agent_by_server")
+                        if isinstance(cur_map, dict):
+                            agent = cur_map.get(server_id)
+                    if not agent:
+                        agent = p.get("__agent")
                     if UI and agent:
                         payload = dict(p)
                         payload.pop("__agent", None)
-                        UI.update_agent_payload(agent, payload)
+                        payload.pop("__server", None)
+                        payload.pop("__server_name", None)
+                        UI.update_agent_payload(server_id, agent, payload)
                 except Exception:
                     pass
 
             add_json_watcher(_ui_payload_watcher)
 
             cur = STATE.get("current_agent")
+            servers = _server_list()
+            server_choice = servers[0]["id"] if servers else DEFAULT_OLLAMA_SERVER["id"]
             if isinstance(cur, str) and cur in AGENTS_BY_NAME:
-                UI.set_active_agent(cur)
+                UI.set_active_agent(server_choice, cur)
             UI.set_group_contexts(_read_group_contexts())
 
             def _loop() -> None:
