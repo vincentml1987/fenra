@@ -4,7 +4,7 @@ from typing import Dict, List
 import importlib
 
 
-def apply_and_persist_pdv_adjustments(adjs: List[Dict], *, scale: float = 1.0) -> None:
+def apply_and_persist_pdv_adjustments(adjs: List[Dict], *, scale: float = 1.0) -> dict[str, float]:
     """
     Normalize PDV adjustments and forward them to Conductor's additive updater.
     No upper clamp; floor at zero is handled by Conductor.
@@ -17,11 +17,19 @@ def apply_and_persist_pdv_adjustments(adjs: List[Dict], *, scale: float = 1.0) -
         name = a.get("name") or a.get("pdv")
         if not name:
             continue
-        delta = float(a.get("delta", 0.0))
+        raw_delta = a.get("delta")
+        if raw_delta is None:
+            raw_delta = a.get("delta_pct")
+        if raw_delta is None:
+            continue
+        try:
+            delta = float(raw_delta)
+        except Exception:
+            continue
         norm.append({"name": name, "delta": delta})
 
     if not norm:
-        return
+        return {}
 
     # Conductor applies +delta * scale, floors at 0, persists pdvs.json and history.
-    conductor.apply_pdv_adjustments(norm, scale=scale)
+    return conductor.apply_pdv_adjustments(norm, scale=scale)

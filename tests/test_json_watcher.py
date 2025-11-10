@@ -20,17 +20,27 @@ def test_json_watcher_receives_agent(monkeypatch):
         def json(self) -> dict:
             return {"response": "ok"}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, **kwargs):
         return FakeResp()
 
     monkeypatch.setattr("requests.post", fake_post)
 
+    server = {
+        "id": "localhost",
+        "name": "Localhost",
+        "host": "http://localhost",
+        "port": 11434,
+        "removable": False,
+    }
+
     runtime_utils.generate_with_watchdog(
-        {"model": "test", "prompt": "hi"}, agent_name="AgentX"
+        {"model": "test", "prompt": "hi"}, agent_name="AgentX", server=server
     )
 
     assert received is not None
     assert received.get("__agent") == "AgentX"
+    assert received.get("__server") == "localhost"
+    assert received.get("__server_name") == "Localhost"
     assert received.get("prompt") == "hi"
 
     runtime_utils.JSON_WATCHERS.clear()
