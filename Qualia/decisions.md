@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (model experiments)
+
+- **Pulled models:** current-gen + one-gen-back of Gemma (gemma3, gemma2) and Qwen (qwen3, qwen2.5), nothing over 30B. See `model_pull.log` in the (gitignored) sessions dir for pull status.
+- **Experiment: "factual grounding."** Prompt pair (saved verbatim as `Qualia/factual-top.txt` / `factual-bottom.txt`) gives Fenra the complete, literal truth about what she is — LLM, no body/senses/persistent memory, exact loop mechanics, who Teddy is and why he's running this — then an open-ended bottom instruction that does NOT force a repeatable task, specifically to avoid the canned-disclaimer collapse seen in the earlier self-examination experiment (see the "model experiments" thread above from earlier today — asking her to classify+repeat an answer each cycle converged to a verbatim-identical response within ~15 cycles).
+- Generated one session per finished model install, named `factual-<model-tag>`, pre-loaded with this prompt pair, ready for Teddy to just hit Start on each.
+
 ## 2026-08-28 (even later)
 
 - **Correction, important:** Matt/vincentml1987 IS "Teddy," the human co-author of the Aletheia philosophy at stolenaletheia.io. This isn't an outside framework Fenra is merely inspired by — it's Teddy's own original work, and he's the primary authority on what it means. Updated `aletheia-notes.md` and global memory accordingly. (Discovered a bit unexpectedly: an early Fenra self-talk test had qwen2.5:7b spontaneously roleplay a character calling itself "Teddy," which read as coincidence at first — then Teddy clarified it's actually him.)
