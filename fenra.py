@@ -70,6 +70,7 @@ class FenraApp:
 
         self._build_ui()
         self._populate_history_list()
+        self.refresh_models()
 
     # ---------------------------------------------------------------- UI --
 
@@ -92,13 +93,15 @@ class FenraApp:
         controls = ttk.Frame(frame)
         controls.pack(fill="x", padx=6, pady=6)
 
-        ttk.Label(controls, text="Model:").pack(side="left")
-        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        ttk.Entry(controls, textvariable=self.model_var, width=18).pack(side="left", padx=(2, 10))
-
         ttk.Label(controls, text="Host:").pack(side="left")
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         ttk.Entry(controls, textvariable=self.host_var, width=22).pack(side="left", padx=(2, 10))
+
+        ttk.Label(controls, text="Model:").pack(side="left")
+        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
+        self.model_combo = ttk.Combobox(controls, textvariable=self.model_var, width=20, state="readonly")
+        self.model_combo.pack(side="left", padx=(2, 2))
+        ttk.Button(controls, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
 
         ttk.Label(controls, text="Interval (s):").pack(side="left")
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
@@ -167,6 +170,26 @@ class FenraApp:
         self.json_view.delete("1.0", "end")
         self.json_view.insert("end", pretty)
         self.json_view.config(state="disabled")
+
+    # --------------------------------------------------------------- model --
+
+    def refresh_models(self):
+        """Query Ollama for installed models and populate the dropdown."""
+        host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+        try:
+            resp = requests.get(f"{host}/api/tags", timeout=5)
+            resp.raise_for_status()
+            names = [m["name"] for m in resp.json().get("models", [])]
+        except Exception as exc:
+            messagebox.showwarning("Fenra", f"Could not fetch installed models from Ollama:\n{exc}")
+            return
+
+        self.model_combo["values"] = names
+        if not names:
+            return
+        # keep current selection if it's still installed, otherwise pick the first
+        if self.model_var.get() not in names:
+            self.model_var.set(names[0])
 
     # --------------------------------------------------------------- loop --
 
