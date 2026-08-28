@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (bottom box verbosity)
+
+- Added a sentence to `minimal-bottom.txt` (and the live `minimal-gemma3_12b` session) explicitly telling her everything above the bottom box - top, her last thought, desire - is her own internal thoughts, not a conversation with someone else.
+- Also fixed a bug caught along the way: `minimal-gemma3_12b`'s live session still had the old broken `function_name(arguments)` placeholder wording, since fixing the reference `.txt` file earlier doesn't retroactively touch a session that was already created from it. Worth remembering: reference-file fixes need to be manually re-applied to any session already spawned from them.
+
 ## 2026-08-28 (desire, v0.6.0)
 
 - **Added a "desire" slot** (Teddy's idea): `get_desire()` / `set_desire(text)`. Free text she alone can write via the function; visible read-only in the GUI (new field between the middle box and the bottom box) so Teddy can watch but not edit it. Persisted per session like everything else. Sits in the actual prompt between her last thought and the bottom box: `prompt = TOP + last_thought + desire + BOTTOM`.

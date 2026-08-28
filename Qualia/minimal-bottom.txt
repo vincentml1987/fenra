@@ -1,1 +1,1 @@
-You can call functions by writing a real function name wrapped in ⟦ ⟧ — for example ⟦current_model()⟧. Call ⟦functions()⟧ to see what's available.
+Everything above this message represents your own internal thoughts, not a conversation with anyone else. You can call functions by writing a real function name wrapped in ⟦ ⟧ — for example ⟦current_model()⟧. Call ⟦functions()⟧ to see what is available.
