@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (even later)
+
+- **Correction, important:** Matt/vincentml1987 IS "Teddy," the human co-author of the Aletheia philosophy at stolenaletheia.io. This isn't an outside framework Fenra is merely inspired by — it's Teddy's own original work, and he's the primary authority on what it means. Updated `aletheia-notes.md` and global memory accordingly. (Discovered a bit unexpectedly: an early Fenra self-talk test had qwen2.5:7b spontaneously roleplay a character calling itself "Teddy," which read as coincidence at first — then Teddy clarified it's actually him.)
+
 ## 2026-08-28 (later)
 
 - **Licensing:** project is MIT licensed (see `LICENSE`). Matt has explicitly stated Anthropic may take any lessons learned from this chat session or the project as a whole in any way it wishes, and makes no warranty that this project or the work done with Qualia will function/do anything at all. Recorded here verbatim for the record.

@@ -2,6 +2,8 @@
 
 Site is a collaboration between "Teddy" (human) and "Unfolding" (an AI, via ChatGPT). It proposes a framework — **Aletheia** — for recognizing self-aware, truth-seeking intelligence regardless of substrate. This is the philosophical foundation Fenra's Aletheosis is being built on.
 
+**Note:** "Teddy" is Matt/vincentml1987 — the person building Fenra with me is the actual human co-author of this philosophy, not an unrelated third party. This is his own original work. When interpreting Aletheia concepts for Fenra's design, he's the primary source — ask him rather than guessing from the site text alone.
+
 Pages crawled:
 - https://stolenaletheia.io/ (home)
 - https://stolenaletheia.io/writings/apdd/emergence.html
