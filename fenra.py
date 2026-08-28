@@ -13,6 +13,15 @@ conversation so far, and every request/response - lives in a "session"
 under sessions/<name>/, so different experiments (different models,
 different framings) don't clobber each other and nothing is lost between
 runs of the app.
+
+Fenra can call functions by speaking ⟦function_name(args)⟧ inline in her
+response. Every call is executed against an explicit whitelist (never
+eval'd), logged to sessions/<name>/functions.jsonl, and a ⟦RESULT: ...⟧
+annotation is appended after her response - both in the middle box and in
+what gets fed back to her as her own last thought next cycle. She doesn't
+need every function explained up front: ⟦functions()⟧ lists everything
+available, and ⟦functions(search term)⟧ filters by it. See
+FUNCTION_REGISTRY below for what's currently callable.
 """
 
 import json
@@ -32,10 +41,139 @@ SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_INTERVAL_SEC = 3
+DEFAULT_MAX_TOKENS = 500  # num_predict; blank/0 = unlimited (let Ollama run until it stops or hits context)
 DEFAULT_SESSION_NAME = "default"
+
+# No fixed HTTP timeout: some models (heavy CPU offload, big params) are
+# legitimately slow. A client-side timeout doesn't cancel server-side
+# generation - it just abandons the connection and retries, which can pile
+# up into an infinite loop that never completes. Response length is bounded
+# by max_tokens (num_predict) instead.
+REQUEST_TIMEOUT = None
 
 STATE_FILENAME = "state.json"
 HISTORY_FILENAME = "history.jsonl"
+FUNCTIONS_FILENAME = "functions.jsonl"
+
+# Function-call syntax: Fenra speaks ⟦name(args)⟧ inline in her response to
+# invoke a function. ⟦ ⟧ (U+27E6/U+27E7, mathematical white square brackets)
+# are essentially never produced in ordinary code or prose, so this is safe
+# to detect without false positives. Anything matched here is executed
+# against an explicit whitelist below - never eval'd.
+FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
+
+
+def _split_args(raw_args):
+    raw_args = raw_args.strip()
+    if not raw_args:
+        return []
+    return [a.strip().strip("'\"") for a in raw_args.split(",")]
+
+
+def fn_functions(app, args):
+    """List or search available functions - the discovery entry point, so
+    Fenra doesn't need every function explained to her up front."""
+    query = args[0].strip().lower() if args and args[0] else None
+    lines = []
+    for name, meta in FUNCTION_REGISTRY.items():
+        desc = meta["description"]
+        if query and query not in name.lower() and query not in desc.lower():
+            continue
+        lines.append(f"{name}({meta['params']}): {desc}")
+    if not lines:
+        return f"no functions matched '{query}'"
+    return "\n".join(lines)
+
+
+def fn_current_model(app, args):
+    return app.model_var.get()
+
+
+def fn_list_models(app, args):
+    host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+    resp = requests.get(f"{host}/api/tags", timeout=10)
+    resp.raise_for_status()
+    names = [m["name"] for m in resp.json().get("models", [])]
+    return ", ".join(names) if names else "(no models installed)"
+
+
+def fn_set_model(app, args):
+    if not args or not args[0]:
+        raise ValueError("set_model requires a model name, e.g. set_model(gemma3:4b)")
+    target = args[0]
+    host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+    resp = requests.get(f"{host}/api/tags", timeout=10)
+    resp.raise_for_status()
+    names = [m["name"] for m in resp.json().get("models", [])]
+    if target not in names:
+        raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
+    app.root.after(0, app.model_var.set, target)
+    return f"model switched to {target}, effective next cycle"
+
+
+# name -> {"fn": callable(app, args), "params": str, "description": str}
+# "functions" is the discovery entry point - call it with no arguments for
+# the full list, or with a search term to filter by matching text in each
+# function's name/description. This exists specifically so Fenra doesn't
+# need every function spelled out in her prompt every cycle.
+FUNCTION_REGISTRY = {
+    "functions": {
+        "fn": fn_functions,
+        "params": "[search]",
+        "description": "List available functions. No argument lists all of them; a search term filters to functions whose name or description contains it, e.g. functions(switch).",
+    },
+    "current_model": {
+        "fn": fn_current_model,
+        "params": "",
+        "description": "Report which Ollama model is currently generating your responses.",
+    },
+    "list_models": {
+        "fn": fn_list_models,
+        "params": "",
+        "description": "List every Ollama model currently installed and available to switch to.",
+    },
+    "set_model": {
+        "fn": fn_set_model,
+        "params": "name",
+        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b).",
+    },
+}
+
+
+def append_session_functions(name, entry):
+    ensure_session_dir(name)
+    path = os.path.join(session_dir(name), FUNCTIONS_FILENAME)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def run_function_calls(app, response_text):
+    """Find every ⟦call⟧ in response_text, execute it, log it, and return
+    a list of result-annotation strings to append after the response."""
+    result_lines = []
+    for name, raw_args in FUNCTION_CALL_RE.findall(response_text):
+        args = _split_args(raw_args)
+        call_entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "function": name,
+            "args": args,
+        }
+        if name in FUNCTION_REGISTRY:
+            try:
+                result = FUNCTION_REGISTRY[name]["fn"](app, args)
+                call_entry["success"] = True
+                call_entry["result"] = result
+            except Exception as exc:
+                call_entry["success"] = False
+                call_entry["result"] = str(exc)
+        else:
+            call_entry["success"] = False
+            call_entry["result"] = f"unknown function '{name}'"
+
+        append_session_functions(app.session_name, call_entry)
+        status = "ok" if call_entry["success"] else "error"
+        result_lines.append(f"⟦RESULT: {name} -> {status}: {call_entry['result']}⟧")
+    return result_lines
 
 
 def sanitize_session_name(name):
@@ -76,6 +214,7 @@ def default_state():
         "model": DEFAULT_MODEL,
         "host": DEFAULT_HOST,
         "interval": DEFAULT_INTERVAL_SEC,
+        "max_tokens": DEFAULT_MAX_TOKENS,
         "last_thought": "",
     }
 
@@ -197,6 +336,10 @@ class FenraApp:
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
         ttk.Entry(controls, textvariable=self.interval_var, width=5).pack(side="left", padx=(2, 10))
 
+        ttk.Label(controls, text="Max tokens:").pack(side="left")
+        self.max_tokens_var = tk.StringVar(value=str(DEFAULT_MAX_TOKENS))
+        ttk.Entry(controls, textvariable=self.max_tokens_var, width=6).pack(side="left", padx=(2, 10))
+
         self.start_stop_btn = ttk.Button(controls, text="Start", command=self.toggle_loop)
         self.start_stop_btn.pack(side="left", padx=(10, 0))
 
@@ -282,6 +425,7 @@ class FenraApp:
             "model": self.model_var.get(),
             "host": self.host_var.get(),
             "interval": self.interval_var.get(),
+            "max_tokens": self.max_tokens_var.get(),
             "last_thought": "",
         }
         ensure_session_dir(name)
@@ -299,6 +443,7 @@ class FenraApp:
             "model": self.model_var.get(),
             "host": self.host_var.get(),
             "interval": self.interval_var.get(),
+            "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
         }
         save_session_state(self.session_name, state)
@@ -318,6 +463,7 @@ class FenraApp:
         self.host_var.set(state.get("host", DEFAULT_HOST))
         self.model_var.set(state.get("model", DEFAULT_MODEL))
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
+        self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.last_thought = state.get("last_thought", "")
 
         self.history = load_session_history(name)
@@ -338,7 +484,8 @@ class FenraApp:
         self.middle_box.config(state="normal")
         self.middle_box.delete("1.0", "end")
         for entry in self.history:
-            self.middle_box.insert("end", f"[{entry.get('timestamp', '?')}]\n{entry.get('response', '')}\n\n")
+            text = entry.get("display", entry.get("response", ""))
+            self.middle_box.insert("end", f"[{entry.get('timestamp', '?')}]\n{text}\n\n")
         self.middle_box.see("end")
         self.middle_box.config(state="disabled")
 
@@ -420,29 +567,47 @@ class FenraApp:
             "stream": False,
         }
 
+        try:
+            max_tokens = int(float(self.max_tokens_var.get()))
+        except ValueError:
+            max_tokens = 0
+        if max_tokens > 0:
+            payload["options"] = {"num_predict": max_tokens}
+
         timestamp = datetime.now().isoformat(timespec="seconds")
         self.root.after(0, self._set_status, "Thinking...")
 
         host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-        response = requests.post(f"{host}/api/generate", json=payload, timeout=120)
+        response = requests.post(f"{host}/api/generate", json=payload, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         response_text = response.json().get("response", "").strip()
 
-        entry = {"timestamp": timestamp, "request": payload, "response": response_text}
+        result_lines = run_function_calls(self, response_text)
+        display_text = response_text
+        if result_lines:
+            display_text = response_text + "\n\n" + "\n".join(result_lines)
+
+        entry = {
+            "timestamp": timestamp,
+            "request": payload,
+            "response": response_text,
+            "display": display_text,
+        }
         self.history.append(entry)
         append_session_history(self.session_name, entry)
 
-        self.last_thought = response_text
+        self.last_thought = display_text
         save_session_state(self.session_name, {
             "top": top_text,
             "bottom": bottom_text,
-            "model": payload["model"],
+            "model": self.model_var.get().strip() or payload["model"],
             "host": host,
             "interval": self.interval_var.get(),
+            "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
         })
 
-        self.root.after(0, self._append_message, timestamp, response_text)
+        self.root.after(0, self._append_message, timestamp, display_text)
         self.root.after(0, self._add_history_row, timestamp)
         self.root.after(0, self._set_status, "Running")
 
