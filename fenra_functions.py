@@ -54,7 +54,11 @@ def fn_list_models(app, args):
 
 def fn_get_desire(app, args):
     text = app.desire_var.get()
-    return text if text else "(no desire set)"
+    if text:
+        return text
+    return ("no desire is set. To set one, call set_desire(text), e.g. "
+            "set_desire(understand why I keep repeating myself) - it will "
+            "persist and be visible to you every cycle until you change it.")
 
 
 def fn_set_desire(app, args):
