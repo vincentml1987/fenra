@@ -7,7 +7,8 @@ model. See Qualia/decisions.md for design notes.
 Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
     prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n"
-             + <her current desire, if any> + "\n\n" + BOTTOM
+             + <her current desire, if any> + "\n\n" + BOTTOM + "\n\n"
+             + <chat status notice - always present>
 
 Everything about a run - the top/bottom boxes, model/host/interval, the
 conversation so far, and every request/response - lives in a "session"
@@ -55,7 +56,13 @@ import fenra_functions
 #   0.6.0 - desire: get_desire()/set_desire(text), a persistent text slot
 #           she alone can write, visible read-only in the GUI, sitting in
 #           the prompt between her last thought and the bottom box
-FENRA_VERSION = "0.6.0"
+#   0.7.0 - Chat tab: Teddy can message her directly. Per-message read
+#           status, a chat-status notice always appended at the end of her
+#           prompt, and read_chat/read_chat_since/read_chat_between/
+#           search_chat/send_message functions. Function args now split on
+#           | instead of comma, so free text (desire, chat messages) can
+#           safely contain commas.
+FENRA_VERSION = "0.7.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -76,6 +83,7 @@ REQUEST_TIMEOUT = None
 STATE_FILENAME = "state.json"
 HISTORY_FILENAME = "history.jsonl"
 FUNCTIONS_FILENAME = "functions.jsonl"
+CHAT_FILENAME = "chat.jsonl"
 
 # Function-call syntax: Fenra speaks ⟦name(args)⟧ inline in her response to
 # invoke a function. ⟦ ⟧ (U+27E6/U+27E7, mathematical white square brackets)
@@ -86,11 +94,14 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 
 
 def _split_args(raw_args):
-    """Every function takes at most one argument: the entire text inside
-    the parentheses, not comma-split. This is deliberate - free text (like
-    a desire statement) needs to survive commas and punctuation intact."""
-    raw_args = raw_args.strip().strip("'\"")
-    return [raw_args] if raw_args else []
+    """Arguments are separated by | , not commas - deliberate, so a single
+    free-text argument (a desire, a chat message) can contain commas and
+    ordinary punctuation without being split apart. A function that needs
+    more than one argument documents the | in its own description."""
+    raw_args = raw_args.strip()
+    if not raw_args:
+        return []
+    return [a.strip().strip("'\"") for a in raw_args.split("|")]
 
 
 def reload_function_registry():
@@ -234,6 +245,33 @@ def append_session_history(name, entry):
         f.write(json.dumps(entry) + "\n")
 
 
+def load_chat_messages(name):
+    """Chat messages (unlike history) get mutated in place - marking one
+    read - so unlike history.jsonl's append-only log, this file is always
+    rewritten in full via save_chat_messages rather than appended to."""
+    path = os.path.join(session_dir(name), CHAT_FILENAME)
+    messages = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    messages.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return messages
+
+
+def save_chat_messages(name, messages):
+    ensure_session_dir(name)
+    path = os.path.join(session_dir(name), CHAT_FILENAME)
+    with open(path, "w", encoding="utf-8") as f:
+        for m in messages:
+            f.write(json.dumps(m) + "\n")
+
+
 class FenraApp:
     def __init__(self, root):
         self.root = root
@@ -244,6 +282,7 @@ class FenraApp:
         self.loop_thread = None
         self.last_thought = ""
         self.history = []
+        self.chat_messages = []
         self.session_name = None
 
         self._build_ui()
@@ -264,11 +303,14 @@ class FenraApp:
         notebook.pack(fill="both", expand=True)
 
         self.talk_tab = ttk.Frame(notebook)
+        self.chat_tab = ttk.Frame(notebook)
         self.history_tab = ttk.Frame(notebook)
         notebook.add(self.talk_tab, text="Fenra")
+        notebook.add(self.chat_tab, text="Chat")
         notebook.add(self.history_tab, text="History")
 
         self._build_talk_tab()
+        self._build_chat_tab()
         self._build_history_tab()
 
     def _build_talk_tab(self):
@@ -346,6 +388,20 @@ class FenraApp:
 
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.bottom_box.grid(row=3, column=0, sticky="nsew", pady=(4, 0))
+
+    def _build_chat_tab(self):
+        frame = self.chat_tab
+
+        self.chat_box = scrolledtext.ScrolledText(frame, wrap="word", state="disabled")
+        self.chat_box.pack(fill="both", expand=True, padx=6, pady=6)
+
+        entry_row = ttk.Frame(frame)
+        entry_row.pack(fill="x", padx=6, pady=(0, 6))
+        self.chat_entry_var = tk.StringVar(value="")
+        chat_entry = ttk.Entry(entry_row, textvariable=self.chat_entry_var)
+        chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        chat_entry.bind("<Return>", lambda event: self.send_chat_from_ui())
+        ttk.Button(entry_row, text="Send", command=self.send_chat_from_ui).pack(side="left")
 
     def _build_history_tab(self):
         frame = self.history_tab
@@ -457,8 +513,77 @@ class FenraApp:
         self._populate_history_list()
         self._replay_middle_box()
 
+        self.chat_messages = load_chat_messages(name)
+        self._refresh_chat_display()
+
         self._refresh_session_list()
         self.session_status_var.set(f"Loaded ({len(self.history)} entries)")
+
+    # --------------------------------------------------------------- chat --
+
+    def _next_chat_id(self):
+        return max((m.get("id", 0) for m in self.chat_messages), default=0) + 1
+
+    def add_chat_message(self, sender, text, read):
+        entry = {
+            "id": self._next_chat_id(),
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "sender": sender,
+            "text": text,
+            "read": read,
+        }
+        self.chat_messages.append(entry)
+        self.persist_chat()
+        return entry
+
+    def persist_chat(self):
+        """Save chat_messages to disk and refresh the Chat tab. Safe to call
+        from the background loop thread (function calls) or the main thread
+        (the Send button) - matches the pattern already used elsewhere for
+        cross-thread GUI updates."""
+        if self.session_name:
+            save_chat_messages(self.session_name, self.chat_messages)
+        self.root.after(0, self._refresh_chat_display)
+
+    def _refresh_chat_display(self):
+        self.chat_box.config(state="normal")
+        self.chat_box.delete("1.0", "end")
+        for m in self.chat_messages:
+            who = "Teddy" if m["sender"] == "teddy" else "Fenra"
+            unread_marker = " [unread]" if m["sender"] == "teddy" and not m.get("read", True) else ""
+            self.chat_box.insert("end", f"[{m['timestamp']}] {who}{unread_marker}: {m['text']}\n\n")
+        self.chat_box.see("end")
+        self.chat_box.config(state="disabled")
+
+    def send_chat_from_ui(self):
+        text = self.chat_entry_var.get().strip()
+        if not text:
+            return
+        self.add_chat_message("teddy", text, read=False)
+        self.chat_entry_var.set("")
+
+    def _chat_notice(self):
+        """Always-present status line appended at the very end of the
+        prompt: last sent/received times regardless of unread state, plus
+        an explicit unread count and pointer to the chat functions."""
+        sent_times = [m["timestamp"] for m in self.chat_messages if m["sender"] == "fenra"]
+        received_times = [m["timestamp"] for m in self.chat_messages if m["sender"] == "teddy"]
+        last_sent = max(sent_times) if sent_times else "never"
+        last_received = max(received_times) if received_times else "never"
+
+        unread = [m for m in self.chat_messages if m["sender"] == "teddy" and not m.get("read", True)]
+        if unread:
+            unread_note = (
+                f"You have {len(unread)} unread message(s) from Teddy. "
+                f"Use the chat functions (see ⟦functions()⟧) to review them."
+            )
+        else:
+            unread_note = "You have no unread messages."
+
+        return (
+            f"[Chat status: you last sent a message at {last_sent}. "
+            f"You last received a message at {last_received}. {unread_note}]"
+        )
 
     # ------------------------------------------------------------ history --
 
@@ -544,9 +669,10 @@ class FenraApp:
         top_text = self.top_box.get("1.0", "end-1c")
         bottom_text = self.bottom_box.get("1.0", "end-1c")
         desire_text = self.desire_var.get()
+        chat_notice = self._chat_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}".strip()
+        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}\n\n{chat_notice}".strip()
 
         payload = {
             "model": self.model_var.get().strip() or DEFAULT_MODEL,

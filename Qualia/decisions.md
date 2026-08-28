@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (Chat tab, v0.7.0)
+
+- **New Chat tab:** Teddy can message her directly (entry box + Send, Enter also sends). Messages stored per-session in `sessions/<name>/chat.jsonl`, each with its own `read` status (unlike history.jsonl, this file gets rewritten in full on change rather than appended-only, since marking read mutates existing entries).
+- **Always-present chat-status notice**, appended at the very end of the prompt (after bottom box): last-sent time, last-received time (both regardless of whether anything's unread), and an explicit unread count + pointer to the chat functions when relevant.
+- **Functions:** `read_chat()` (unread-from-Teddy only, marks read), `read_chat_since(time)` / `read_chat_between(start|end)` (both directions, marks matched incoming messages read), `search_chat(query[|chars])` (context window, default 200 chars each side, never touches read status), `send_message(text)` (lets her actually reply - implied by "last time she sent a message" needing to mean something).
+- **Mechanical change required:** function arguments now split on `|` instead of comma, since read_chat_between/search_chat need two arguments and commas need to stay safe inside free text (chat messages, desire). Verified end-to-end in isolation before wiring live: read_chat/since/between/search_chat/send_message all tested against seeded messages including comma-containing text, all correct.
+- Needs a restart (core prompt construction + new tab), but the function implementations themselves live in the hot-reloadable fenra_functions.py as usual.
+
 ## 2026-08-28 (bottom box verbosity)
 
 - Added a sentence to `minimal-bottom.txt` (and the live `minimal-gemma3_12b` session) explicitly telling her everything above the bottom box - top, her last thought, desire - is her own internal thoughts, not a conversation with someone else.
