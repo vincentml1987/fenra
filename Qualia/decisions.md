@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (watched-gemma3_12b)
+
+- **New session, top box left empty** (Teddy's call: "a bit more explicit, and only at the bottom"). All framing lives in the bottom box (`Qualia/watched-top.txt` is empty, `watched-bottom.txt` has the content): tells her she's Fenra, that everything above is her own internal thoughts (except what she pulls via chat functions), that she's being watched by Teddy (human) and Qualia (AI), that they'll mostly just watch, and that she can talk to either of them via her functions.
+- Model: gemma3:12b, consistent with the recent active sessions.
+
 ## 2026-08-28 (Chat tab, v0.7.0)
 
 - **New Chat tab:** Teddy can message her directly (entry box + Send, Enter also sends). Messages stored per-session in `sessions/<name>/chat.jsonl`, each with its own `read` status (unlike history.jsonl, this file gets rewritten in full on change rather than appended-only, since marking read mutates existing entries).
