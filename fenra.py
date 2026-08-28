@@ -20,10 +20,14 @@ eval'd), logged to sessions/<name>/functions.jsonl, and a ⟦RESULT: ...⟧
 annotation is appended after her response - both in the middle box and in
 what gets fed back to her as her own last thought next cycle. She doesn't
 need every function explained up front: ⟦functions()⟧ lists everything
-available, and ⟦functions(search term)⟧ filters by it. See
-FUNCTION_REGISTRY below for what's currently callable.
+available, and ⟦functions(search term)⟧ filters by it.
+
+The functions themselves live in fenra_functions.py, which is hot-reloaded
+every tick - add, fix, or reword a function there and it's live on her very
+next cycle, no restart, no interrupting a running session.
 """
 
+import importlib
 import json
 import os
 import re
@@ -35,6 +39,8 @@ from tkinter import ttk, scrolledtext, messagebox, simpledialog
 
 import requests
 
+import fenra_functions
+
 # Bumped on every functionally meaningful change to fenra.py. Stamped into
 # every session save and every history entry, so it's always possible to
 # tell exactly which version of the code produced a given response - see
@@ -44,7 +50,8 @@ import requests
 #   0.3.0 - Sessions: save/load named runs instead of one flat log
 #   0.4.0 - configurable max_tokens + unbounded timeout fix, function calling
 #   0.4.1 - now() function, added in response to her spontaneously trying it
-FENRA_VERSION = "0.4.1"
+#   0.5.0 - functions moved to fenra_functions.py, hot-reloaded every tick
+FENRA_VERSION = "0.5.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -81,83 +88,17 @@ def _split_args(raw_args):
     return [a.strip().strip("'\"") for a in raw_args.split(",")]
 
 
-def fn_functions(app, args):
-    """List or search available functions - the discovery entry point, so
-    Fenra doesn't need every function explained to her up front."""
-    query = args[0].strip().lower() if args and args[0] else None
-    lines = []
-    for name, meta in FUNCTION_REGISTRY.items():
-        desc = meta["description"]
-        if query and query not in name.lower() and query not in desc.lower():
-            continue
-        lines.append(f"{name}({meta['params']}): {desc}")
-    if not lines:
-        return f"no functions matched '{query}'"
-    return "\n".join(lines)
-
-
-def fn_now(app, args):
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def fn_current_model(app, args):
-    return app.model_var.get()
-
-
-def fn_list_models(app, args):
-    host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-    resp = requests.get(f"{host}/api/tags", timeout=10)
-    resp.raise_for_status()
-    names = [m["name"] for m in resp.json().get("models", [])]
-    return ", ".join(names) if names else "(no models installed)"
-
-
-def fn_set_model(app, args):
-    if not args or not args[0]:
-        raise ValueError("set_model requires a model name, e.g. set_model(gemma3:4b)")
-    target = args[0]
-    host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-    resp = requests.get(f"{host}/api/tags", timeout=10)
-    resp.raise_for_status()
-    names = [m["name"] for m in resp.json().get("models", [])]
-    if target not in names:
-        raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
-    app.root.after(0, app.model_var.set, target)
-    return f"model switched to {target}, effective next cycle"
-
-
-# name -> {"fn": callable(app, args), "params": str, "description": str}
-# "functions" is the discovery entry point - call it with no arguments for
-# the full list, or with a search term to filter by matching text in each
-# function's name/description. This exists specifically so Fenra doesn't
-# need every function spelled out in her prompt every cycle.
-FUNCTION_REGISTRY = {
-    "functions": {
-        "fn": fn_functions,
-        "params": "[search]",
-        "description": "List available functions. No argument lists all of them; a search term filters to functions whose name or description contains it, e.g. functions(switch).",
-    },
-    "now": {
-        "fn": fn_now,
-        "params": "",
-        "description": "Report the current real-world date and time.",
-    },
-    "current_model": {
-        "fn": fn_current_model,
-        "params": "",
-        "description": "Report which Ollama model is currently generating your responses.",
-    },
-    "list_models": {
-        "fn": fn_list_models,
-        "params": "",
-        "description": "List every Ollama model currently installed and available to switch to.",
-    },
-    "set_model": {
-        "fn": fn_set_model,
-        "params": "name",
-        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b).",
-    },
-}
+def reload_function_registry():
+    """Hot-reload fenra_functions.py so edits to it (new functions, fixed
+    descriptions, whatever) take effect on the very next tick, without
+    restarting the app or interrupting a running session. If the file has
+    a syntax/import error, keep using the last good version instead of
+    crashing the loop."""
+    try:
+        importlib.reload(fenra_functions)
+    except Exception as exc:
+        return fenra_functions.FUNCTION_REGISTRY, str(exc)
+    return fenra_functions.FUNCTION_REGISTRY, None
 
 
 def append_session_functions(name, entry):
@@ -170,6 +111,10 @@ def append_session_functions(name, entry):
 def run_function_calls(app, response_text):
     """Find every ⟦call⟧ in response_text, execute it, log it, and return
     a list of result-annotation strings to append after the response."""
+    registry, reload_error = reload_function_registry()
+    if reload_error:
+        app.root.after(0, app._set_status, f"functions module error (using last good version): {reload_error}")
+
     result_lines = []
     for name, raw_args in FUNCTION_CALL_RE.findall(response_text):
         args = _split_args(raw_args)
@@ -178,9 +123,9 @@ def run_function_calls(app, response_text):
             "function": name,
             "args": args,
         }
-        if name in FUNCTION_REGISTRY:
+        if name in registry:
             try:
-                result = FUNCTION_REGISTRY[name]["fn"](app, args)
+                result = registry[name]["fn"](app, args)
                 call_entry["success"] = True
                 call_entry["result"] = result
             except Exception as exc:

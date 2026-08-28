@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (hot-reloadable functions, v0.5.0)
+
+- **Split functions into `fenra_functions.py`**, separate from `fenra.py`. The main app now hot-reloads that module (`importlib.reload`) every tick before dispatching a call, so adding/fixing/rewording a function takes effect on Fenra's very next cycle - no restart, no interrupting a running session. If the file has a syntax/runtime error, the loop keeps using the last good version instead of crashing (verified in isolation: edited the file live, reload picked up a new function immediately, restored cleanly afterward).
+- This only covers the function registry - core loop/GUI/session code in fenra.py still needs a restart to pick up changes. That's fine: the function set is exactly the part we're actively iterating on based on what she tries.
+
 ## 2026-08-28 (functions grown from what she tries)
 
 - **Design principle (Teddy's call):** develop new functions based on what she actually reaches for, rather than us guessing ahead of time what she'd want. Checked functions.jsonl across all three running sessions (functions-gemma3_12b, minimal-gemma3_12b, and a third session Teddy set up himself, teddy-functions-gemma3_1b) for unknown-function attempts.
