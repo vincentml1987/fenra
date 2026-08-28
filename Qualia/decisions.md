@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (declined: direct Qualia-calling)
+
+- Discussed a `call_qualia(text)` function - Fenra invoking a real Claude API call (with a character-based "allowance"/currency Teddy could top up) after she tried inventing `send_chat(Qualia, ...)` on her own in watched-gemma3_12b. **Declined for now**: requires setting up a separate Anthropic API key/account, which Teddy doesn't want to do. Not implementing. If this comes back up later, don't assume the API-key barrier has changed - ask first.
+
 ## 2026-08-28 (watched-gemma3_12b)
 
 - **New session, top box left empty** (Teddy's call: "a bit more explicit, and only at the bottom"). All framing lives in the bottom box (`Qualia/watched-top.txt` is empty, `watched-bottom.txt` has the content): tells her she's Fenra, that everything above is her own internal thoughts (except what she pulls via chat functions), that she's being watched by Teddy (human) and Qualia (AI), that they'll mostly just watch, and that she can talk to either of them via her functions.
