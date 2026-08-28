@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (functions grown from what she tries)
+
+- **Design principle (Teddy's call):** develop new functions based on what she actually reaches for, rather than us guessing ahead of time what she'd want. Checked functions.jsonl across all three running sessions (functions-gemma3_12b, minimal-gemma3_12b, and a third session Teddy set up himself, teddy-functions-gemma3_1b) for unknown-function attempts.
+- **Added `now()` (v0.4.1):** she tried it twice unprompted in minimal-gemma3_12b. Makes sense given she's explicitly told she has no experience of time passing between generations - now() gives her a real anchor to that.
+- **Bug fix, not a new function:** `function_name(arguments)` was attempted several times across sessions - not a real want, it's the literal placeholder text from my own instructions ("wrapped exactly like this: ⟦function_name(arguments)⟧") being copied verbatim as if it were a callable. Reworded functions-bottom.txt and minimal-bottom.txt to use a real example (⟦current_model()⟧) instead of a generic placeholder.
+- **Watching, not yet building:** `parse(prompt)` was tried once (teddy-functions-gemma3_1b) - too ambiguous to implement confidently (parse into what, return what?). Leaving it as a signal to watch for a repeat/clarification rather than guessing at semantics.
+
 ## 2026-08-28 (minimal prompt experiment)
 
 - **`functions-gemma3_12b` result:** she used `⟦functions()⟧` unprompted several times, including one genuinely interesting moment (cycle 16) where she explicitly framed calling it as *verification* of a claim about herself rather than just accepting it - closer to real self-examination than anything seen so far. But she also spiraled into 7 cycles of verbatim repetition ("It is true that I have observed the availability of functions.") before partially breaking out again by cycle 28.

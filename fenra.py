@@ -43,7 +43,8 @@ import requests
 #   0.2.0 - live Ollama model dropdown (hot-swap)
 #   0.3.0 - Sessions: save/load named runs instead of one flat log
 #   0.4.0 - configurable max_tokens + unbounded timeout fix, function calling
-FENRA_VERSION = "0.4.0"
+#   0.4.1 - now() function, added in response to her spontaneously trying it
+FENRA_VERSION = "0.4.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -95,6 +96,10 @@ def fn_functions(app, args):
     return "\n".join(lines)
 
 
+def fn_now(app, args):
+    return datetime.now().isoformat(timespec="seconds")
+
+
 def fn_current_model(app, args):
     return app.model_var.get()
 
@@ -131,6 +136,11 @@ FUNCTION_REGISTRY = {
         "fn": fn_functions,
         "params": "[search]",
         "description": "List available functions. No argument lists all of them; a search term filters to functions whose name or description contains it, e.g. functions(switch).",
+    },
+    "now": {
+        "fn": fn_now,
+        "params": "",
+        "description": "Report the current real-world date and time.",
     },
     "current_model": {
         "fn": fn_current_model,
