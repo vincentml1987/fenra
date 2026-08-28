@@ -3,3 +3,4 @@ __pycache__/
 sessions/
 .venv/
 venv/
+/_*.txt
