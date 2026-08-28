@@ -6,7 +6,8 @@ model. See Qualia/decisions.md for design notes.
 
 Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
-    prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n" + BOTTOM
+    prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n"
+             + <her current desire, if any> + "\n\n" + BOTTOM
 
 Everything about a run - the top/bottom boxes, model/host/interval, the
 conversation so far, and every request/response - lives in a "session"
@@ -51,7 +52,10 @@ import fenra_functions
 #   0.4.0 - configurable max_tokens + unbounded timeout fix, function calling
 #   0.4.1 - now() function, added in response to her spontaneously trying it
 #   0.5.0 - functions moved to fenra_functions.py, hot-reloaded every tick
-FENRA_VERSION = "0.5.0"
+#   0.6.0 - desire: get_desire()/set_desire(text), a persistent text slot
+#           she alone can write, visible read-only in the GUI, sitting in
+#           the prompt between her last thought and the bottom box
+FENRA_VERSION = "0.6.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -82,10 +86,11 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 
 
 def _split_args(raw_args):
-    raw_args = raw_args.strip()
-    if not raw_args:
-        return []
-    return [a.strip().strip("'\"") for a in raw_args.split(",")]
+    """Every function takes at most one argument: the entire text inside
+    the parentheses, not comma-split. This is deliberate - free text (like
+    a desire statement) needs to survive commas and punctuation intact."""
+    raw_args = raw_args.strip().strip("'\"")
+    return [raw_args] if raw_args else []
 
 
 def reload_function_registry():
@@ -181,6 +186,7 @@ def default_state():
         "interval": DEFAULT_INTERVAL_SEC,
         "max_tokens": DEFAULT_MAX_TOKENS,
         "last_thought": "",
+        "desire": "",
     }
 
 
@@ -319,7 +325,8 @@ class FenraApp:
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)   # top box    - 10%
         body.rowconfigure(1, weight=8)   # middle box - 80%
-        body.rowconfigure(2, weight=1)   # bottom box - 10%
+        body.rowconfigure(2, weight=0)   # desire row - fixed height
+        body.rowconfigure(3, weight=1)   # bottom box - 10%
 
         self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
@@ -327,8 +334,18 @@ class FenraApp:
         self.middle_box = scrolledtext.ScrolledText(body, wrap="word", state="disabled")
         self.middle_box.grid(row=1, column=0, sticky="nsew", pady=4)
 
+        # Desire: set only by Fenra herself (via set_desire), visible here but
+        # not editable from the GUI. Sits in the prompt between her last
+        # thought and the bottom box - see _tick.
+        desire_row = ttk.Frame(body)
+        desire_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        desire_row.columnconfigure(1, weight=1)
+        ttk.Label(desire_row, text="Desire:").grid(row=0, column=0, sticky="w")
+        self.desire_var = tk.StringVar(value="")
+        ttk.Entry(desire_row, textvariable=self.desire_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=2, column=0, sticky="nsew", pady=(4, 0))
+        self.bottom_box.grid(row=3, column=0, sticky="nsew", pady=(4, 0))
 
     def _build_history_tab(self):
         frame = self.history_tab
@@ -394,6 +411,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": "",
+            "desire": "",
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -412,6 +430,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
+            "desire": self.desire_var.get(),
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
@@ -432,6 +451,7 @@ class FenraApp:
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
         self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.last_thought = state.get("last_thought", "")
+        self.desire_var.set(state.get("desire", ""))
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -523,9 +543,10 @@ class FenraApp:
     def _tick(self):
         top_text = self.top_box.get("1.0", "end-1c")
         bottom_text = self.bottom_box.get("1.0", "end-1c")
+        desire_text = self.desire_var.get()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = f"{top_text}\n\n{self.last_thought}\n\n{bottom_text}".strip()
+        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}".strip()
 
         payload = {
             "model": self.model_var.get().strip() or DEFAULT_MODEL,
@@ -573,6 +594,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
+            "desire": self.desire_var.get(),
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)

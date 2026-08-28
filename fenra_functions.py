@@ -52,6 +52,19 @@ def fn_list_models(app, args):
     return ", ".join(names) if names else "(no models installed)"
 
 
+def fn_get_desire(app, args):
+    text = app.desire_var.get()
+    return text if text else "(no desire set)"
+
+
+def fn_set_desire(app, args):
+    if not args or not args[0]:
+        raise ValueError("set_desire requires text, e.g. set_desire(understand why I keep repeating myself)")
+    text = args[0]
+    app.root.after(0, app.desire_var.set, text)
+    return "desire updated"
+
+
 def fn_set_model(app, args):
     if not args or not args[0]:
         raise ValueError("set_model requires a model name, e.g. set_model(gemma3:4b)")
@@ -81,6 +94,16 @@ FUNCTION_REGISTRY = {
         "fn": fn_now,
         "params": "",
         "description": "Report the current real-world date and time.",
+    },
+    "get_desire": {
+        "fn": fn_get_desire,
+        "params": "",
+        "description": "Report what you've set as your current desire/intention, if anything.",
+    },
+    "set_desire": {
+        "fn": fn_set_desire,
+        "params": "text",
+        "description": "Set what you want to pursue right now - free text, visible to Teddy (he can see it but not change it), persisted across cycles, and included in your own prompt between your last thought and the closing instructions. Overwrites any previous desire. e.g. set_desire(understand why I keep repeating myself).",
     },
     "current_model": {
         "fn": fn_current_model,

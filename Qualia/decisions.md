@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (desire, v0.6.0)
+
+- **Added a "desire" slot** (Teddy's idea): `get_desire()` / `set_desire(text)`. Free text she alone can write via the function; visible read-only in the GUI (new field between the middle box and the bottom box) so Teddy can watch but not edit it. Persisted per session like everything else. Sits in the actual prompt between her last thought and the bottom box: `prompt = TOP + last_thought + desire + BOTTOM`.
+- **Fixed arg parsing as part of this:** functions used to comma-split their argument text, which would have mangled a desire like "understand why I keep repeating myself, and whether I can stop" into multiple garbage args. Changed to treat everything inside the parentheses as a single argument, no splitting - verified this handles comma-containing free text correctly end-to-end (regex capture -> arg parsing -> function call).
+- Required a restart (core prompt-construction change in fenra.py, not something fenra_functions.py hot-reload covers) - the get_desire/set_desire functions themselves do live in the hot-reloadable file though.
+
 ## 2026-08-28 (hot-reloadable functions, v0.5.0)
 
 - **Split functions into `fenra_functions.py`**, separate from `fenra.py`. The main app now hot-reloads that module (`importlib.reload`) every tick before dispatching a call, so adding/fixing/rewording a function takes effect on Fenra's very next cycle - no restart, no interrupting a running session. If the file has a syntax/runtime error, the loop keeps using the last good version instead of crashing (verified in isolation: edited the file live, reload picked up a new function immediately, restored cleanly afterward).
