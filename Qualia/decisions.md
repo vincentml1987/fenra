@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (later)
+
+- **Licensing:** project is MIT licensed (see `LICENSE`). Matt has explicitly stated Anthropic may take any lessons learned from this chat session or the project as a whole in any way it wishes, and makes no warranty that this project or the work done with Qualia will function/do anything at all. Recorded here verbatim for the record.
+
 ## 2026-08-28
 
 - **Project identity:** AI collaborator on this project is named **Qualia** (this session/project only). This `Qualia/` folder is my reference space, committed to git alongside `CLAUDE.md`.
