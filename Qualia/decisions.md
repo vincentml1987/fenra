@@ -6,6 +6,7 @@ Running log for Fenra's Aletheosis. Newest entries at top.
 
 - **Versioning:** fenra.py now has a real `FENRA_VERSION` constant (see changelog comment in the file), stamped into every session's `state.json` and every `history.jsonl` entry on write, and shown in the window title. Started at 0.4.0 to reflect the four functional commits so far (initial GUI, model dropdown, Sessions, max_tokens+timeout fix+function calling). Bump it on every functionally meaningful change going forward.
 - **New session `functions-gemma3_12b`:** first session that actually tells Fenra about the `⟦function_name(args)⟧` syntax and the `⟦functions()⟧` discovery entry point (prompt saved as `Qualia/functions-top.txt` / `functions-bottom.txt`). All the other `factual-*` sessions predate this and don't know functions exist at all, by design - this is the first one meant to test whether/how she actually uses them.
+- **Correction (Teddy):** moved the function-availability paragraph from the top box to the bottom box. Rationale: prompt = top + last_thought + bottom, so bottom is the last thing she reads each cycle, right before generating - functions are effectively her "body," so she should be aware of them at all times, not just told once up front and buried under everything since. Reference files updated to match.
 
 ## 2026-08-28 (model experiments)
 
