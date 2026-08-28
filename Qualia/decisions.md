@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (versioning + function-calling test session)
+
+- **Versioning:** fenra.py now has a real `FENRA_VERSION` constant (see changelog comment in the file), stamped into every session's `state.json` and every `history.jsonl` entry on write, and shown in the window title. Started at 0.4.0 to reflect the four functional commits so far (initial GUI, model dropdown, Sessions, max_tokens+timeout fix+function calling). Bump it on every functionally meaningful change going forward.
+- **New session `functions-gemma3_12b`:** first session that actually tells Fenra about the `⟦function_name(args)⟧` syntax and the `⟦functions()⟧` discovery entry point (prompt saved as `Qualia/functions-top.txt` / `functions-bottom.txt`). All the other `factual-*` sessions predate this and don't know functions exist at all, by design - this is the first one meant to test whether/how she actually uses them.
+
 ## 2026-08-28 (model experiments)
 
 - **Pulled models:** current-gen + one-gen-back of Gemma (gemma3, gemma2) and Qwen (qwen3, qwen2.5), nothing over 30B. See `model_pull.log` in the (gitignored) sessions dir for pull status.

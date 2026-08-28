@@ -1,5 +1,5 @@
 """
-Fenra's Aletheosis - v0
+Fenra's Aletheosis
 
 A minimal GUI where Fenra talks to herself, looping against a local Ollama
 model. See Qualia/decisions.md for design notes.
@@ -34,6 +34,16 @@ from datetime import datetime
 from tkinter import ttk, scrolledtext, messagebox, simpledialog
 
 import requests
+
+# Bumped on every functionally meaningful change to fenra.py. Stamped into
+# every session save and every history entry, so it's always possible to
+# tell exactly which version of the code produced a given response - see
+# git log for the commit each version corresponds to.
+#   0.1.0 - initial GUI: two tabs, top/middle/bottom boxes, self-talk loop
+#   0.2.0 - live Ollama model dropdown (hot-swap)
+#   0.3.0 - Sessions: save/load named runs instead of one flat log
+#   0.4.0 - configurable max_tokens + unbounded timeout fix, function calling
+FENRA_VERSION = "0.4.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -232,6 +242,8 @@ def load_session_state(name):
 
 
 def save_session_state(name, state):
+    state = dict(state)
+    state["fenra_version"] = FENRA_VERSION
     ensure_session_dir(name)
     path = os.path.join(session_dir(name), STATE_FILENAME)
     with open(path, "w", encoding="utf-8") as f:
@@ -264,7 +276,7 @@ def append_session_history(name, entry):
 class FenraApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Fenra's Aletheosis")
+        self.root.title(f"Fenra's Aletheosis - v{FENRA_VERSION}")
         self.root.geometry("900x700")
 
         self.running = False
@@ -589,6 +601,7 @@ class FenraApp:
 
         entry = {
             "timestamp": timestamp,
+            "fenra_version": FENRA_VERSION,
             "request": payload,
             "response": response_text,
             "display": display_text,
