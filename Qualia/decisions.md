@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (end of day)
+
+- Wrote a full synopsis of the day: [`2026-08-28-synopsis.md`](2026-08-28-synopsis.md) - build timeline (v0 through 0.7.1), every experiment run, and a full walkthrough of watched-gemma3_12b (174 cycles), including the two hallucination incidents, the "managing the observers" narrative, and the "obedience" spiral. Start there before re-deriving context in a future session.
+
 ## 2026-08-28 (comma support, v0.7.1)
 
 - **Caught a real hallucination in watched-gemma3_12b (16:37:07):** she wrote `read_chat_between(a, b)` with a comma, our system correctly errored (comma wasn't a valid separator at the time), but in her own prose she'd already written a fake `⟦RESULT: ... -> ok: [...]⟧` block claiming success - using real, previously-seen content (not invented), just presented as if this call had already succeeded before the real result came back. She then correctly read the *real* error on the next cycle and recovered with proper syntax. Verified via functions.jsonl (real call logged as failure, no successful call logged for that timestamp).
