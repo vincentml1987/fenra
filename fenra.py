@@ -8,38 +8,102 @@ Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
     prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n" + BOTTOM
 
-The full request JSON sent to Ollama is logged with a timestamp so it can be
-reviewed later on the History tab.
+Everything about a run - the top/bottom boxes, model/host/interval, the
+conversation so far, and every request/response - lives in a "session"
+under sessions/<name>/, so different experiments (different models,
+different framings) don't clobber each other and nothing is lost between
+runs of the app.
 """
 
 import json
 import os
+import re
 import threading
 import time
 import tkinter as tk
 from datetime import datetime
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, simpledialog
 
 import requests
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_FILE = os.path.join(LOG_DIR, "history.jsonl")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 
 DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_INTERVAL_SEC = 3
+DEFAULT_SESSION_NAME = "default"
+
+STATE_FILENAME = "state.json"
+HISTORY_FILENAME = "history.jsonl"
 
 
-def ensure_log_dir():
-    os.makedirs(LOG_DIR, exist_ok=True)
+def sanitize_session_name(name):
+    name = name.strip()
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    return name
 
 
-def load_history():
-    """Load previously logged prompt/response entries from disk."""
-    ensure_log_dir()
+def list_sessions():
+    if not os.path.isdir(SESSIONS_DIR):
+        return []
+    names = [
+        d for d in os.listdir(SESSIONS_DIR)
+        if os.path.isdir(os.path.join(SESSIONS_DIR, d))
+    ]
+    # most recently modified (by state.json) first
+    def sort_key(name):
+        path = os.path.join(SESSIONS_DIR, name, STATE_FILENAME)
+        return os.path.getmtime(path) if os.path.exists(path) else 0
+
+    return sorted(names, key=sort_key, reverse=True)
+
+
+def session_dir(name):
+    return os.path.join(SESSIONS_DIR, name)
+
+
+def ensure_session_dir(name):
+    path = session_dir(name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def default_state():
+    return {
+        "top": "",
+        "bottom": "",
+        "model": DEFAULT_MODEL,
+        "host": DEFAULT_HOST,
+        "interval": DEFAULT_INTERVAL_SEC,
+        "last_thought": "",
+    }
+
+
+def load_session_state(name):
+    path = os.path.join(session_dir(name), STATE_FILENAME)
+    state = default_state()
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return state
+
+
+def save_session_state(name, state):
+    ensure_session_dir(name)
+    path = os.path.join(session_dir(name), STATE_FILENAME)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+def load_session_history(name):
+    path = os.path.join(session_dir(name), HISTORY_FILENAME)
     entries = []
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -51,9 +115,10 @@ def load_history():
     return entries
 
 
-def append_history(entry):
-    ensure_log_dir()
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
+def append_session_history(name, entry):
+    ensure_session_dir(name)
+    path = os.path.join(session_dir(name), HISTORY_FILENAME)
+    with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 
 
@@ -66,11 +131,19 @@ class FenraApp:
         self.running = False
         self.loop_thread = None
         self.last_thought = ""
-        self.history = load_history()
+        self.history = []
+        self.session_name = None
 
         self._build_ui()
-        self._populate_history_list()
         self.refresh_models()
+        self._startup_session()
+
+    # ------------------------------------------------------------ startup --
+
+    def _startup_session(self):
+        sessions = list_sessions()
+        name = sessions[0] if sessions else DEFAULT_SESSION_NAME
+        self._load_session(name)
 
     # ---------------------------------------------------------------- UI --
 
@@ -88,6 +161,23 @@ class FenraApp:
 
     def _build_talk_tab(self):
         frame = self.talk_tab
+
+        # --- session row ---
+        session_row = ttk.Frame(frame)
+        session_row.pack(fill="x", padx=6, pady=(6, 0))
+
+        ttk.Label(session_row, text="Session:").pack(side="left")
+        self.session_var = tk.StringVar(value="")
+        self.session_combo = ttk.Combobox(session_row, textvariable=self.session_var, width=24, state="readonly")
+        self.session_combo.pack(side="left", padx=(2, 4))
+        self.session_combo.bind("<<ComboboxSelected>>", self._on_session_selected)
+
+        ttk.Button(session_row, text="New...", command=self.new_session).pack(side="left", padx=2)
+        ttk.Button(session_row, text="Save", command=self.save_session).pack(side="left", padx=2)
+        ttk.Button(session_row, text="↻", width=3, command=self._refresh_session_list).pack(side="left", padx=2)
+
+        self.session_status_var = tk.StringVar(value="")
+        ttk.Label(session_row, textvariable=self.session_status_var, foreground="#666").pack(side="left", padx=(10, 0))
 
         # --- controls row ---
         controls = ttk.Frame(frame)
@@ -153,12 +243,104 @@ class FenraApp:
         self.json_view = scrolledtext.ScrolledText(right, wrap="none", state="disabled")
         self.json_view.pack(fill="both", expand=True)
 
+    # ------------------------------------------------------------ session --
+
+    def _refresh_session_list(self):
+        sessions = list_sessions()
+        if self.session_name and self.session_name not in sessions:
+            sessions.insert(0, self.session_name)
+        self.session_combo["values"] = sessions
+        if self.session_name:
+            self.session_var.set(self.session_name)
+
+    def _on_session_selected(self, event):
+        chosen = self.session_var.get()
+        if chosen and chosen != self.session_name:
+            self._load_session(chosen)
+
+    def new_session(self):
+        name = simpledialog.askstring("New Session", "Session name:", parent=self.root)
+        if not name:
+            return
+        name = sanitize_session_name(name)
+        if not name:
+            return
+        if name in list_sessions():
+            if not messagebox.askyesno("Fenra", f'Session "{name}" already exists. Load it instead?'):
+                return
+            self._load_session(name)
+            return
+
+        if self.running:
+            self.toggle_loop()
+
+        # keep the current top/bottom framing as a starting point, but start
+        # the conversation itself (last thought, transcript, log) fresh.
+        state = {
+            "top": self.top_box.get("1.0", "end-1c"),
+            "bottom": self.bottom_box.get("1.0", "end-1c"),
+            "model": self.model_var.get(),
+            "host": self.host_var.get(),
+            "interval": self.interval_var.get(),
+            "last_thought": "",
+        }
+        ensure_session_dir(name)
+        save_session_state(name, state)
+        open(os.path.join(session_dir(name), HISTORY_FILENAME), "a", encoding="utf-8").close()
+
+        self._load_session(name)
+
+    def save_session(self):
+        if not self.session_name:
+            return
+        state = {
+            "top": self.top_box.get("1.0", "end-1c"),
+            "bottom": self.bottom_box.get("1.0", "end-1c"),
+            "model": self.model_var.get(),
+            "host": self.host_var.get(),
+            "interval": self.interval_var.get(),
+            "last_thought": self.last_thought,
+        }
+        save_session_state(self.session_name, state)
+        self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
+
+    def _load_session(self, name):
+        if self.running:
+            self.toggle_loop()
+
+        state = load_session_state(name)
+        self.session_name = name
+
+        self.top_box.delete("1.0", "end")
+        self.top_box.insert("end", state.get("top", ""))
+        self.bottom_box.delete("1.0", "end")
+        self.bottom_box.insert("end", state.get("bottom", ""))
+        self.host_var.set(state.get("host", DEFAULT_HOST))
+        self.model_var.set(state.get("model", DEFAULT_MODEL))
+        self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
+        self.last_thought = state.get("last_thought", "")
+
+        self.history = load_session_history(name)
+        self._populate_history_list()
+        self._replay_middle_box()
+
+        self._refresh_session_list()
+        self.session_status_var.set(f"Loaded ({len(self.history)} entries)")
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
         self.history_listbox.delete(0, "end")
         for entry in self.history:
             self.history_listbox.insert("end", entry.get("timestamp", "?"))
+
+    def _replay_middle_box(self):
+        self.middle_box.config(state="normal")
+        self.middle_box.delete("1.0", "end")
+        for entry in self.history:
+            self.middle_box.insert("end", f"[{entry.get('timestamp', '?')}]\n{entry.get('response', '')}\n\n")
+        self.middle_box.see("end")
+        self.middle_box.config(state="disabled")
 
     def _on_history_select(self, event):
         selection = self.history_listbox.curselection()
@@ -248,9 +430,17 @@ class FenraApp:
 
         entry = {"timestamp": timestamp, "request": payload, "response": response_text}
         self.history.append(entry)
-        append_history(entry)
+        append_session_history(self.session_name, entry)
 
         self.last_thought = response_text
+        save_session_state(self.session_name, {
+            "top": top_text,
+            "bottom": bottom_text,
+            "model": payload["model"],
+            "host": host,
+            "interval": self.interval_var.get(),
+            "last_thought": self.last_thought,
+        })
 
         self.root.after(0, self._append_message, timestamp, response_text)
         self.root.after(0, self._add_history_row, timestamp)
@@ -272,6 +462,8 @@ def main():
 
     def on_close():
         app.running = False
+        if app.session_name:
+            app.save_session()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
