@@ -206,7 +206,7 @@ FUNCTION_REGISTRY = {
     "functions": {
         "fn": fn_functions,
         "params": "[search]",
-        "description": "List available functions. No argument lists all of them; a search term filters to functions whose name or description contains it, e.g. functions(switch). A function taking more than one argument separates them with | , e.g. read_chat_between(start|end).",
+        "description": "List available functions. No argument lists all of them; a search term filters to functions whose name or description contains it, e.g. functions(switch). A function taking more than one argument separates them with , or | , e.g. read_chat_between(start, end).",
     },
     "now": {
         "fn": fn_now,
@@ -250,13 +250,15 @@ FUNCTION_REGISTRY = {
     },
     "read_chat_between": {
         "fn": fn_read_chat_between,
-        "params": "start|end",
-        "description": "Show every chat message (both directions) between two times, and mark any of Teddy's messages in that range as read. Two times separated by |, e.g. read_chat_between(2026-08-28T10:00:00|2026-08-28T14:00:00).",
+        "params": "start, end",
+        "multi_arg": True,
+        "description": "Show every chat message (both directions) between two times, and mark any of Teddy's messages in that range as read. Two times, separated by , or | , e.g. read_chat_between(2026-08-28T10:00:00, 2026-08-28T14:00:00).",
     },
     "search_chat": {
         "fn": fn_search_chat,
-        "params": "query[|chars]",
-        "description": "Search the whole chat for a word or phrase and return the surrounding text, without changing any read status. Optionally give how many characters of context on each side (default 200), separated by |, e.g. search_chat(truth|150).",
+        "params": "query[, chars]",
+        "multi_arg": True,
+        "description": "Search the whole chat for a word or phrase and return the surrounding text, without changing any read status. Optionally give how many characters of context on each side (default 200), separated by , or | , e.g. search_chat(truth, 150).",
     },
     "send_message": {
         "fn": fn_send_message,

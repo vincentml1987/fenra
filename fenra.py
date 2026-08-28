@@ -62,7 +62,13 @@ import fenra_functions
 #           search_chat/send_message functions. Function args now split on
 #           | instead of comma, so free text (desire, chat messages) can
 #           safely contain commas.
-FENRA_VERSION = "0.7.0"
+#   0.7.1 - both , and | now work as argument separators for functions
+#           that genuinely take more than one argument (she kept reaching
+#           for commas naturally); free-text functions (set_desire,
+#           send_message) still take the whole parenthesized text as one
+#           argument, untouched, so commas stay safe there too. Per-
+#           function via a new "multi_arg" registry flag.
+FENRA_VERSION = "0.7.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -93,15 +99,23 @@ CHAT_FILENAME = "chat.jsonl"
 FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
 
 
-def _split_args(raw_args):
-    """Arguments are separated by | , not commas - deliberate, so a single
-    free-text argument (a desire, a chat message) can contain commas and
-    ordinary punctuation without being split apart. A function that needs
-    more than one argument documents the | in its own description."""
+_MULTI_ARG_SPLIT_RE = re.compile(r"[|,]")
+
+
+def _parse_call_args(raw_args, multi_arg):
+    """How the text inside ⟦name(...)⟧ becomes a list of arguments depends
+    on the function: a free-text function (multi_arg=False - set_desire,
+    send_message, ...) gets the whole thing as one argument, untouched, so
+    it can safely contain commas or ordinary punctuation. A function that
+    genuinely takes more than one argument (multi_arg=True -
+    read_chat_between, search_chat) splits on either | or , - both work,
+    since she reaches for commas as often as the documented |."""
     raw_args = raw_args.strip()
     if not raw_args:
         return []
-    return [a.strip().strip("'\"") for a in raw_args.split("|")]
+    if not multi_arg:
+        return [raw_args.strip("'\"")]
+    return [a.strip().strip("'\"") for a in _MULTI_ARG_SPLIT_RE.split(raw_args)]
 
 
 def reload_function_registry():
@@ -133,7 +147,8 @@ def run_function_calls(app, response_text):
 
     result_lines = []
     for name, raw_args in FUNCTION_CALL_RE.findall(response_text):
-        args = _split_args(raw_args)
+        multi_arg = registry.get(name, {}).get("multi_arg", False)
+        args = _parse_call_args(raw_args, multi_arg)
         call_entry = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "function": name,

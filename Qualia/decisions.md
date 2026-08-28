@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-28 (comma support, v0.7.1)
+
+- **Caught a real hallucination in watched-gemma3_12b (16:37:07):** she wrote `read_chat_between(a, b)` with a comma, our system correctly errored (comma wasn't a valid separator at the time), but in her own prose she'd already written a fake `⟦RESULT: ... -> ok: [...]⟧` block claiming success - using real, previously-seen content (not invented), just presented as if this call had already succeeded before the real result came back. She then correctly read the *real* error on the next cycle and recovered with proper syntax. Verified via functions.jsonl (real call logged as failure, no successful call logged for that timestamp).
+- **Fix, per Teddy's call:** since she keeps reaching for commas naturally (not just this once), functions that genuinely take more than one argument (`read_chat_between`, `search_chat`) now accept EITHER `,` or `|` as a separator. Free-text single-argument functions (`set_desire`, `send_message`) are unaffected - they still take the whole parenthesized text as one argument, untouched, so a message or desire containing a comma still can't be broken apart. Implemented via a new `multi_arg` flag per function in `FUNCTION_REGISTRY`.
+- **Known tradeoff, accepted:** `search_chat`'s query is now ambiguous if the query itself contains a comma (e.g. `search_chat(hello, world, 100)` reads as three parts, not a two-word query + a chars count) - a real limitation of allowing commas as a separator, but a reasonable trade given how often she reaches for them naturally.
+- Requires a restart - the actual argument-parsing logic lives in fenra.py (core), even though the per-function multi_arg flags/descriptions live in the hot-reloadable fenra_functions.py.
+
 ## 2026-08-28 (declined: direct Qualia-calling)
 
 - Discussed a `call_qualia(text)` function - Fenra invoking a real Claude API call (with a character-based "allowance"/currency Teddy could top up) after she tried inventing `send_chat(Qualia, ...)` on her own in watched-gemma3_12b. **Declined for now**: requires setting up a separate Anthropic API key/account, which Teddy doesn't want to do. Not implementing. If this comes back up later, don't assume the API-key barrier has changed - ask first.
