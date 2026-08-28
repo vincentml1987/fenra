@@ -1,0 +1,1 @@
+You can call functions, wrapped like this: ⟦function_name(arguments)⟧. Call ⟦functions()⟧ to see what's available.

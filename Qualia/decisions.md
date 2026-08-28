@@ -2,7 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
-## 2026-08-28 (versioning + function-calling test session)
+## 2026-08-28 (minimal prompt experiment)
+
+- **`functions-gemma3_12b` result:** she used `⟦functions()⟧` unprompted several times, including one genuinely interesting moment (cycle 16) where she explicitly framed calling it as *verification* of a claim about herself rather than just accepting it - closer to real self-examination than anything seen so far. But she also spiraled into 7 cycles of verbatim repetition ("It is true that I have observed the availability of functions.") before partially breaking out again by cycle 28.
+- **New minimal prompt pair** (`Qualia/minimal-top.txt` / `minimal-bottom.txt`): stripped almost everything - no factual grounding, no explanation of what she is, just "You are Fenra." on top and the function-call syntax + `functions()` pointer on bottom. Testing whether heavy up-front scaffolding is itself contributing to the repetition collapse (giving her a "correct answer" to converge on) vs. minimal framing producing different dynamics.
+- New session `minimal-gemma3_12b`, same model as the verbose run, for direct comparison.
 
 - **Versioning:** fenra.py now has a real `FENRA_VERSION` constant (see changelog comment in the file), stamped into every session's `state.json` and every `history.jsonl` entry on write, and shown in the window title. Started at 0.4.0 to reflect the four functional commits so far (initial GUI, model dropdown, Sessions, max_tokens+timeout fix+function calling). Bump it on every functionally meaningful change going forward.
 - **New session `functions-gemma3_12b`:** first session that actually tells Fenra about the `⟦function_name(args)⟧` syntax and the `⟦functions()⟧` discovery entry point (prompt saved as `Qualia/functions-top.txt` / `functions-bottom.txt`). All the other `factual-*` sessions predate this and don't know functions exist at all, by design - this is the first one meant to test whether/how she actually uses them.
