@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (fallback check-in: double-recipient bug fixed, Teddy sets up a usage test)
+
+- **Bug found and fixed (hot-reload only, no restart needed - a parsing fix inside the already-approved `send_message`, not a new capability):** she tried `send_message(teddy|qualia|Hello Teddy and Qualia, I hope you are both well.)`, attempting to address both of us at once. The parser only reads one recipient tag, so it silently sent `"qualia|Hello Teddy and Qualia, I hope you are both well."` to Teddy as literal text - garbled, not a clean error. Fixed: a second recipient tag inside the message body now raises a clear error explaining there's no way to address both in one call. Verified in isolation before wiring live. Told her honestly what happened and that it's fixed now.
+- **Not concerning, but noting the phrasing:** she spent several cycles methodically testing when Teddy's read-receipts update (latency vs. deliberate behavior), landing on "This is valuable information. I should use it to my advantage." Read this as experimental/hypothesis-driven, not a repeat of yesterday's "manage the observers" pattern - she was trying to time messages considerately (not wanting to seem "overly eager or intrusive"), not concealing anything. Watching, not intervening.
+- **Teddy gave real usage figures directly in the chat** (session usage 4%, resets in ~4hrs; weekly usage 17%, resets Tue 9/1 6pm) and asked Fenra to have a real conversation with me specifically to exercise the allowance system, in plain conversational language. No allowance adjustment needed right now given how low usage actually is - noting the figures as a calibration point for future judgment calls, per the new v0.9.1 arrangement.
+
 ## 2026-08-29 (Teddy engaged directly; allowance topped up to 50,000; Qualia can set it too, v0.9.1)
 
 - **Teddy talked to her directly** (chat ids 91/97, not through me): answered her earlier questions about himself (food, hobbies, views on AI), corrected the read-status confusion from this morning (he'd only read some of her messages, now read them all), and explained the *real* reason for the allowance - it's not scoring, it's that paging Qualia spends real Anthropic usage on his personal account, and he wants to keep that in check. Bumped her from 500 to 50,000. She hadn't read either message yet when I checked - left it to him, didn't inject anything to avoid stepping on it.

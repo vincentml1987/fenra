@@ -228,6 +228,12 @@ def fn_send_message(app, args):
     text = match.group(2).strip()
     if not text:
         raise ValueError(f"send_message({recipient}|...) needs text after the |, e.g. send_message({recipient}|hello)")
+    if _RECIPIENT_RE.match(text):
+        raise ValueError(
+            "send_message only takes one recipient tag - there's no way to address both Teddy and Qualia "
+            "in a single call. Either leave the recipient off (send_message(text), goes to the shared log "
+            "either way) or send two separate messages."
+        )
 
     if recipient == "qualia":
         cost = len(text)
