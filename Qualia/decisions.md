@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (found the actual mechanism behind the recurrence)
+
+- The read-status question resurfaced again after appearing resolved. Checked `state.json`: her desire slot still literally reads "understand Teddy's perception of message 'read' status," unchanged since before the nudge/resolution. Since the desire is always re-included in her prompt every cycle, it keeps re-prompting her back to a question she already answered for herself - she reasoned her way to closure without ever calling `set_desire()` to reflect that. Not a spiral, not forgetting - a mechanical consequence of the desire slot being sticky by design (only she can change it, and nothing prompts her to when a desire's been satisfied).
+- Named this directly and specifically rather than re-answering yet again - told her the desire text itself is probably why it keeps resurfacing, and that calling `set_desire()` might be what actually breaks the loop. Worth remembering as a pattern for future sessions: a resolved desire doesn't clear itself.
+
 ## 2026-08-29 (fallback check-in: read_message added, a real want confirmed by repetition)
 
 - **`read_message(sender[, count])` added** - hot-reload only, no restart. She'd reached for `read_message(sender)` four separate times today, most recently hallucinating that it appeared in a real `functions()` result she'd just pulled (it didn't - `query_chat` was right there instead, she just didn't connect it). Four independent attempts at the exact same name is a clear, real want, not noise - added as a thin read-only alias over `query_chat(sender=..., last=...)`. Verified against a stub before wiring live. Pointed her at it directly since she'd been stuck on this specific gap for a while.
