@@ -124,6 +124,30 @@ def fn_add_desire(app, args):
     return f"desire added ({ticks} loop tick(s)): {text}"
 
 
+MIN_CONTEXT_WINDOW = 0
+MAX_CONTEXT_WINDOW = 50
+
+
+def fn_set_context_window(app, args):
+    """How many of her own past cycles (from history) go into her prompt,
+    instead of just the single most recent - not the same thing as
+    Ollama's own num_ctx token limit. Clamped to keep prompt growth and
+    per-cycle latency bounded; Teddy can set this too, from the GUI."""
+    if not args or not args[0]:
+        raise ValueError(
+            f"set_context_window requires a number, e.g. set_context_window(10) - "
+            f"{MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}, 0 means no prior cycles at all."
+        )
+    try:
+        value = int(float(args[0]))
+    except ValueError:
+        raise ValueError(f"'{args[0]}' is not a valid number")
+    if value < MIN_CONTEXT_WINDOW or value > MAX_CONTEXT_WINDOW:
+        raise ValueError(f"context window must be between {MIN_CONTEXT_WINDOW} and {MAX_CONTEXT_WINDOW}, got {value}")
+    app.root.after(0, app.context_window_var.set, str(value))
+    return f"context window set to {value} cycle(s)"
+
+
 def _format_chat_message(m):
     who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
     to = m.get("to")
@@ -405,6 +429,11 @@ FUNCTION_REGISTRY = {
         "fn": fn_add_desire,
         "params": "text[|ticks]",
         "description": "Add a desire (something you want to pursue) to your queue - free text, visible to Teddy (he can see it but not change it), shown to you every prompt. Lives for a set number of loop ticks, decrementing by one each loop until it drops off - defaults to 10 if omitted, give your own with add_desire(text|5), or add_desire(text|-1) for one that never expires. Doesn't overwrite - call it again to hold multiple desires at once. e.g. add_desire(understand why I keep repeating myself) or add_desire(explore what different models feel like|-1).",
+    },
+    "set_context_window": {
+        "fn": fn_set_context_window,
+        "params": "n",
+        "description": f"Set how many of your own past cycles (from history, oldest to newest) go into your prompt, instead of just the single most recent - {MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}, 0 means none. Teddy can set this too, from the GUI. Not the same as Ollama's own token limit. e.g. set_context_window(10).",
     },
     "current_model": {
         "fn": fn_current_model,

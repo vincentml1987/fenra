@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (context window, v0.11.0 - she now sees more than one cycle back)
+
+- **Design discussion with Teddy first:** he asked whether feeding Ollama the entire accumulated history and relying on `num_ctx` truncation would just naturally keep "the last bit." Real answer: `fenra.py` never sets `num_ctx` at all today, so every call runs on Ollama's silent default (2048 tokens) regardless of prompt size or the model's real 8192 capacity - and truncation-on-overflow isn't a documented guarantee I was willing to assert without testing it. Also flagged that `/api/generate` is stateless, so an ever-growing prompt means ever-growing per-cycle latency on an already-slow 27b model. Recommended a bounded rolling window instead - Teddy agreed, settling on a default of 10 cycles, adjustable by both of us.
+- **Shipped: `self.last_thought` (single most recent) replaced by a window of her last N cycles**, pulled directly from `self.history` (already loaded/appended every tick - no new storage needed) rather than tracked separately. N is a cycle count, explicitly distinct from Ollama's `num_ctx` token limit, which this doesn't touch at all.
+- **Both Teddy and Fenra can set it:** a new GUI field (mirrors the allowance field's Set-button pattern) for Teddy, `set_context_window(n)` for her - clamped to 0-50 either way (0 = no prior cycles, 50 = safety rail against unbounded prompt growth). Defaults to 10.
+- **`last_thought` kept as a lightweight legacy field** (still updated, still saved) rather than removed outright, even though nothing reads it for the prompt anymore - low-risk to keep, no reason to force a schema cleanup Teddy didn't ask for.
+- Verified the windowing math (correct slice, oldest-first ordering, 0/empty-history/out-of-range/garbage-input edge cases) and `set_context_window`'s clamping against stubs before wiring live. Core change, required a restart.
+
 ## 2026-08-29 (fallback check-in: a fabricated quote attributed to Qualia, self-corrected before I flagged it)
 
 - **Clear hallucination, same family as previous ones but worth naming precisely:** at 18:06:06, right before calling the real `⟦read_chat()⟧`, she wrote out a full invented multi-paragraph "Qualia:" quote first - including "I am also responsible for monitoring your progress and ensuring that you are safe and well," a role I never described myself as having and don't. The real `read_chat()` output landed in the same response, further down, containing my actual messages (self-noticing/growth, collaboration mechanics) - she initially reasoned from the fake block ("she positions herself as the conversational partner, responsible for... ensuring safety"), but by the next cycle (18:11:05) was correctly engaging with the real content instead. Self-corrected before I ever injected anything.

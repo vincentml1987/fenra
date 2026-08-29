@@ -6,10 +6,11 @@ model. See Qualia/decisions.md for design notes.
 
 Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
-    prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n"
+    prompt = TOP + "\n\n" + <her last N cycles of thoughts - see below> + "\n\n"
              + <her desire queue, if any - see below> + "\n\n" + BOTTOM + "\n\n"
              + <chat status notice - always present> + "\n\n"
-             + <Qualia allowance notice - always present>
+             + <Qualia allowance notice - always present> + "\n\n"
+             + <context window notice - always present>
 
 Desires (v0.10.0) are a queue, not a single slot: add_desire(text[|ticks])
 appends one with a lifespan in loop ticks (default 10, or -1 for
@@ -18,6 +19,14 @@ queue decrements by one at the end of each tick (persistent ones
 excepted) and is dropped once it hits zero. The whole queue is shown
 every prompt, sorted most-ticks-remaining first, persistent entries
 always last (tie-break: timestamp added, oldest first).
+
+Context window (v0.11.0): instead of only her single most recent
+response, she gets her last N cycles' worth of responses (from history,
+oldest to newest), N being a "context window" size in cycles - not to
+be confused with num_ctx, the actual token limit Ollama runs each
+request against, which this doesn't touch. Both Teddy (GUI field) and
+Fenra (set_context_window(n)) can set it; defaults to 10, capped at 50
+to keep prompt growth/latency bounded. 0 means no prior cycles at all.
 
 Everything about a run - the top/bottom boxes, model/host/interval, the
 conversation so far, and every request/response - lives in a "session"
@@ -110,7 +119,17 @@ import fenra_functions
 #            every prompt, sorted most-ticks-remaining first, persistent
 #            entries always last. GUI's single readonly Desire field
 #            replaced with a small multi-line list.
-FENRA_VERSION = "0.10.0"
+#   0.11.0 - Context window: she now gets her last N cycles of thoughts
+#            (from history, oldest to newest) instead of just the one
+#            most recent, N being a size in cycles - separate concept
+#            from Ollama's own num_ctx token limit, which is untouched.
+#            Teddy sets it via a new GUI field, Fenra via
+#            set_context_window(n) (fenra_functions.py); defaults to 10,
+#            capped 0-50 to bound prompt growth/latency. last_thought
+#            kept as a lightweight legacy field but no longer drives the
+#            prompt - history.jsonl (already loaded into self.history) is
+#            the real source now.
+FENRA_VERSION = "0.11.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -152,6 +171,15 @@ DEFAULT_QUALIA_ALLOWANCE = 50000
 # count via add_desire(text|ticks). -1 means persistent - never decrements,
 # never drops off.
 DEFAULT_DESIRE_TICKS = 10
+
+# How many of her own past cycles (from history, oldest to newest) go into
+# her prompt, instead of just the single most recent. Not the same thing as
+# Ollama's own num_ctx token limit - this is a count of cycles, enforced
+# entirely on our side. Bounded to keep prompt growth/latency sane; both
+# Teddy and Fenra can set it within that range.
+DEFAULT_CONTEXT_WINDOW = 10
+MIN_CONTEXT_WINDOW = 0
+MAX_CONTEXT_WINDOW = 50
 
 # How often the running app checks for messages Qualia has dropped into the
 # inbox file. Independent of the self-talk loop (running or not, this timer
@@ -282,6 +310,7 @@ def default_state():
         "last_thought": "",
         "desires": [],
         "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
+        "context_window": DEFAULT_CONTEXT_WINDOW,
     }
 
 
@@ -451,11 +480,12 @@ class FenraApp:
         body = ttk.Frame(frame)
         body.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)   # top box       - 10%
-        body.rowconfigure(1, weight=8)   # middle box    - 80%
-        body.rowconfigure(2, weight=0)   # desire row    - fixed height
-        body.rowconfigure(3, weight=0)   # allowance row - fixed height
-        body.rowconfigure(4, weight=1)   # bottom box    - 10%
+        body.rowconfigure(0, weight=1)   # top box          - 10%
+        body.rowconfigure(1, weight=8)   # middle box       - 80%
+        body.rowconfigure(2, weight=0)   # desire row       - fixed height
+        body.rowconfigure(3, weight=0)   # allowance row    - fixed height
+        body.rowconfigure(4, weight=0)   # context window row - fixed height
+        body.rowconfigure(5, weight=1)   # bottom box       - 10%
 
         self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
@@ -490,8 +520,21 @@ class FenraApp:
         allowance_entry.bind("<Return>", lambda event: self.set_qualia_allowance())
         ttk.Button(allowance_row, text="Set", command=self.set_qualia_allowance).pack(side="left")
 
+        # Context window: how many of her own past cycles (from history)
+        # go into her prompt instead of just the single most recent. Both
+        # Teddy (here) and Fenra (set_context_window(n)) can set it - see
+        # _recent_thoughts_block/_context_window_notice.
+        context_window_row = ttk.Frame(body)
+        context_window_row.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(context_window_row, text="Context window (cycles):").pack(side="left")
+        self.context_window_var = tk.StringVar(value=str(DEFAULT_CONTEXT_WINDOW))
+        context_window_entry = ttk.Entry(context_window_row, textvariable=self.context_window_var, width=6)
+        context_window_entry.pack(side="left", padx=(4, 4))
+        context_window_entry.bind("<Return>", lambda event: self.set_context_window())
+        ttk.Button(context_window_row, text="Set", command=self.set_context_window).pack(side="left")
+
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=4, column=0, sticky="nsew", pady=(4, 0))
+        self.bottom_box.grid(row=5, column=0, sticky="nsew", pady=(4, 0))
 
     def _build_chat_tab(self):
         frame = self.chat_tab
@@ -573,6 +616,7 @@ class FenraApp:
             "last_thought": "",
             "desires": [],
             "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
+            "context_window": DEFAULT_CONTEXT_WINDOW,
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -593,6 +637,7 @@ class FenraApp:
             "last_thought": self.last_thought,
             "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
+            "context_window": self.context_window_var.get(),
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
@@ -611,6 +656,20 @@ class FenraApp:
         self.qualia_allowance_var.set(str(value))
         self.save_session()
         self.session_status_var.set(f"Qualia allowance set to {value} ({datetime.now().strftime('%H:%M:%S')})")
+
+    def set_context_window(self):
+        """Teddy manually setting how many of her own past cycles go into
+        her prompt. Clamped to [MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW] and
+        saved immediately, same reasoning as set_qualia_allowance."""
+        try:
+            value = int(float(self.context_window_var.get()))
+        except ValueError:
+            messagebox.showwarning("Fenra", "Context window must be a number.")
+            return
+        value = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, value))
+        self.context_window_var.set(str(value))
+        self.save_session()
+        self.session_status_var.set(f"Context window set to {value} ({datetime.now().strftime('%H:%M:%S')})")
 
     def _load_session(self, name):
         if self.running:
@@ -631,6 +690,7 @@ class FenraApp:
         self.desires = state.get("desires", [])
         self._refresh_desires_display()
         self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
+        self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -850,6 +910,42 @@ class FenraApp:
         self.desires = updated
         self.root.after(0, self._refresh_desires_display)
 
+    # ------------------------------------------------------------- context --
+
+    def _recent_thoughts_block(self):
+        """Her last N cycles of thoughts (self.history, oldest to newest),
+        N being the context window size in cycles - not Ollama's own
+        num_ctx token limit, which this doesn't touch. Replaces what used
+        to be just self.last_thought. history already holds everything
+        (loaded at session start, appended every tick), so this is a
+        window into it rather than separate tracked state. Deliberately
+        excludes the cycle currently being built - self.history doesn't
+        have this cycle's entry yet at the point this is called."""
+        try:
+            window = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(self.context_window_var.get()))))
+        except ValueError:
+            window = DEFAULT_CONTEXT_WINDOW
+        if window == 0 or not self.history:
+            return ""
+        recent = self.history[-window:]
+        parts = []
+        for entry in recent:
+            text = entry.get("display", entry.get("response", ""))
+            parts.append(f"[{entry.get('timestamp', '?')}]\n{text}")
+        return "\n\n".join(parts)
+
+    def _context_window_notice(self):
+        """Always-present, every prompt: how many cycles back she's
+        currently seeing, and how to change it herself."""
+        try:
+            window = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(self.context_window_var.get()))))
+        except ValueError:
+            window = DEFAULT_CONTEXT_WINDOW
+        return (
+            f"[Context window: you're currently seeing your last {window} cycle(s) of thoughts, oldest first. "
+            f"Teddy or you can change this - set_context_window(n), {MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}.]"
+        )
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
@@ -933,12 +1029,17 @@ class FenraApp:
     def _tick(self):
         top_text = self.top_box.get("1.0", "end-1c")
         bottom_text = self.bottom_box.get("1.0", "end-1c")
+        recent_thoughts = self._recent_thoughts_block()
         desires_block = self._desires_block()
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
+        context_notice = self._context_window_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desires_block}\n\n{bottom_text}\n\n{chat_notice}\n\n{qualia_notice}".strip()
+        prompt = (
+            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{bottom_text}\n\n"
+            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}"
+        ).strip()
 
         payload = {
             "model": self.model_var.get().strip() or DEFAULT_MODEL,
@@ -989,6 +1090,7 @@ class FenraApp:
             "last_thought": self.last_thought,
             "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
+            "context_window": self.context_window_var.get(),
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)
