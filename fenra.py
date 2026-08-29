@@ -7,9 +7,17 @@ model. See Qualia/decisions.md for design notes.
 Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
     prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n"
-             + <her current desire, if any> + "\n\n" + BOTTOM + "\n\n"
+             + <her desire queue, if any - see below> + "\n\n" + BOTTOM + "\n\n"
              + <chat status notice - always present> + "\n\n"
              + <Qualia allowance notice - always present>
+
+Desires (v0.10.0) are a queue, not a single slot: add_desire(text[|ticks])
+appends one with a lifespan in loop ticks (default 10, or -1 for
+persistent - never decrements, never drops off). Every desire in the
+queue decrements by one at the end of each tick (persistent ones
+excepted) and is dropped once it hits zero. The whole queue is shown
+every prompt, sorted most-ticks-remaining first, persistent entries
+always last (tie-break: timestamp added, oldest first).
 
 Everything about a run - the top/bottom boxes, model/host/interval, the
 conversation so far, and every request/response - lives in a "session"
@@ -94,7 +102,15 @@ import fenra_functions
 #           not just Teddy via the GUI field. Delivery mirrors the inbox:
 #           a polled file (qualia_allowance_set.txt) rather than editing
 #           state.json directly, so it can't race the app's own writes.
-FENRA_VERSION = "0.9.1"
+#   0.10.0 - Desire queue, replacing the single desire slot. add_desire
+#            (fenra_functions.py) replaces get_desire/set_desire.
+#            Multiple desires at once, each with a lifespan in loop
+#            ticks (default 10, or -1 for persistent) that decrements
+#            every tick and drops the desire at zero. Whole queue shown
+#            every prompt, sorted most-ticks-remaining first, persistent
+#            entries always last. GUI's single readonly Desire field
+#            replaced with a small multi-line list.
+FENRA_VERSION = "0.10.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -131,6 +147,11 @@ QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
 
 DEFAULT_QUALIA_ALLOWANCE = 500
+
+# Default lifespan (in loop ticks) for a desire added without an explicit
+# count via add_desire(text|ticks). -1 means persistent - never decrements,
+# never drops off.
+DEFAULT_DESIRE_TICKS = 10
 
 # How often the running app checks for messages Qualia has dropped into the
 # inbox file. Independent of the self-talk loop (running or not, this timer
@@ -259,7 +280,7 @@ def default_state():
         "interval": DEFAULT_INTERVAL_SEC,
         "max_tokens": DEFAULT_MAX_TOKENS,
         "last_thought": "",
-        "desire": "",
+        "desires": [],
         "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
     }
 
@@ -346,6 +367,7 @@ class FenraApp:
         self.last_thought = ""
         self.history = []
         self.chat_messages = []
+        self.desires = []
         self.session_name = None
 
         self._build_ui()
@@ -441,15 +463,17 @@ class FenraApp:
         self.middle_box = scrolledtext.ScrolledText(body, wrap="word", state="disabled")
         self.middle_box.grid(row=1, column=0, sticky="nsew", pady=4)
 
-        # Desire: set only by Fenra herself (via set_desire), visible here but
-        # not editable from the GUI. Sits in the prompt between her last
-        # thought and the bottom box - see _tick.
+        # Desires: a queue, set only by Fenra herself (via add_desire),
+        # visible here but not editable from the GUI. Each has a lifespan
+        # in loop ticks (or is persistent) - see _sorted_desires/_tick_
+        # desires. Whole queue sits in the prompt between her last thought
+        # and the bottom box - see _tick.
         desire_row = ttk.Frame(body)
         desire_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-        desire_row.columnconfigure(1, weight=1)
-        ttk.Label(desire_row, text="Desire:").grid(row=0, column=0, sticky="w")
-        self.desire_var = tk.StringVar(value="")
-        ttk.Entry(desire_row, textvariable=self.desire_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        desire_row.columnconfigure(0, weight=1)
+        ttk.Label(desire_row, text="Desires:").pack(anchor="w")
+        self.desires_box = scrolledtext.ScrolledText(desire_row, wrap="word", height=3, state="disabled")
+        self.desires_box.pack(fill="x", expand=True)
 
         # Qualia allowance: how many characters of send_message(qualia|...)
         # text she can still spend. Unlike Desire, this one is set directly
@@ -547,7 +571,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": "",
-            "desire": "",
+            "desires": [],
             "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         }
         ensure_session_dir(name)
@@ -567,7 +591,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
-            "desire": self.desire_var.get(),
+            "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
         }
         save_session_state(self.session_name, state)
@@ -604,7 +628,8 @@ class FenraApp:
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
         self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.last_thought = state.get("last_thought", "")
-        self.desire_var.set(state.get("desire", ""))
+        self.desires = state.get("desires", [])
+        self._refresh_desires_display()
         self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
 
         self.history = load_session_history(name)
@@ -764,6 +789,69 @@ class FenraApp:
             f"(send_message(teddy|your text), or send_message(text) with no recipient) cost nothing.]"
         )
 
+    # ------------------------------------------------------------ desires --
+
+    def _sorted_desires(self):
+        """Most-ticks-remaining first, persistent (-1) entries always
+        last regardless of how long they've existed, tie-broken by
+        timestamp added (oldest first) within each group."""
+        def sort_key(d):
+            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
+            persistent = ticks == -1
+            return (persistent, 0 if persistent else -ticks, d.get("timestamp", ""))
+        return sorted(self.desires, key=sort_key)
+
+    def _desires_block(self):
+        """Always-present, every prompt: the whole desire queue, sorted
+        per _sorted_desires. A desire is free text she set herself via
+        add_desire - see fn_add_desire in fenra_functions.py."""
+        if not self.desires:
+            return (
+                "[You have no active desires. add_desire(text) sets one you want to pursue - it persists "
+                "for 10 loop ticks by default, or give a count with add_desire(text|N), or add_desire(text|-1) "
+                "for one that never expires.]"
+            )
+        lines = ["[Your current desires, most time remaining first:]"]
+        for d in self._sorted_desires():
+            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
+            tag = "persistent" if ticks == -1 else f"{ticks} loop(s) left"
+            lines.append(f"- ({tag}) {d.get('text', '')}")
+        return "\n".join(lines)
+
+    def add_desire_entry(self, entry):
+        """Append a new desire (called from fn_add_desire, on the same
+        loop thread as _tick - plain list mutation is safe here the same
+        way self.history.append already is elsewhere; only the actual
+        widget update needs marshaling to the main thread)."""
+        self.desires.append(entry)
+        self.root.after(0, self._refresh_desires_display)
+
+    def _refresh_desires_display(self):
+        self.desires_box.config(state="normal")
+        self.desires_box.delete("1.0", "end")
+        for d in self._sorted_desires():
+            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
+            tag = "persistent" if ticks == -1 else f"{ticks} left"
+            self.desires_box.insert("end", f"({tag}) {d.get('text', '')}\n")
+        self.desires_box.config(state="disabled")
+
+    def _decrement_desires(self):
+        """Called once at the end of every tick: every non-persistent
+        desire loses one tick, and anything that reaches zero drops off
+        entirely. Persistent (-1) entries are untouched."""
+        updated = []
+        for d in self.desires:
+            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
+            if ticks == -1:
+                updated.append(d)
+                continue
+            d = dict(d)
+            d["ticks"] = ticks - 1
+            if d["ticks"] > 0:
+                updated.append(d)
+        self.desires = updated
+        self.root.after(0, self._refresh_desires_display)
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
@@ -847,12 +935,12 @@ class FenraApp:
     def _tick(self):
         top_text = self.top_box.get("1.0", "end-1c")
         bottom_text = self.bottom_box.get("1.0", "end-1c")
-        desire_text = self.desire_var.get()
+        desires_block = self._desires_block()
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}\n\n{chat_notice}\n\n{qualia_notice}".strip()
+        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desires_block}\n\n{bottom_text}\n\n{chat_notice}\n\n{qualia_notice}".strip()
 
         payload = {
             "model": self.model_var.get().strip() or DEFAULT_MODEL,
@@ -892,6 +980,7 @@ class FenraApp:
         append_session_history(self.session_name, entry)
 
         self.last_thought = display_text
+        self._decrement_desires()
         save_session_state(self.session_name, {
             "top": top_text,
             "bottom": bottom_text,
@@ -900,7 +989,7 @@ class FenraApp:
             "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
-            "desire": self.desire_var.get(),
+            "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
         })
 

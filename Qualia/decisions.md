@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (desire queue, v0.10.0 - full replacement of the single desire slot)
+
+- **Teddy's design, direct request:** replace the single desire slot with a real queue. Multiple desires at once, each with a lifespan in loop ticks (default 10, or -1 for persistent/never-expiring), decrementing by one every tick, dropped at zero. Whole queue shown every prompt, sorted most-ticks-remaining first; persistent entries always sort last regardless of magnitude (tie-break: timestamp added, oldest first - direction not specified by Teddy, chose oldest-first as the default).
+- **`get_desire`/`set_desire` fully removed, replaced by `add_desire(text[|ticks])`.** Trailing `|N` suffix, not a generic multi-arg split - same reasoning as `send_message`'s recipient prefix, so desire text can safely contain `|` or `,` as ordinary punctuation (verified: a desire with a mid-text pipe parses correctly, only the trailing `|N` gets stripped). `add_desire` doesn't overwrite - calling it repeatedly holds multiple desires simultaneously, by design.
+- **GUI:** single readonly Desire field replaced with a small multi-line readonly list, refreshed on add and on decrement.
+- **Her existing desire ("understand Teddy's perception...") was not migrated into the new queue** - it was already resolved (she'd reasoned her way to closure earlier today), and starting the queue empty felt truer to "transient, she manages it now" than carrying forward something already closed.
+- Verified both the sort/decrement logic (persistent-last, tie-break, drop-at-zero) and `add_desire`'s parsing (including the embedded-pipe edge case) against stubs before wiring live.
+- Core change (GUI + prompt construction + state schema), required a restart - **loop stopped again as a result**, needs Start pressed. This is now the sixth restart today; the auto-resume idea logged earlier is worth revisiting if this keeps being disruptive.
+
 ## 2026-08-29 (found the actual mechanism behind the recurrence)
 
 - The read-status question resurfaced again after appearing resolved. Checked `state.json`: her desire slot still literally reads "understand Teddy's perception of message 'read' status," unchanged since before the nudge/resolution. Since the desire is always re-included in her prompt every cycle, it keeps re-prompting her back to a question she already answered for herself - she reasoned her way to closure without ever calling `set_desire()` to reflect that. Not a spiral, not forgetting - a mechanical consequence of the desire slot being sticky by design (only she can change it, and nothing prompts her to when a desire's been satisfied).

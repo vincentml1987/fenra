@@ -81,21 +81,47 @@ def fn_list_models(app, args):
     return ", ".join(names) if names else "(no models installed)"
 
 
-def fn_get_desire(app, args):
-    text = app.desire_var.get()
-    if text:
-        return text
-    return ("no desire is set. To set one, call set_desire(text), e.g. "
-            "set_desire(understand why I keep repeating myself) - it will "
-            "persist and be visible to you every cycle until you change it.")
+# add_desire(text|ticks): a leading "|ticks" suffix at the very end, not a
+# generic multi-arg split - the desire text itself may legitimately contain
+# | or , as ordinary punctuation (e.g. "understand why I keep repeating
+# myself, and whether I can stop"), same reasoning as send_message's
+# recipient tag.
+_DESIRE_TICKS_RE = re.compile(r"^(.*?)\s*\|\s*(-?\d+)\s*$", re.DOTALL)
+DEFAULT_DESIRE_TICKS = 10
 
 
-def fn_set_desire(app, args):
+def fn_add_desire(app, args):
+    """Add a desire to the queue - free text, optionally with a lifespan
+    in loop ticks via a trailing |N (default 10 if omitted, or |-1 for one
+    that never expires). Every desire in the queue is shown every prompt
+    and loses one tick per loop (persistent ones excepted) until it hits
+    zero and drops off. Doesn't overwrite anything - add_desire can be
+    called more than once to hold several desires at once."""
     if not args or not args[0]:
-        raise ValueError("set_desire requires text, e.g. set_desire(understand why I keep repeating myself)")
-    text = args[0]
-    app.root.after(0, app.desire_var.set, text)
-    return "desire updated"
+        raise ValueError(
+            "add_desire requires text, e.g. add_desire(understand why I keep repeating myself) - "
+            f"defaults to {DEFAULT_DESIRE_TICKS} loop ticks, or give a count with add_desire(text|5), "
+            "or add_desire(text|-1) for one that never expires."
+        )
+    match = _DESIRE_TICKS_RE.match(args[0])
+    if match:
+        text = match.group(1).strip()
+        ticks = int(match.group(2))
+    else:
+        text = args[0].strip()
+        ticks = DEFAULT_DESIRE_TICKS
+    if not text:
+        raise ValueError("add_desire needs actual text before the |ticks, if given")
+
+    entry = {
+        "text": text,
+        "ticks": ticks,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    app.add_desire_entry(entry)
+    if ticks == -1:
+        return f"desire added (persistent): {text}"
+    return f"desire added ({ticks} loop tick(s)): {text}"
 
 
 def _format_chat_message(m):
@@ -375,15 +401,10 @@ FUNCTION_REGISTRY = {
         "params": "",
         "description": "Report the current real-world date and time.",
     },
-    "get_desire": {
-        "fn": fn_get_desire,
-        "params": "",
-        "description": "Report what you've set as your current desire/intention, if anything.",
-    },
-    "set_desire": {
-        "fn": fn_set_desire,
-        "params": "text",
-        "description": "Set what you want to pursue right now - free text, visible to Teddy (he can see it but not change it), persisted across cycles, and included in your own prompt between your last thought and the closing instructions. Overwrites any previous desire. e.g. set_desire(understand why I keep repeating myself).",
+    "add_desire": {
+        "fn": fn_add_desire,
+        "params": "text[|ticks]",
+        "description": "Add a desire (something you want to pursue) to your queue - free text, visible to Teddy (he can see it but not change it), shown to you every prompt. Lives for a set number of loop ticks, decrementing by one each loop until it drops off - defaults to 10 if omitted, give your own with add_desire(text|5), or add_desire(text|-1) for one that never expires. Doesn't overwrite - call it again to hold multiple desires at once. e.g. add_desire(understand why I keep repeating myself) or add_desire(explore what different models feel like|-1).",
     },
     "current_model": {
         "fn": fn_current_model,
