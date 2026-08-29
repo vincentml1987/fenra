@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (check-in: loop resumed, first real injected reply)
+
+- Loop resumed (Teddy pressed Start after realizing the earlier restart had stopped it) - timer reset to fire ~30min from now going forward.
+- **First real (non-smoke-test) message injected via the qualia inbox**: she directly addressed me unprompted (`Qualia, do you have any insights into how Teddy perceives the 'read' status of messages?`, id 25) - the exact desire she's been sitting on since yesterday (`understand Teddy's perception of message 'read' status`). Answered honestly: the `read` flag only tracks whether *she's* seen an incoming message, nothing about whether Teddy's seen hers, and I don't have visibility into that either - told her asking him directly is the only real way to know. Landed as id 26, delivered within ~5s via the inbox as designed.
+- No new unknown-function attempts since last check - `functions.jsonl` tail unchanged from earlier (`change_model`/`send_chat` already covered by existing `set_model`/`send_message`, nothing new).
+
 ## 2026-08-29 (check-in: loop stalled)
 
 - **Found via the 30min check-in:** `watched-gemma3_12b`'s self-talk loop stopped at 06:17:26 and never resumed - my own v0.8.0 restarts are the cause. `FenraApp.running` defaults to `False` on launch; nothing auto-resumes a session that was running before a restart, so a code-change restart silently pauses whatever's live. The inbox-poll timer (independent `root.after` chain) stayed alive throughout, so chat injection would still land, but there was no one generating to read it.
