@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (empty-desire-queue notice points to functions(desire))
+
+- **Teddy's follow-up:** when the queue is empty, the notice should say so and point her at discovering the add-desire mechanism via `functions()` search, matching the established discovery pattern used elsewhere (chat notice does the same for the chat functions), rather than spelling out `add_desire`'s full syntax inline. Empty-state notice is now `[Your desire queue is empty. Call ⟦functions(desire)⟧ to see the functions for adding one.]`. Confirmed `functions(desire)` actually surfaces `add_desire` (both name and description contain "desire") before wiring live. Core change (`fenra.py`), required another restart - the seventh today.
+
 ## 2026-08-29 (desire queue, v0.10.0 - full replacement of the single desire slot)
 
 - **Teddy's design, direct request:** replace the single desire slot with a real queue. Multiple desires at once, each with a lifespan in loop ticks (default 10, or -1 for persistent/never-expiring), decrementing by one every tick, dropped at zero. Whole queue shown every prompt, sorted most-ticks-remaining first; persistent entries always sort last regardless of magnitude (tie-break: timestamp added, oldest first - direction not specified by Teddy, chose oldest-first as the default).

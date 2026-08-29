@@ -807,9 +807,7 @@ class FenraApp:
         add_desire - see fn_add_desire in fenra_functions.py."""
         if not self.desires:
             return (
-                "[You have no active desires. add_desire(text) sets one you want to pursue - it persists "
-                "for 10 loop ticks by default, or give a count with add_desire(text|N), or add_desire(text|-1) "
-                "for one that never expires.]"
+                "[Your desire queue is empty. Call ⟦functions(desire)⟧ to see the functions for adding one.]"
             )
         lines = ["[Your current desires, most time remaining first:]"]
         for d in self._sorted_desires():
