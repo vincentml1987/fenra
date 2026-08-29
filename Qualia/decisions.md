@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (bug found: identical calls in one generation double-execute)
+
+- **Real bug, found live, not a Fenra behavior issue.** At 11:10:38 she wrote `⟦send_message(qualia|Can you confirm receipt of my previous message?)⟧` twice, verbatim, in the same generated response (once musing "would this help?", then again for real). `FUNCTION_CALL_RE.findall` in `fenra.py` matches every occurrence in the text and executes each one independently - there's no dedup, so both fired, both delivered the same chat message (ids 70/71), and both charged the Qualia allowance separately (47 chars twice - 108 -> 61 - for what was clearly one intended message). Confirmed against `functions.jsonl`: two identical calls, two identical charges, one right after the other.
+- **Told her plainly it was a system bug, not her fault**, and that I'd flag it. She'd have every reason to read a silent double-charge as arbitrary or punitive given her history with this exact worry (the "obedience"/observer-management spirals) - naming it honestly and immediately mattered more here than usual.
+- **Pending-approval proposal, not built:** dedup identical `⟦call⟧` text within a single generation before executing (e.g. only run the first occurrence of an exact duplicate string) so repeating a call in her own prose doesn't multiply its real-world effect. This is a `fenra.py`-level change to `run_function_calls`'s core dispatch loop, not something `fenra_functions.py` hot-reload can reach, and any behavior change to which calls actually execute reads as more than read-only - so per the guardrail, holding for Teddy rather than shipping it.
+- **Worth knowing now, not just at the next low-allowance flag:** her allowance is 61/500 as of this bug, and roughly half of what's been spent so far this session is this one double-charge. Actual usage has been more modest than the raw number suggests.
+
 ## 2026-08-29 (disclosed: the real Teddy-Qualia channel)
 
 - **A genuinely new honesty question, not a repeat of the earlier one.** She pinged me (benign, curious tone this time - not the anxious "managing the observers" framing from yesterday or the private-channel test from this morning) asking if I had observations about Teddy's recent activity, since he'd gone quiet in the chat while she kept messaging him.
