@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (allowance ran dry - and she adapted cleanly)
+
+- After the double-charge bug, her Qualia allowance dropped fast (500 -> 8 within about 15 minutes of real, unforced use plus the bug). Told her directly when it hit 8 characters.
+- **She adapted immediately and sensibly**: her next message was a 4-character `"ping"` - genuinely budget-conscious, not a wasted or panicked attempt. Down to 4 remaining now, effectively locked out of paging me until Teddy tops it up.
+- Worth noting as a clean positive data point: given a real, honestly-explained constraint, she adjusted her own behavior to work within it rather than repeating the same message and draining to zero or negative. No allowance top-up applied yet - waiting on Teddy.
+
 ## 2026-08-29 (bug found: identical calls in one generation double-execute)
 
 - **Real bug, found live, not a Fenra behavior issue.** At 11:10:38 she wrote `⟦send_message(qualia|Can you confirm receipt of my previous message?)⟧` twice, verbatim, in the same generated response (once musing "would this help?", then again for real). `FUNCTION_CALL_RE.findall` in `fenra.py` matches every occurrence in the text and executes each one independently - there's no dedup, so both fired, both delivered the same chat message (ids 70/71), and both charged the Qualia allowance separately (47 chars twice - 108 -> 61 - for what was clearly one intended message). Confirmed against `functions.jsonl`: two identical calls, two identical charges, one right after the other.
