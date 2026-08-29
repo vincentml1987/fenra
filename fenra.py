@@ -8,7 +8,8 @@ Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
     prompt = TOP + "\n\n" + <Fenra's last response to herself> + "\n\n"
              + <her current desire, if any> + "\n\n" + BOTTOM + "\n\n"
-             + <chat status notice - always present>
+             + <chat status notice - always present> + "\n\n"
+             + <Qualia allowance notice - always present>
 
 Everything about a run - the top/bottom boxes, model/host/interval, the
 conversation so far, and every request/response - lives in a "session"
@@ -76,7 +77,19 @@ import fenra_functions
 #           (qualia_inbox.jsonl) polled every 5s on the main thread,
 #           independent of whether the self-talk loop is running - avoids
 #           racing the app's own chat.jsonl writes.
-FENRA_VERSION = "0.8.0"
+#   0.9.0 - Directed messaging + a Qualia allowance. send_message(text) can
+#           now be addressed - send_message(qualia|text) or
+#           send_message(teddy|text) - still one shared, honest chat log
+#           either way, just tagged with who it's for. Messages directed to
+#           Qualia specifically cost characters from a new allowance
+#           (visible to her every prompt) that only Teddy sets, via a new
+#           editable field in the Fenra tab - not auto-replenishing. A
+#           message that would exceed the remaining allowance is blocked
+#           with a clear reason instead of silently failing or draining
+#           into the negative. Directing a message at Qualia also drops a
+#           line in qualia_ping.jsonl so Qualia can wake up and respond
+#           promptly instead of only on a fixed polling schedule.
+FENRA_VERSION = "0.9.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -99,6 +112,13 @@ HISTORY_FILENAME = "history.jsonl"
 FUNCTIONS_FILENAME = "functions.jsonl"
 CHAT_FILENAME = "chat.jsonl"
 QUALIA_INBOX_FILENAME = "qualia_inbox.jsonl"
+# Written by fn_send_message (fenra_functions.py) whenever Fenra directs a
+# message at Qualia specifically - a signal Qualia can watch externally to
+# wake up and respond promptly, separate from the inbox above (which is
+# Qualia -> Fenra; this one is Fenra -> Qualia).
+QUALIA_PING_FILENAME = "qualia_ping.jsonl"
+
+DEFAULT_QUALIA_ALLOWANCE = 500
 
 # How often the running app checks for messages Qualia has dropped into the
 # inbox file. Independent of the self-talk loop (running or not, this timer
@@ -228,6 +248,7 @@ def default_state():
         "max_tokens": DEFAULT_MAX_TOKENS,
         "last_thought": "",
         "desire": "",
+        "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
     }
 
 
@@ -396,10 +417,11 @@ class FenraApp:
         body = ttk.Frame(frame)
         body.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)   # top box    - 10%
-        body.rowconfigure(1, weight=8)   # middle box - 80%
-        body.rowconfigure(2, weight=0)   # desire row - fixed height
-        body.rowconfigure(3, weight=1)   # bottom box - 10%
+        body.rowconfigure(0, weight=1)   # top box       - 10%
+        body.rowconfigure(1, weight=8)   # middle box    - 80%
+        body.rowconfigure(2, weight=0)   # desire row    - fixed height
+        body.rowconfigure(3, weight=0)   # allowance row - fixed height
+        body.rowconfigure(4, weight=1)   # bottom box    - 10%
 
         self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
@@ -417,8 +439,21 @@ class FenraApp:
         self.desire_var = tk.StringVar(value="")
         ttk.Entry(desire_row, textvariable=self.desire_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
+        # Qualia allowance: how many characters of send_message(qualia|...)
+        # text she can still spend. Unlike Desire, this one Teddy sets
+        # directly (not auto-replenishing) - visible to her every prompt via
+        # _qualia_allowance_notice, enforced in fn_send_message.
+        allowance_row = ttk.Frame(body)
+        allowance_row.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(allowance_row, text="Qualia allowance (chars):").pack(side="left")
+        self.qualia_allowance_var = tk.StringVar(value=str(DEFAULT_QUALIA_ALLOWANCE))
+        allowance_entry = ttk.Entry(allowance_row, textvariable=self.qualia_allowance_var, width=8)
+        allowance_entry.pack(side="left", padx=(4, 4))
+        allowance_entry.bind("<Return>", lambda event: self.set_qualia_allowance())
+        ttk.Button(allowance_row, text="Set", command=self.set_qualia_allowance).pack(side="left")
+
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=3, column=0, sticky="nsew", pady=(4, 0))
+        self.bottom_box.grid(row=4, column=0, sticky="nsew", pady=(4, 0))
 
     def _build_chat_tab(self):
         frame = self.chat_tab
@@ -499,6 +534,7 @@ class FenraApp:
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": "",
             "desire": "",
+            "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -518,9 +554,25 @@ class FenraApp:
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
             "desire": self.desire_var.get(),
+            "qualia_allowance": self.qualia_allowance_var.get(),
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
+
+    def set_qualia_allowance(self):
+        """Teddy manually setting how many characters Fenra can spend on
+        messages directed at Qualia. Saved immediately (not just on the
+        next tick) so it takes effect even while the self-talk loop is
+        stopped."""
+        try:
+            value = int(float(self.qualia_allowance_var.get()))
+        except ValueError:
+            messagebox.showwarning("Fenra", "Qualia allowance must be a number.")
+            return
+        value = max(0, value)
+        self.qualia_allowance_var.set(str(value))
+        self.save_session()
+        self.session_status_var.set(f"Qualia allowance set to {value} ({datetime.now().strftime('%H:%M:%S')})")
 
     def _load_session(self, name):
         if self.running:
@@ -539,6 +591,7 @@ class FenraApp:
         self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.last_thought = state.get("last_thought", "")
         self.desire_var.set(state.get("desire", ""))
+        self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -555,7 +608,7 @@ class FenraApp:
     def _next_chat_id(self):
         return max((m.get("id", 0) for m in self.chat_messages), default=0) + 1
 
-    def add_chat_message(self, sender, text, read):
+    def add_chat_message(self, sender, text, read, to=None):
         entry = {
             "id": self._next_chat_id(),
             "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -563,6 +616,8 @@ class FenraApp:
             "text": text,
             "read": read,
         }
+        if to:
+            entry["to"] = to
         self.chat_messages.append(entry)
         self.persist_chat()
         return entry
@@ -581,8 +636,10 @@ class FenraApp:
         self.chat_box.delete("1.0", "end")
         for m in self.chat_messages:
             who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
+            to = m.get("to")
+            to_tag = f" -> {'Teddy' if to == 'teddy' else 'Qualia'}" if to else ""
             unread_marker = " [unread]" if m["sender"] != "fenra" and not m.get("read", True) else ""
-            self.chat_box.insert("end", f"[{m['timestamp']}] {who}{unread_marker}: {m['text']}\n\n")
+            self.chat_box.insert("end", f"[{m['timestamp']}] {who}{to_tag}{unread_marker}: {m['text']}\n\n")
         self.chat_box.see("end")
         self.chat_box.config(state="disabled")
 
@@ -645,6 +702,22 @@ class FenraApp:
         return (
             f"[Chat status: you last sent a message at {last_sent}. "
             f"You last received a message at {last_received}. {unread_note}]"
+        )
+
+    def _qualia_allowance_notice(self):
+        """Always-present, every prompt: how many characters she has left
+        to spend on messages directed specifically at Qualia. Teddy sets
+        this number directly (see set_qualia_allowance) - it does not
+        refill on its own."""
+        try:
+            remaining = max(0, int(float(self.qualia_allowance_var.get())))
+        except ValueError:
+            remaining = 0
+        return (
+            f"[Qualia allowance: {remaining} character(s) remaining. This is spent only by messages "
+            f"addressed specifically to Qualia - send_message(qualia|your text) - and Teddy sets this "
+            f"number directly; it does not refill on its own. Messages to Teddy "
+            f"(send_message(teddy|your text), or send_message(text) with no recipient) cost nothing.]"
         )
 
     # ------------------------------------------------------------ history --
@@ -732,9 +805,10 @@ class FenraApp:
         bottom_text = self.bottom_box.get("1.0", "end-1c")
         desire_text = self.desire_var.get()
         chat_notice = self._chat_notice()
+        qualia_notice = self._qualia_allowance_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}\n\n{chat_notice}".strip()
+        prompt = f"{top_text}\n\n{self.last_thought}\n\n{desire_text}\n\n{bottom_text}\n\n{chat_notice}\n\n{qualia_notice}".strip()
 
         payload = {
             "model": self.model_var.get().strip() or DEFAULT_MODEL,
@@ -783,6 +857,7 @@ class FenraApp:
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
             "desire": self.desire_var.get(),
+            "qualia_allowance": self.qualia_allowance_var.get(),
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)

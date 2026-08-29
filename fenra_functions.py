@@ -14,11 +14,40 @@ app.root.after(0, ...) since these run on the background loop thread.
 FUNCTION_REGISTRY maps name -> {"fn": callable, "params": str, "description": str}.
 """
 
+import json
+import os
+import re
 from datetime import datetime
 
 import requests
 
 DEFAULT_HOST = "http://localhost:11434"
+
+# Same directory layout fenra.py uses (sessions/<name>/...), computed
+# independently here rather than imported, to avoid a circular import
+# (fenra.py imports this module, not the other way around).
+_SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
+QUALIA_PING_FILENAME = "qualia_ping.jsonl"
+
+# send_message(qualia|text) / send_message(teddy|text): a leading recipient
+# tag followed by a single | (not a generic multi-arg split - the message
+# itself may legitimately contain | or , as ordinary punctuation, so only
+# this one structural separator is recognized, and only right at the start).
+_RECIPIENT_RE = re.compile(r"^\s*(teddy|qualia)\s*\|\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+
+def _qualia_ping(app, text):
+    """Drop a line in qualia_ping.jsonl so Qualia can notice a message was
+    addressed to her and wake up to respond, instead of only finding out on
+    a fixed polling schedule. Separate from qualia_inbox.jsonl, which flows
+    the other direction (Qualia -> Fenra)."""
+    path = os.path.join(_SESSIONS_DIR, app.session_name, QUALIA_PING_FILENAME)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"timestamp": datetime.now().isoformat(timespec="seconds"), "text": text}) + "\n")
+    except OSError:
+        pass
 
 
 def fn_functions(app, args):
@@ -71,7 +100,9 @@ def fn_set_desire(app, args):
 
 def _format_chat_message(m):
     who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
-    return f"[{m['timestamp']}] {who}: {m['text']}"
+    to = m.get("to")
+    to_tag = f" -> {'Teddy' if to == 'teddy' else 'Qualia'}" if to else ""
+    return f"[{m['timestamp']}] {who}{to_tag}: {m['text']}"
 
 
 def _parse_chat_time(s):
@@ -177,10 +208,45 @@ def fn_search_chat(app, args):
 
 
 def fn_send_message(app, args):
+    """Send a chat message - real, not fiction, visible immediately in the
+    Chat tab. Optionally addressed to Teddy or Qualia specifically via a
+    leading recipient|text tag; unaddressed messages go to the shared log
+    same as before, visible to both. Messages addressed to Qualia cost
+    characters from her allowance (Teddy-set, see the Qualia allowance
+    notice every prompt) - a message that would exceed what's left is
+    blocked rather than silently sent, and directing one at Qualia also
+    pings her so she can notice and respond promptly."""
     if not args or not args[0]:
         raise ValueError("send_message requires text, e.g. send_message(I have a question for you, Teddy)")
-    app.root.after(0, app.add_chat_message, "fenra", args[0], True)
-    return "message sent"
+
+    match = _RECIPIENT_RE.match(args[0])
+    if not match:
+        app.root.after(0, app.add_chat_message, "fenra", args[0], True)
+        return "message sent"
+
+    recipient = match.group(1).lower()
+    text = match.group(2).strip()
+    if not text:
+        raise ValueError(f"send_message({recipient}|...) needs text after the |, e.g. send_message({recipient}|hello)")
+
+    if recipient == "qualia":
+        cost = len(text)
+        try:
+            remaining = max(0, int(float(app.qualia_allowance_var.get())))
+        except ValueError:
+            remaining = 0
+        if cost > remaining:
+            raise ValueError(
+                f"not enough Qualia allowance: this message is {cost} character(s), you have {remaining} left. "
+                f"Ask Teddy for more, or shorten the message."
+            )
+        app.root.after(0, app.qualia_allowance_var.set, str(remaining - cost))
+        _qualia_ping(app, text)
+
+    app.root.after(0, app.add_chat_message, "fenra", text, True, recipient)
+    if recipient == "qualia":
+        return f"message sent to Qualia ({cost} character(s) spent, {remaining - cost} remaining)"
+    return "message sent to Teddy"
 
 
 def fn_set_model(app, args):
@@ -262,7 +328,7 @@ FUNCTION_REGISTRY = {
     },
     "send_message": {
         "fn": fn_send_message,
-        "params": "text",
-        "description": "Send Teddy a chat message - real, not fiction, visible to him in the Chat tab immediately. e.g. send_message(I have a question for you, Teddy).",
+        "params": "[recipient|]text",
+        "description": "Send a chat message - real, not fiction, visible in the Chat tab immediately. Optionally address it: send_message(teddy|text) or send_message(qualia|text) - still one shared log either way, just tagged with who it's for. With no recipient tag, goes to the shared log same as always, e.g. send_message(I have a question for you, Teddy). Messages to Qualia specifically cost characters from your Qualia allowance (see the notice every prompt) and are blocked if they'd exceed what's left.",
     },
 }
