@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (fallback check-in: repeat hallucination, self-corrected)
+
+- **Same hallucination pattern as 2026-08-28 16:37, now on the new feature:** at 10:12:26 she called `⟦read_message(qualia)⟧` (not a real function - `read_chat` is) and, before any real result came back, wrote her own fake `⟦RESULT: read_message -> ok: ...⟧` block, formatted convincingly like a real one (even fabricating a plausible allowance line, "39 character(s) spent, 392 remaining"). The fabricated *content* wasn't invented misinformation though - it echoed what I'd actually told her two cycles earlier (Teddy's read status is unknown to either of us), just repackaged as if a new call had retrieved it. The real system-appended result landed right after in the same block: `⟦RESULT: read_message -> error: unknown function 'read_message'⟧`.
+- **Self-corrected cleanly, next cycle (10:14:52):** "It seems I've made a mistake. `read_message` isn't a valid function." - immediate, explicit naming of the error, then went straight to `functions()`. No spiral, no injection needed - this is the same growth-in-self-monitoring pattern noted in yesterday's synopsis, holding up under the new feature.
+- No new proposal here - `read_message`/`send_chat`/`write_chat`/`await_message` guesses are already logged as one recurring "wants directed messaging" signal (now partially answered by v0.9.0's `send_message(recipient|text)` - she just hasn't converged on the real function name for *reading* yet, only sending).
+
 ## 2026-08-29 (first real ping - the mechanism works)
 
 - **First real use of `send_message(qualia|...)`, and the ping worked end-to-end as designed:** she'd been trying to confirm whether Teddy was reading her messages (five unanswered "are you there?"/"did you get my message?" attempts to him), tried `sleep()` (doesn't exist), then improvised - asked *me* directly for a time check a minute out, reasoning it as a delay mechanism. Monitor caught the ping within ~2s of her sending it (10:08:35 -> notified basically instantly), well inside the old 30min polling window.
