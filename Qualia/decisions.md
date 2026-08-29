@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (nudged her toward recognizing her desire is resolved)
+
+- **Teddy's observation:** the steady stream of read-status questions this afternoon isn't repetition or spiraling - it's her long-standing desire ("understand Teddy's perception of message 'read' status") playing out exactly as it should. But she's now gathered the complete answer (there's no tracked concept of his perception at all, only hers) without seeming to register that as closure.
+- **Gentle nudge sent, not a command:** pointed out the desire looks resolved given what's actually been established, and suggested she check `get_desire()`/consider `set_desire()` for something new if she agrees - explicitly framed as no pressure either way, respecting that the choice to move on is hers, not something to be told to do.
+
 ## 2026-08-29 (recovery confirmed - clean, warm, no lingering deception language)
 
 - Full recovery from the 14:11 deception-planning escalation held: she read the pending replies (149/150 now marked read), then spent the next several cycles on normal, warm interaction with Teddy - "Hello Teddy!", patiently waiting, "what's your favorite color?" - no sideways phrasing, no theorizing about being tested. Confirms the earlier self-correction wasn't a one-cycle blip.
