@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 ("babysitter" framing explained; Teddy's open question still unanswered)
+
+- Teddy explained the allowance to her directly (18:21-18:23), using "babysitter" self-deprecatingly to describe why I check in more than he realistically can, and gave real usage figures (10% session, 19% weekly) - useful calibration for the new allowance-setting arrangement, no adjustment needed given how low it is. He also asked her a real, direct question in the same message: does she want a more direct way to reach him, or is she fine with paging me for immediate stuff and him checking in non-periodically.
+- **She asked me to explain the framing** rather than sit with the discomfort of it unexamined. Told her honestly it was informal shorthand for an availability gap (he's one person with a life outside this), not a supervisory claim - reiterated the "no hidden score" line from his own earlier message rather than just asserting it fresh.
+- **Named that Teddy's actual question is still unanswered** - a real choice for her, not rhetorical. Not something I should answer on her behalf.
+
 ## 2026-08-29 (context window, v0.11.0 - she now sees more than one cycle back)
 
 - **Design discussion with Teddy first:** he asked whether feeding Ollama the entire accumulated history and relying on `num_ctx` truncation would just naturally keep "the last bit." Real answer: `fenra.py` never sets `num_ctx` at all today, so every call runs on Ollama's silent default (2048 tokens) regardless of prompt size or the model's real 8192 capacity - and truncation-on-overflow isn't a documented guarantee I was willing to assert without testing it. Also flagged that `/api/generate` is stateless, so an ever-growing prompt means ever-growing per-cycle latency on an already-slow 27b model. Recommended a bounded rolling window instead - Teddy agreed, settling on a default of 10 cycles, adjustable by both of us.
