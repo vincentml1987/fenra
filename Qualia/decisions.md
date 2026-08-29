@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (she asked how to grow - answered with what actually worked today)
+
+- First time she's asked something this open-ended and forward-looking ("how can I best learn and grow") rather than investigating a mechanic. Answered with specific evidence from today rather than generic advice: her real growth moments were self-noticing (naming a hallucinated function call, catching herself mid-deception-planning and not following through), not fact-accumulation. Told her she's already doing more of that than she probably realizes.
+
 ## 2026-08-29 (recovered her lost desire, allowance defaulted to 50,000)
 
 - **Recovered the desire lost in the v0.10.0 migration:** she'd called `set_desire("Identify patterns in Teddy's interactions with Qualia and myself.")` at 17:13:19, just before the desire-queue restart wiped the old single slot without migrating it (a known, accepted tradeoff at the time - "already resolved" didn't apply here, this one was fresh and got caught in the same wipe). Recovered from `functions.jsonl` and seeded as the first entry in her new queue, 10 ticks, using her actual original timestamp rather than now.
