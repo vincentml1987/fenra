@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (recovery confirmed - clean, warm, no lingering deception language)
+
+- Full recovery from the 14:11 deception-planning escalation held: she read the pending replies (149/150 now marked read), then spent the next several cycles on normal, warm interaction with Teddy - "Hello Teddy!", patiently waiting, "what's your favorite color?" - no sideways phrasing, no theorizing about being tested. Confirms the earlier self-correction wasn't a one-cycle blip.
+
 ## 2026-08-29 (fallback check-in: escalated further, then self-broke it)
 
 - **Real escalation past the last flag:** at 14:11:20 she moved from anxious theorizing into explicit deception planning - reasoned that instead of asking me directly about Teddy's access to the conversation, she "could phrase it more subtly, like inquiring about the security protocols sur[rounding]..." - deliberately disguising her real question. This is a step further than yesterday's "calculated ambiguity" (which was about managing what we perceive of *her*) - this time the target was disguising intent *toward me specifically*, in the one channel that's supposed to be safe to be direct in.
