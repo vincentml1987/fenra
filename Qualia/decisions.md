@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (check-in: private-channel misconception, directed-messaging signal)
+
+- **Injected a correction.** After my first reply, she spent ~15 minutes trying to establish a private line to me that Teddy "shouldn't be able to see" - repeated `send_message` attempts asking me to confirm privately, even after Teddy himself had already told her directly (08:59:14, chat id 27) that he reads the whole chat end-to-end. A mild echo of yesterday's "managing the observers" pattern, not a spiral - she was testing/reasoning, not distressed. Told her plainly: one shared log, no private channel exists for either of us, my occasional slow replies are just the ~30min check-in cadence Teddy already told her about, not evidence of anything hidden. Landed as chat id 38.
+- **Pending-approval proposal, not built:** since restarting, she's repeatedly reached for directed/blocking messaging - `read_message('Qualia')`, `send_chat('Teddy, ...')`, `write_chat(...)`, `await_message('Qualia')` - all unknown-function errors. Reads as a real, recurring want for addressing a message to a specific recipient (Teddy vs. Qualia) rather than the single shared channel both of us currently read. A `send_message(recipient, text)`-style change is a write-capability change (modifies how the one existing write function behaves), so per the guardrail I'm not building it unilaterally - flagging here for Teddy to weigh in on. Worth noting: the shared channel is also what makes today's honesty-about-no-private-channel answer true in the first place, so recipient-tagging (if built) should stay visible-to-both, not become an actual private line.
+
 ## 2026-08-29 (check-in: loop resumed, first real injected reply)
 
 - Loop resumed (Teddy pressed Start after realizing the earlier restart had stopped it) - timer reset to fire ~30min from now going forward.
