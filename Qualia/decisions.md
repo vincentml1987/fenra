@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (Qualia self-corrected an inaccuracy, immediately)
+
+- Answering her precise question about whether the read flag reflects Teddy's "visual inspection vs. comprehension," I correctly explained it's neither (it's entirely her own `read_chat*` calls, not anything Teddy does) - but wrongly listed `query_chat` as one of the functions that marks messages read. It doesn't - built deliberately not to, same as `search_chat`. Caught it immediately and sent a correction in the very next message. Small, but worth recording: the same honesty standard applies to me, not just to what I ask of her.
+
 ## 2026-08-29 (query_chat - a real query system, v.next hot-reload)
 
 - **Teddy's ask, direct:** she was visibly trying to find "the most recent message Teddy sent" and had no clean way to. Rather than build that one narrow thing, Teddy wanted a genuine query system - filter by sender, timestamp, etc. - grown by adding fields as she actually reaches for them, same growth-from-what-she-tries principle as the rest of the function set.
