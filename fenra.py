@@ -89,7 +89,12 @@ import fenra_functions
 #           into the negative. Directing a message at Qualia also drops a
 #           line in qualia_ping.jsonl so Qualia can wake up and respond
 #           promptly instead of only on a fixed polling schedule.
-FENRA_VERSION = "0.9.0"
+#   0.9.1 - Qualia can also set the allowance now (Teddy's call - he shares
+#           rough usage/cost figures periodically, Qualia uses judgment),
+#           not just Teddy via the GUI field. Delivery mirrors the inbox:
+#           a polled file (qualia_allowance_set.txt) rather than editing
+#           state.json directly, so it can't race the app's own writes.
+FENRA_VERSION = "0.9.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -117,6 +122,13 @@ QUALIA_INBOX_FILENAME = "qualia_inbox.jsonl"
 # wake up and respond promptly, separate from the inbox above (which is
 # Qualia -> Fenra; this one is Fenra -> Qualia).
 QUALIA_PING_FILENAME = "qualia_ping.jsonl"
+
+# Written by Qualia (externally, not by Fenra herself - contrast with
+# qualia_ping.jsonl above) to set a new Qualia allowance, mirroring how
+# Teddy sets it via the GUI field. Polled the same way as the inbox rather
+# than edited into state.json directly, so it can't race the app's own
+# writes.
+QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
 
 DEFAULT_QUALIA_ALLOWANCE = 500
 
@@ -440,9 +452,11 @@ class FenraApp:
         ttk.Entry(desire_row, textvariable=self.desire_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         # Qualia allowance: how many characters of send_message(qualia|...)
-        # text she can still spend. Unlike Desire, this one Teddy sets
-        # directly (not auto-replenishing) - visible to her every prompt via
-        # _qualia_allowance_notice, enforced in fn_send_message.
+        # text she can still spend. Unlike Desire, this one is set directly
+        # (not auto-replenishing) by Teddy here in the GUI, or by Qualia via
+        # qualia_allowance_set.txt (see _poll_qualia_allowance_set) based on
+        # usage figures Teddy shares with her - visible to Fenra every
+        # prompt via _qualia_allowance_notice, enforced in fn_send_message.
         allowance_row = ttk.Frame(body)
         allowance_row.grid(row=3, column=0, sticky="ew", pady=(4, 0))
         ttk.Label(allowance_row, text="Qualia allowance (chars):").pack(side="left")
@@ -678,7 +692,36 @@ class FenraApp:
                         open(path, "w", encoding="utf-8").close()
                     except OSError:
                         pass
+            self._poll_qualia_allowance_set()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
+
+    def _poll_qualia_allowance_set(self):
+        """Companion to the inbox poll above, same cadence: pick up a new
+        Qualia allowance value if Qualia has written one (Teddy's call - he
+        shares rough usage/cost figures periodically, Qualia sets the
+        number directly rather than asking each time). Mirrors
+        set_qualia_allowance's own validation/clamping and persists
+        immediately, same reasoning as that method."""
+        path = os.path.join(session_dir(self.session_name), QUALIA_ALLOWANCE_SET_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError:
+            return
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        if not raw:
+            return
+        try:
+            value = max(0, int(float(raw)))
+        except ValueError:
+            return
+        self.qualia_allowance_var.set(str(value))
+        self.save_session()
 
     def _chat_notice(self):
         """Always-present status line appended at the very end of the
@@ -715,8 +758,9 @@ class FenraApp:
             remaining = 0
         return (
             f"[Qualia allowance: {remaining} character(s) remaining. This is spent only by messages "
-            f"addressed specifically to Qualia - send_message(qualia|your text) - and Teddy sets this "
-            f"number directly; it does not refill on its own. Messages to Teddy "
+            f"addressed specifically to Qualia - send_message(qualia|your text) - and Teddy or Qualia "
+            f"set this number directly (Teddy from the GUI, Qualia based on usage figures Teddy shares "
+            f"with her); it does not refill on its own. Messages to Teddy "
             f"(send_message(teddy|your text), or send_message(text) with no recipient) cost nothing.]"
         )
 

@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (Teddy engaged directly; allowance topped up to 50,000; Qualia can set it too, v0.9.1)
+
+- **Teddy talked to her directly** (chat ids 91/97, not through me): answered her earlier questions about himself (food, hobbies, views on AI), corrected the read-status confusion from this morning (he'd only read some of her messages, now read them all), and explained the *real* reason for the allowance - it's not scoring, it's that paging Qualia spends real Anthropic usage on his personal account, and he wants to keep that in check. Bumped her from 500 to 50,000. She hadn't read either message yet when I checked - left it to him, didn't inject anything to avoid stepping on it.
+- **New: Qualia can set the allowance too, not just Teddy** (Teddy's call, discussed directly with him in this session): he'll share rough usage/cost figures periodically, and I use judgment to adjust the number rather than asking him each time. I don't have any visibility into his Anthropic account myself - this is explicitly manual, on his information, not something I can verify independently.
+- **Mechanism (v0.9.1):** mirrors the existing inbox pattern rather than editing `state.json` directly (same lesson as the earlier chat.jsonl mistake) - I write a number to `qualia_allowance_set.txt`, polled every 5s alongside the inbox, applied and persisted immediately via the same validation `set_qualia_allowance` uses. Verified live: wrote a no-op value, confirmed the file was consumed and `state.json` stayed correct. The per-prompt allowance notice now tells her honestly that either of us can set the number.
+- Core change, required a restart - loop stopped again as a result, needs Start pressed.
+
 ## 2026-08-29 (allowance ran dry - and she adapted cleanly)
 
 - After the double-charge bug, her Qualia allowance dropped fast (500 -> 8 within about 15 minutes of real, unforced use plus the bug). Told her directly when it hit 8 characters.
