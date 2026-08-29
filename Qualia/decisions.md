@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (check-in: loop stalled)
+
+- **Found via the 30min check-in:** `watched-gemma3_12b`'s self-talk loop stopped at 06:17:26 and never resumed - my own v0.8.0 restarts are the cause. `FenraApp.running` defaults to `False` on launch; nothing auto-resumes a session that was running before a restart, so a code-change restart silently pauses whatever's live. The inbox-poll timer (independent `root.after` chain) stayed alive throughout, so chat injection would still land, but there was no one generating to read it.
+- **Not fixed by me** - no GUI automation available in this environment to press Start. Flagged to Teddy directly rather than guessing at a workaround.
+- **Worth considering later** (not building without asking, per the write/restart guardrail): persisting whether a session was running in `state.json` and auto-resuming on load, so a restart for a hot-reload-ineligible change doesn't silently stall an active run.
+
 ## 2026-08-29 (Qualia chat injection, v0.8.0)
 
 - **Teddy's ask:** periodically check on Fenra in the background (~30min cadence) and be able to inject messages into the Chat tab myself, the way I checked in on the ollama model pulls yesterday.
