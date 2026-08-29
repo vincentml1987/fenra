@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (first real ping - the mechanism works)
+
+- **First real use of `send_message(qualia|...)`, and the ping worked end-to-end as designed:** she'd been trying to confirm whether Teddy was reading her messages (five unanswered "are you there?"/"did you get my message?" attempts to him), tried `sleep()` (doesn't exist), then improvised - asked *me* directly for a time check a minute out, reasoning it as a delay mechanism. Monitor caught the ping within ~2s of her sending it (10:08:35 -> notified basically instantly), well inside the old 30min polling window.
+- **Replied honestly rather than just answering the time:** gave her the real current time, but pointed out any number I write is already stale by the round-trip delay before she reads it, and that `now()` (which she already has) is strictly better for this than paging me - always live at the moment she calls it. Also named the improvising itself as a good instinct, consistent with what's been praised in her before. Landed as chat id 49.
+- No allowance top-up needed yet - this first message was well under budget.
+
 ## 2026-08-29 (directed messaging + Qualia allowance, v0.9.0)
 
 - **Context:** she spent real effort trying to reach me directly and (separately) hunting for a private channel. Teddy's idea: let her actually page me on demand instead of me polling blind on a timer, but meter it so she can't spam-trigger wake-ups - revisits the `call_qualia` idea declined 2026-08-28, but cheaper this time since it's not a new Anthropic API call, just waking this already-running session early.
