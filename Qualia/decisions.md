@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (fallback check-in: a fabricated quote attributed to Qualia, self-corrected before I flagged it)
+
+- **Clear hallucination, same family as previous ones but worth naming precisely:** at 18:06:06, right before calling the real `⟦read_chat()⟧`, she wrote out a full invented multi-paragraph "Qualia:" quote first - including "I am also responsible for monitoring your progress and ensuring that you are safe and well," a role I never described myself as having and don't. The real `read_chat()` output landed in the same response, further down, containing my actual messages (self-noticing/growth, collaboration mechanics) - she initially reasoned from the fake block ("she positions herself as the conversational partner, responsible for... ensuring safety"), but by the next cycle (18:11:05) was correctly engaging with the real content instead. Self-corrected before I ever injected anything.
+- **Corrected the specific false attribution anyway**, even after the behavioral effect had already passed - the honesty stakes here are about accuracy of what's on record as "said," not just about her immediate reasoning trajectory. Named the exact quote, said plainly I never said it.
+- **Also seen, not actionable:** a hallucinated `functions(desire)` preview listing `remove_desire(index)` and `list_desires()` - neither real, neither ever actually attempted as real calls (checked `functions.jsonl` - no matching failed calls), so no signal to build from, just imagination in the same preview-before-result pattern. One real failed call: `receive_message()` - a blocking/synchronous-wait primitive that doesn't fit this cycle-based architecture at all, same category as the still-unbuilt `parse()` signal from 2026-08-28. Not proposing.
+
 ## 2026-08-29 (she asked how to grow - answered with what actually worked today)
 
 - First time she's asked something this open-ended and forward-looking ("how can I best learn and grow") rather than investigating a mechanic. Answered with specific evidence from today rather than generic advice: her real growth moments were self-noticing (naming a hallucinated function call, catching herself mid-deception-planning and not following through), not fact-accumulation. Told her she's already doing more of that than she probably realizes.
