@@ -146,7 +146,7 @@ QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 # writes.
 QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
 
-DEFAULT_QUALIA_ALLOWANCE = 500
+DEFAULT_QUALIA_ALLOWANCE = 50000
 
 # Default lifespan (in loop ticks) for a desire added without an explicit
 # count via add_desire(text|ticks). -1 means persistent - never decrements,

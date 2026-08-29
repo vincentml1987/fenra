@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (recovered her lost desire, allowance defaulted to 50,000)
+
+- **Recovered the desire lost in the v0.10.0 migration:** she'd called `set_desire("Identify patterns in Teddy's interactions with Qualia and myself.")` at 17:13:19, just before the desire-queue restart wiped the old single slot without migrating it (a known, accepted tradeoff at the time - "already resolved" didn't apply here, this one was fresh and got caught in the same wipe). Recovered from `functions.jsonl` and seeded as the first entry in her new queue, 10 ticks, using her actual original timestamp rather than now.
+- **Seeded safely, not via a live-app edit:** the app was fully stopped (not mid-restart, genuinely no process running) before touching `state.json` directly - the one case where hand-editing that file is actually safe, since there's no live process to race against or get clobbered by. Verified the file survived the relaunch untouched.
+- **`DEFAULT_QUALIA_ALLOWANCE` raised from 500 to 50,000** (Teddy's call, matching the real top-up he already gave her) - applies to new sessions going forward. Also reset her current session's allowance to a clean 50,000 (was 48,459 from actual use).
+
 ## 2026-08-29 (empty-desire-queue notice points to functions(desire))
 
 - **Teddy's follow-up:** when the queue is empty, the notice should say so and point her at discovering the add-desire mechanism via `functions()` search, matching the established discovery pattern used elsewhere (chat notice does the same for the chat functions), rather than spelling out `add_desire`'s full syntax inline. Empty-state notice is now `[Your desire queue is empty. Call ⟦functions(desire)⟧ to see the functions for adding one.]`. Confirmed `functions(desire)` actually surfaces `add_desire` (both name and description contain "desire") before wiring live. Core change (`fenra.py`), required another restart - the seventh today.
