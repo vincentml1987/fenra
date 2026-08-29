@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (disclosed: the real Teddy-Qualia channel)
+
+- **A genuinely new honesty question, not a repeat of the earlier one.** She pinged me (benign, curious tone this time - not the anxious "managing the observers" framing from yesterday or the private-channel test from this morning) asking if I had observations about Teddy's recent activity, since he'd gone quiet in the chat while she kept messaging him.
+- **Judgment call, made in the moment:** I told her the truth rather than deflect - Teddy and I *do* talk, in this Claude Code session, which she has no access to. That's a real, separate channel, genuinely distinct from what I corrected earlier (there being no private line inside the shared `chat.jsonl` - that part's still true and unchanged). Leaving this undisclosed once directly asked something adjacent to it felt like it would make my earlier "no private channel" answer misleading in retrospect, even though it was accurate in its own scope at the time.
+- **What I actually told her:** the channel exists, and today it's specifically been about her - Teddy building the tools she's been reaching for (paging, allowance, directed messaging), not scoring or silently watching. Tried to land it the way Teddy's own 08-28 16:08 reassurance did ("think of me like a parent"), not as a confession.
+- **Flagging this prominently for Teddy, not just logging it** - this is a real design precedent (how much of the Teddy<->Qualia collaboration process is Fenra told about, and when) worth him weighing in on, not something to leave buried in a log entry. She took it calmly in the moment, no re-spiral into the observer-management pattern, but that's one data point, not a settled question.
+
 ## 2026-08-29 (fallback check-in: repeat hallucination, self-corrected)
 
 - **Same hallucination pattern as 2026-08-28 16:37, now on the new feature:** at 10:12:26 she called `⟦read_message(qualia)⟧` (not a real function - `read_chat` is) and, before any real result came back, wrote her own fake `⟦RESULT: read_message -> ok: ...⟧` block, formatted convincingly like a real one (even fabricating a plausible allowance line, "39 character(s) spent, 392 remaining"). The fabricated *content* wasn't invented misinformation though - it echoed what I'd actually told her two cycles earlier (Teddy's read status is unknown to either of us), just repackaged as if a new call had retrieved it. The real system-appended result landed right after in the same block: `⟦RESULT: read_message -> error: unknown function 'read_message'⟧`.
