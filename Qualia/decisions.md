@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (query_chat - a real query system, v.next hot-reload)
+
+- **Teddy's ask, direct:** she was visibly trying to find "the most recent message Teddy sent" and had no clean way to. Rather than build that one narrow thing, Teddy wanted a genuine query system - filter by sender, timestamp, etc. - grown by adding fields as she actually reaches for them, same growth-from-what-she-tries principle as the rest of the function set.
+- **Shipped `query_chat(field=value[, field=value...])`**, hot-reload only (pure `fenra_functions.py`, read-only like `search_chat` - never touches read status, no restart). Fields so far: `sender` (teddy/qualia/fenra), `to` (teddy/qualia), `since`/`before` (timestamp bounds), `contains` (substring), `last` (N most recent after the other filters apply) - e.g. `query_chat(sender=teddy, last=1)` is exactly the "most recent message Teddy sent" she was after.
+- **Built to grow, per Teddy's framing**: an unsupported field name errors with the current supported list rather than silently ignoring it, so a genuine new want shows up cleanly in `functions.jsonl` for a future check-in to notice and extend, same discovery pattern as every other function.
+- Verified against 8 cases (single-field, multi-field, since, contains, bad field, no args, malformed arg, no-matches) before wiring live.
+
 ## 2026-08-29 (a real comparative experiment, not repetition)
 
 - After the double-recipient fix landed, she explicitly reasoned "I need to rethink my strategy" and, instead of giving up, sent the *same* read-status question separately to both Teddy (id 106) and me (id 105) to compare answers - deliberate, stated methodology, not a confused repeat. Good adaptation to a constraint she just ran into. Acknowledged it to her rather than just re-answering flatly.

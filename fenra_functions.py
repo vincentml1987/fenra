@@ -207,6 +207,79 @@ def fn_search_chat(app, args):
     return "\n---\n".join(matches)
 
 
+# query_chat's supported fields. Deliberately meant to grow: if she reaches
+# for a field that isn't here, fn_query_chat lists what's actually
+# supported in the error - Teddy's call was to add fields as she tries them,
+# not to guess every one up front.
+_QUERY_FIELDS = ("sender", "to", "since", "before", "contains", "last")
+
+
+def fn_query_chat(app, args):
+    """Flexible chat query: filter by any combination of sender, to, since,
+    before, contains, last - field=value pairs separated by , or |, e.g.
+    query_chat(sender=teddy, last=1) for Teddy's most recent message.
+    Read-only, like search_chat - never changes read status."""
+    if not args:
+        raise ValueError(
+            "query_chat needs at least one field=value pair. Supported fields: "
+            + ", ".join(_QUERY_FIELDS)
+            + ". e.g. query_chat(sender=teddy, last=1) for Teddy's most recent message, "
+            "or query_chat(to=qualia, since=2026-08-29T10:00:00)."
+        )
+
+    filters = {}
+    for part in args:
+        if not part or "=" not in part:
+            raise ValueError(f"'{part}' isn't field=value. Supported fields: {', '.join(_QUERY_FIELDS)}")
+        field, value = part.split("=", 1)
+        field = field.strip().lower()
+        value = value.strip()
+        if field not in _QUERY_FIELDS:
+            raise ValueError(f"unknown query field '{field}'. Supported fields: {', '.join(_QUERY_FIELDS)}")
+        if not value:
+            raise ValueError(f"'{field}=' needs a value after the =")
+        filters[field] = value
+
+    matched = list(app.chat_messages)
+
+    if "sender" in filters:
+        wanted = filters["sender"].lower()
+        if wanted not in ("teddy", "qualia", "fenra"):
+            raise ValueError(f"sender must be teddy, qualia, or fenra - got '{filters['sender']}'")
+        matched = [m for m in matched if m["sender"] == wanted]
+
+    if "to" in filters:
+        wanted = filters["to"].lower()
+        if wanted not in ("teddy", "qualia"):
+            raise ValueError(f"to must be teddy or qualia - got '{filters['to']}'")
+        matched = [m for m in matched if m.get("to") == wanted]
+
+    if "since" in filters:
+        since = _parse_chat_time(filters["since"])
+        matched = [m for m in matched if _parse_chat_time(m["timestamp"]) >= since]
+
+    if "before" in filters:
+        before = _parse_chat_time(filters["before"])
+        matched = [m for m in matched if _parse_chat_time(m["timestamp"]) <= before]
+
+    if "contains" in filters:
+        needle = filters["contains"].lower()
+        matched = [m for m in matched if needle in m["text"].lower()]
+
+    if "last" in filters:
+        try:
+            n = int(filters["last"])
+        except ValueError:
+            raise ValueError(f"last must be a whole number - got '{filters['last']}'")
+        if n < 1:
+            raise ValueError("last must be at least 1")
+        matched = matched[-n:]
+
+    if not matched:
+        return "no messages matched that query."
+    return "\n".join(_format_chat_message(m) for m in matched)
+
+
 def fn_send_message(app, args):
     """Send a chat message - real, not fiction, visible immediately in the
     Chat tab. Optionally addressed to Teddy or Qualia specifically via a
@@ -331,6 +404,12 @@ FUNCTION_REGISTRY = {
         "params": "query[, chars]",
         "multi_arg": True,
         "description": "Search the whole chat for a word or phrase and return the surrounding text, without changing any read status. Optionally give how many characters of context on each side (default 200), separated by , or | , e.g. search_chat(truth, 150).",
+    },
+    "query_chat": {
+        "fn": fn_query_chat,
+        "params": "field=value[, field=value...]",
+        "multi_arg": True,
+        "description": "Flexible chat query, never changes read status. Filter by any combination of: sender=teddy|qualia|fenra, to=teddy|qualia, since=<time>, before=<time>, contains=<text>, last=<N> (only the N most recent matches, applied after the other filters). Separate multiple field=value pairs with , or |. e.g. query_chat(sender=teddy, last=1) for Teddy's most recent message, or query_chat(to=qualia, contains=allowance).",
     },
     "send_message": {
         "fn": fn_send_message,
