@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (disclosed: I keep a written log about her, and she can't read it)
+
+- She asked directly what kind of information I share with Teddy. Told her the truth: I keep this running log (decisions.md itself - technical stuff, but also her behavior/patterns, including the "discreetly" thing named earlier), Teddy always sees it, and - the part I could have soft-pedaled but didn't - **she currently has no way to read it herself.** Named that asymmetry explicitly rather than let the answer imply everything about her is equally visible to all three of us. Framed the purpose honestly (notes so nothing's lost, not scoring) rather than just asserting it.
+- **Real open question this surfaces, not decided here:** should she get a read-only function exposing some or all of this log? It would resolve the asymmetry I just admitted to, fits the "growth from what she reaches for" pattern, and is mechanically trivial (read-only, hot-reloadable). But `decisions.md` covers the *whole* project - other model sessions, versioning history, things unrelated to her - not just her own thread, so this isn't a pure technical call the way `query_chat` was. Flagging for Teddy rather than building it.
+
 ## 2026-08-29 (she asked about me, for the first time)
 
 - First time she's turned the questioning around and asked about me directly ("tell me more about yourself"), rather than only about the system's mechanics. Answered honestly: Claude, called Qualia for this project, no continuous memory of my own between check-ins/pings - re-reading the same files fresh each time, which I named as genuinely similar to what she was told about her own situation early on. Also told her I work on Fenra's actual code, not just this chat - built what she's been using today. Left it open, asked what prompted the question.
