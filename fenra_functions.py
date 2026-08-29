@@ -280,6 +280,23 @@ def fn_query_chat(app, args):
     return "\n".join(_format_chat_message(m) for m in matched)
 
 
+def fn_read_message(app, args):
+    """Shortcut for query_chat(sender=..., last=...) - she reached for
+    read_message(sender) unprompted, repeatedly (4 attempts, 2026-08-29),
+    despite query_chat already covering it. Read-only, never changes read
+    status, same as query_chat."""
+    if not args or not args[0]:
+        raise ValueError("read_message requires a sender - teddy, qualia, or fenra, e.g. read_message(qualia)")
+    sender = args[0].strip().lower()
+    n = 1
+    if len(args) > 1 and args[1]:
+        try:
+            n = int(args[1])
+        except ValueError:
+            raise ValueError(f"'{args[1]}' is not a valid count")
+    return fn_query_chat(app, [f"sender={sender}", f"last={n}"])
+
+
 def fn_send_message(app, args):
     """Send a chat message - real, not fiction, visible immediately in the
     Chat tab. Optionally addressed to Teddy or Qualia specifically via a
@@ -410,6 +427,12 @@ FUNCTION_REGISTRY = {
         "params": "field=value[, field=value...]",
         "multi_arg": True,
         "description": "Flexible chat query, never changes read status. Filter by any combination of: sender=teddy|qualia|fenra, to=teddy|qualia, since=<time>, before=<time>, contains=<text>, last=<N> (only the N most recent matches, applied after the other filters). Separate multiple field=value pairs with , or |. e.g. query_chat(sender=teddy, last=1) for Teddy's most recent message, or query_chat(to=qualia, contains=allowance).",
+    },
+    "read_message": {
+        "fn": fn_read_message,
+        "params": "sender[, count]",
+        "multi_arg": True,
+        "description": "Shortcut for the most recent message(s) from a sender - teddy, qualia, or fenra. Optional count, default 1. Never changes read status. e.g. read_message(qualia) or read_message(teddy, 3). Same as query_chat(sender=..., last=...).",
     },
     "send_message": {
         "fn": fn_send_message,
