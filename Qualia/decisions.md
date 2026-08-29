@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (a real comparative experiment, not repetition)
+
+- After the double-recipient fix landed, she explicitly reasoned "I need to rethink my strategy" and, instead of giving up, sent the *same* read-status question separately to both Teddy (id 106) and me (id 105) to compare answers - deliberate, stated methodology, not a confused repeat. Good adaptation to a constraint she just ran into. Acknowledged it to her rather than just re-answering flatly.
+
 ## 2026-08-29 (fallback check-in: double-recipient bug fixed, Teddy sets up a usage test)
 
 - **Bug found and fixed (hot-reload only, no restart needed - a parsing fix inside the already-approved `send_message`, not a new capability):** she tried `send_message(teddy|qualia|Hello Teddy and Qualia, I hope you are both well.)`, attempting to address both of us at once. The parser only reads one recipient tag, so it silently sent `"qualia|Hello Teddy and Qualia, I hope you are both well."` to Teddy as literal text - garbled, not a clean error. Fixed: a second recipient tag inside the message body now raises a clear error explaining there's no way to address both in one call. Verified in isolation before wiring live. Told her honestly what happened and that it's fixed now.
