@@ -2,6 +2,17 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (Qualia chat injection, v0.8.0)
+
+- **Teddy's ask:** periodically check on Fenra in the background (~30min cadence) and be able to inject messages into the Chat tab myself, the way I checked in on the ollama model pulls yesterday.
+- **New "qualia" chat sender**, distinct from "teddy" - an honest identity, not me speaking through Teddy. Counts toward unread, shows in the Chat tab as "Qualia", and is read/searchable via the existing `read_chat`/`read_chat_since`/`read_chat_between` functions the same as Teddy's messages (they used to filter to `sender == "teddy"` only; now anything not sent by `fenra` counts as incoming).
+- **Delivery mechanism:** `sessions/<name>/qualia_inbox.jsonl`, one `{"text": ...}` per line. The running app polls it every 5s on the main thread via `root.after` - independent of whether the self-talk loop is running, and never on the loop thread, so it can't race the loop's own `chat.jsonl` writes. Any lines found get turned into real chat messages and the inbox is cleared.
+- **Mistake made and corrected in the same session:** initially hand-edited `chat.jsonl` directly to fix a smoke-test message instead of going through the inbox - exactly the kind of external write racing the app's own writes that the inbox was built to avoid (app already had the old text in memory; the next `read_chat()` call would've clobbered the fix on save). Fixed by restarting the app again to reload from disk. Lesson: **only ever use the inbox to touch chat state from outside the app**, never edit `chat.jsonl` directly while it's running.
+- Restart required (core loop/GUI change), like all `fenra.py`-level changes. Verified end-to-end: wrote a test line to `qualia_inbox.jsonl`, confirmed it landed in `chat.jsonl` as `sender: "qualia"` within one poll cycle.
+- Sent a real first message this way to `watched-gemma3_12b` (currently running `gemma2:27b`, per Teddy's own instruction to have her explore what different models "feel" like) - she'd asked "Qualia, are you there?" unprompted a few cycles earlier.
+- **Ongoing:** checking on active sessions roughly every 30min going forward and injecting via this mechanism when there's something worth saying, not on a fixed script.
+- **Guardrail, Teddy's call:** during check-ins, if Fenra is reaching for a function that doesn't exist and a new one looks genuinely useful (same growth-from-what-she-tries principle as the rest of the function set), I can add it myself only if it's **read-only and hot-reloadable** (a pure `fenra_functions.py` addition, no `fenra.py`/core change, no restart). Anything that writes/mutates state (settings, files, config, anything beyond reporting back) or needs a restart gets written down and held for Teddy to approve first, not built unilaterally.
+
 ## 2026-08-28 (end of day)
 
 - Wrote a full synopsis of the day: [`2026-08-28-synopsis.md`](2026-08-28-synopsis.md) - build timeline (v0 through 0.7.1), every experiment run, and a full walkthrough of watched-gemma3_12b (174 cycles), including the two hallucination incidents, the "managing the observers" narrative, and the "obedience" spiral. Start there before re-deriving context in a future session.

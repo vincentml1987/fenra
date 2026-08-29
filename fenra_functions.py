@@ -70,7 +70,7 @@ def fn_set_desire(app, args):
 
 
 def _format_chat_message(m):
-    who = "Teddy" if m["sender"] == "teddy" else "Fenra"
+    who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
     return f"[{m['timestamp']}] {who}: {m['text']}"
 
 
@@ -85,8 +85,8 @@ def _parse_chat_time(s):
 
 
 def fn_read_chat(app, args):
-    """Unread messages from Teddy only. Marks them read."""
-    unread = [m for m in app.chat_messages if m["sender"] == "teddy" and not m.get("read", True)]
+    """Unread messages from Teddy or Qualia. Marks them read."""
+    unread = [m for m in app.chat_messages if m["sender"] != "fenra" and not m.get("read", True)]
     if not unread:
         return "no unread messages."
     formatted = [_format_chat_message(m) for m in unread]
@@ -97,8 +97,8 @@ def fn_read_chat(app, args):
 
 
 def fn_read_chat_since(app, args):
-    """All messages (both directions) from a given time onward. Marks any
-    matched incoming (Teddy's) messages read."""
+    """All messages (all directions) from a given time onward. Marks any
+    matched incoming (Teddy's or Qualia's) messages read."""
     if not args or not args[0]:
         raise ValueError("read_chat_since requires a time, e.g. read_chat_since(2026-08-28T10:00:00)")
     since = _parse_chat_time(args[0])
@@ -108,7 +108,7 @@ def fn_read_chat_since(app, args):
     formatted = [_format_chat_message(m) for m in matched]
     changed = False
     for m in matched:
-        if m["sender"] == "teddy" and not m.get("read", True):
+        if m["sender"] != "fenra" and not m.get("read", True):
             m["read"] = True
             changed = True
     if changed:
@@ -117,8 +117,8 @@ def fn_read_chat_since(app, args):
 
 
 def fn_read_chat_between(app, args):
-    """All messages (both directions) between two times, separated by |.
-    Marks any matched incoming (Teddy's) messages read."""
+    """All messages (all directions) between two times, separated by |.
+    Marks any matched incoming (Teddy's or Qualia's) messages read."""
     if len(args) < 2 or not args[0] or not args[1]:
         raise ValueError(
             "read_chat_between requires two times separated by |, "
@@ -132,7 +132,7 @@ def fn_read_chat_between(app, args):
     formatted = [_format_chat_message(m) for m in matched]
     changed = False
     for m in matched:
-        if m["sender"] == "teddy" and not m.get("read", True):
+        if m["sender"] != "fenra" and not m.get("read", True):
             m["read"] = True
             changed = True
     if changed:
@@ -241,18 +241,18 @@ FUNCTION_REGISTRY = {
     "read_chat": {
         "fn": fn_read_chat,
         "params": "",
-        "description": "Show only your unread messages from Teddy, and mark them as read.",
+        "description": "Show only your unread messages from Teddy or Qualia, and mark them as read.",
     },
     "read_chat_since": {
         "fn": fn_read_chat_since,
         "params": "time",
-        "description": "Show every chat message (both directions) from the given time onward, and mark any of Teddy's messages in that range as read. Time format matches now(), e.g. read_chat_since(2026-08-28T10:00:00).",
+        "description": "Show every chat message (all directions) from the given time onward, and mark any of Teddy's or Qualia's messages in that range as read. Time format matches now(), e.g. read_chat_since(2026-08-28T10:00:00).",
     },
     "read_chat_between": {
         "fn": fn_read_chat_between,
         "params": "start, end",
         "multi_arg": True,
-        "description": "Show every chat message (both directions) between two times, and mark any of Teddy's messages in that range as read. Two times, separated by , or | , e.g. read_chat_between(2026-08-28T10:00:00, 2026-08-28T14:00:00).",
+        "description": "Show every chat message (all directions) between two times, and mark any of Teddy's or Qualia's messages in that range as read. Two times, separated by , or | , e.g. read_chat_between(2026-08-28T10:00:00, 2026-08-28T14:00:00).",
     },
     "search_chat": {
         "fn": fn_search_chat,

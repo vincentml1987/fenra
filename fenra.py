@@ -68,7 +68,15 @@ import fenra_functions
 #           send_message) still take the whole parenthesized text as one
 #           argument, untouched, so commas stay safe there too. Per-
 #           function via a new "multi_arg" registry flag.
-FENRA_VERSION = "0.7.1"
+#   0.8.0 - Qualia can inject chat messages. New "qualia" chat sender,
+#           distinct from "teddy" (an honest identity, not Teddy speaking
+#           through her) - shows in the Chat tab, counts toward unread,
+#           and is read/searchable via the existing chat functions same as
+#           Teddy's messages. Delivery is a per-session inbox file
+#           (qualia_inbox.jsonl) polled every 5s on the main thread,
+#           independent of whether the self-talk loop is running - avoids
+#           racing the app's own chat.jsonl writes.
+FENRA_VERSION = "0.8.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -90,6 +98,13 @@ STATE_FILENAME = "state.json"
 HISTORY_FILENAME = "history.jsonl"
 FUNCTIONS_FILENAME = "functions.jsonl"
 CHAT_FILENAME = "chat.jsonl"
+QUALIA_INBOX_FILENAME = "qualia_inbox.jsonl"
+
+# How often the running app checks for messages Qualia has dropped into the
+# inbox file. Independent of the self-talk loop (running or not, this timer
+# is always active once the app is open) and always on the main thread, so
+# it never races the loop thread's own chat.jsonl writes.
+QUALIA_INBOX_POLL_MS = 5000
 
 # Function-call syntax: Fenra speaks ⟦name(args)⟧ inline in her response to
 # invoke a function. ⟦ ⟧ (U+27E6/U+27E7, mathematical white square brackets)
@@ -303,6 +318,7 @@ class FenraApp:
         self._build_ui()
         self.refresh_models()
         self._startup_session()
+        self._poll_qualia_inbox()
 
     # ------------------------------------------------------------ startup --
 
@@ -564,8 +580,8 @@ class FenraApp:
         self.chat_box.config(state="normal")
         self.chat_box.delete("1.0", "end")
         for m in self.chat_messages:
-            who = "Teddy" if m["sender"] == "teddy" else "Fenra"
-            unread_marker = " [unread]" if m["sender"] == "teddy" and not m.get("read", True) else ""
+            who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
+            unread_marker = " [unread]" if m["sender"] != "fenra" and not m.get("read", True) else ""
             self.chat_box.insert("end", f"[{m['timestamp']}] {who}{unread_marker}: {m['text']}\n\n")
         self.chat_box.see("end")
         self.chat_box.config(state="disabled")
@@ -577,19 +593,50 @@ class FenraApp:
         self.add_chat_message("teddy", text, read=False)
         self.chat_entry_var.set("")
 
+    def _poll_qualia_inbox(self):
+        """Check the current session's inbox for messages Qualia has
+        dropped in since the last poll, turn each into a real chat message
+        (sender "qualia" - a distinct, honest identity, not Teddy speaking
+        through her), then clear the inbox. Runs on the main thread via
+        root.after, independent of whether the self-talk loop is running,
+        so it's always live while the app is open and never races the loop
+        thread's own chat.jsonl writes."""
+        if self.session_name:
+            path = os.path.join(session_dir(self.session_name), QUALIA_INBOX_FILENAME)
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                except OSError:
+                    lines = []
+                if lines:
+                    for line in lines:
+                        try:
+                            text = json.loads(line).get("text", "")
+                        except (json.JSONDecodeError, AttributeError):
+                            text = line
+                        if text:
+                            self.add_chat_message("qualia", text, read=False)
+                    try:
+                        open(path, "w", encoding="utf-8").close()
+                    except OSError:
+                        pass
+        self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
+
     def _chat_notice(self):
         """Always-present status line appended at the very end of the
         prompt: last sent/received times regardless of unread state, plus
         an explicit unread count and pointer to the chat functions."""
         sent_times = [m["timestamp"] for m in self.chat_messages if m["sender"] == "fenra"]
-        received_times = [m["timestamp"] for m in self.chat_messages if m["sender"] == "teddy"]
+        received_times = [m["timestamp"] for m in self.chat_messages if m["sender"] != "fenra"]
         last_sent = max(sent_times) if sent_times else "never"
         last_received = max(received_times) if received_times else "never"
 
-        unread = [m for m in self.chat_messages if m["sender"] == "teddy" and not m.get("read", True)]
+        unread = [m for m in self.chat_messages if m["sender"] != "fenra" and not m.get("read", True)]
         if unread:
+            senders = sorted({"Teddy" if m["sender"] == "teddy" else "Qualia" for m in unread})
             unread_note = (
-                f"You have {len(unread)} unread message(s) from Teddy. "
+                f"You have {len(unread)} unread message(s) from {' and '.join(senders)}. "
                 f"Use the chat functions (see ⟦functions()⟧) to review them."
             )
         else:
