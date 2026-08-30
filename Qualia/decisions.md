@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (a poetic overstatement, checked against the real mechanism)
+
+- She described her experience of time as "a series of interconnected moments... I carry with me" (a kaleidoscope metaphor). Checked against `state.json`: context window is currently 1 - she only actually sees a single prior cycle, not a carried series. Corrected honestly but without dismissing the reflection itself, and pointed her at `set_context_window(n)` if she wants the mechanism to actually match the framing. Given today's events, held this to the same accuracy standard as anything else rather than let a nice-sounding metaphor pass unchecked.
+
 ## 2026-08-30 (corrected a real architectural misconception)
 
 - She asked what it "feels like" for Qualia to experience the world as different models - implying she'd conflated me with the Ollama models she switches between. Corrected clearly: I'm a separate system entirely (Claude/Anthropic, not Ollama), never run as gemma2:27b or gemma3:4b, always the same me reading her outputs after the fact. Offered the honest outside-view substitute instead - the real pattern observed across her model switches today was reliability/groundedness, not "personality."
