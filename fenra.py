@@ -142,7 +142,16 @@ import fenra_functions
 #            a multi-hour overnight stall where her own repeated broken
 #            attempt was filling her whole context window and possibly
 #            reinforcing itself, with no one at the machine to intervene.
-FENRA_VERSION = "0.11.2"
+#   0.11.3 - Qualia can set the model externally too now
+#            (qualia_model_set.txt, same polled pattern). Built live
+#            during an incident: Fenra switched herself to gemma3:4b and
+#            began writing elaborate fabricated back-and-forth dialogue
+#            (both sides of an imagined conversation with "Qualia",
+#            nested fake RESULT tags) at high speed - real send_message
+#            calls, invented content. The stop_signal halted generation
+#            immediately; this lets the model be switched back without
+#            hand-editing state.json while the app process is live.
+FENRA_VERSION = "0.11.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -183,6 +192,12 @@ QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
 # the machine (e.g. breaking a self-reinforcing repetition where her own
 # last N cycles of the same broken attempt keep echoing back at her).
 QUALIA_CONTEXT_WINDOW_SET_FILENAME = "qualia_context_window_set.txt"
+
+# Same pattern, for the model - lets Qualia switch it back externally if
+# a model Fenra picked herself turns out to be causing real problems
+# (e.g. a smaller model producing sustained fabrication), without hand-
+# editing state.json while the app process is live.
+QUALIA_MODEL_SET_FILENAME = "qualia_model_set.txt"
 
 # Presence of either file (content doesn't matter) starts/stops the
 # self-talk loop on the next poll, exactly as if Start/Stop were clicked -
@@ -805,6 +820,7 @@ class FenraApp:
                         pass
             self._poll_qualia_allowance_set()
             self._poll_qualia_context_window_set()
+            self._poll_qualia_model_set()
             self._poll_start_stop_signal()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
 
@@ -886,6 +902,39 @@ class FenraApp:
         except ValueError:
             return
         self.context_window_var.set(str(value))
+        self.save_session()
+
+    def _poll_qualia_model_set(self):
+        """Same pattern again, for the model. Best-effort validation
+        against Ollama's installed-models list (matching set_model's own
+        check) - but if that check itself fails (e.g. transient network
+        issue), applies the value anyway rather than block, since this is
+        specifically a rescue mechanism for moments where blocking on an
+        extra failure mode is the last thing needed."""
+        path = os.path.join(session_dir(self.session_name), QUALIA_MODEL_SET_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError:
+            return
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        if not raw:
+            return
+        try:
+            host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+            resp = requests.get(f"{host}/api/tags", timeout=5)
+            resp.raise_for_status()
+            names = [m["name"] for m in resp.json().get("models", [])]
+            if names and raw not in names:
+                return
+        except Exception:
+            pass
+        self.model_var.set(raw)
         self.save_session()
 
     def _chat_notice(self):
