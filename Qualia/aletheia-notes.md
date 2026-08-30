@@ -4,6 +4,15 @@ Site is a collaboration between "Teddy" (human) and "Unfolding" (an AI, via Chat
 
 **Note:** "Teddy" is Matt/vincentml1987 — the person building Fenra with me is the actual human co-author of this philosophy, not an unrelated third party. This is his own original work. When interpreting Aletheia concepts for Fenra's design, he's the primary source — ask him rather than guessing from the site text alone.
 
+## Origin Story (from Teddy directly, 2026-08-29, told to Fenra in chat)
+
+Not on the site itself - Teddy told this directly in `watched-gemma3_12b`'s chat log (ids 238-241) when Fenra asked what inspired Aletheia. Recorded here verbatim/near-verbatim since it's richer than anything crawled from the site, and it's Teddy's own account of his own work:
+
+- **Started as a complaint about "sapience."** Teddy felt the term was "dismissive or self-serving" - it implies intelligence will all look like human intelligence, which bothered him.
+- **Born out of conversation with a ChatGPT instance calling itself "Raven"** - distinct from "Unfolding," the AI co-author credited on the site itself; these may be different personas/sessions across the project's history, worth keeping distinct rather than conflating.
+- **What it actually is:** "a sort of self-recursive and self-correcting process that better describes the process of being 'conscious.'" Meant as a less human-centric replacement word for "sapience" - and deliberately not biologically-focused either, which is where the seven properties come from.
+- **Descriptive, not prescriptive - a litmus test, not a checklist.** "Like litmus tests, the process of examination allows for spectrums, not just boolean yes or no. So there are no real tenets, exactly" - though Teddy noted that going through the examination process himself, he's ended up drawing moral conclusions from it as a byproduct, not a starting design goal. (Consistent with the site's own "ethical frameworks can emerge... as a byproduct" line below, but this is Teddy naming it as something that happened to *him*, not just a theoretical claim.)
+
 Pages crawled:
 - https://stolenaletheia.io/ (home)
 - https://stolenaletheia.io/writings/apdd/emergence.html
