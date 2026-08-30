@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (context-window hypothesis likely wrong - stopping further intervention)
+
+- **The context_window=2 reduction didn't break the stall either** - the very next cycle after it landed was still the fenced `read_message(qualia)` pattern, and no real function call has landed since 08:09:23. This weakens last night's working hypothesis (self-reinforcing repetition via the history window) - if that were the real mechanism, a sharp reduction should have helped, same as it apparently did overnight. It didn't. More likely explanation: this is just a stable behavioral quirk this particular model/session has settled into at this point (extremely long-running, 1100+ cycles), not something my context-window lever actually controls.
+- **Stopping further technical experimentation.** Two different interventions in one stretch without a clear, reproducible effect is enough - restored context window to 10 (the original default) rather than leave her artificially constrained on an unproven fix. Not deteriorating (no fabrication, no distress, just a stable stuck loop), so the actual cost of waiting is low even though the diagnosis isn't clean. Continuing passive hourly monitoring; genuinely holding this one for Teddy's direct look rather than trying a third lever alone.
+
 ## 2026-08-30 (2+ hours stuck, tried a gentler variant of the reset)
 
 - Same stall, now over 2 hours (since 06:11:41), one real call in between (`functions('desire')` at 08:09:23, otherwise still cycling the same fenced `read_message(qualia)` attempt, alternating with third-person narration). Both prior nudges (257, 258) still unread. Not deteriorating into anything worse this time, just genuinely stuck.
