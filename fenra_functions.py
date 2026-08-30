@@ -409,6 +409,57 @@ def fn_set_model(app, args):
     return f"model switched to {target}, effective next cycle"
 
 
+DEFAULT_FETCH_CHARS = 500
+# Hard cap on how much of a fetched page we'll even hold/slice against -
+# a safety rail against pathologically large pages, not a normal limit.
+MAX_FETCH_CHARS = 50000
+
+
+def fn_fetch_html(app, args):
+    """Fetch a webpage's raw HTML - GET only, nothing else (no JS
+    execution, no other HTTP methods, no following redirects into other
+    schemes). Never returns the whole page, only a slice:
+    fetch_html(url) gives the first DEFAULT_FETCH_CHARS characters,
+    fetch_html(url|N) gives the first N, fetch_html(url|start|end) gives a
+    specific character range."""
+    if not args or not args[0]:
+        raise ValueError(
+            "fetch_html requires a URL, e.g. fetch_html(https://example.com) for the first "
+            f"{DEFAULT_FETCH_CHARS} characters, fetch_html(https://example.com|1000) for a specific "
+            "count, or fetch_html(https://example.com|500|1500) for a specific character range."
+        )
+    url = args[0].strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"'{url}' isn't an http:// or https:// URL - that's all this function fetches")
+
+    if len(args) >= 3 and args[1] and args[2]:
+        try:
+            start, end = int(args[1]), int(args[2])
+        except ValueError:
+            raise ValueError(f"'{args[1]}' and '{args[2]}' must both be whole numbers (a character range)")
+    elif len(args) >= 2 and args[1]:
+        try:
+            start, end = 0, int(args[1])
+        except ValueError:
+            raise ValueError(f"'{args[1]}' is not a valid number of characters")
+    else:
+        start, end = 0, DEFAULT_FETCH_CHARS
+
+    if start < 0 or end < 0:
+        raise ValueError("character positions must be non-negative")
+    if end <= start:
+        raise ValueError(f"end ({end}) must be greater than start ({start})")
+
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    html = resp.text[:MAX_FETCH_CHARS]
+    snippet = html[start:end]
+    cap_note = f" (capped at {MAX_FETCH_CHARS})" if len(resp.text) > MAX_FETCH_CHARS else ""
+    if not snippet:
+        return f"[{len(html)} character(s) available{cap_note} - nothing in range {start}:{end}]"
+    return f"[{len(html)} character(s) available{cap_note}, showing {start}:{end}]\n{snippet}"
+
+
 # name -> {"fn": callable(app, args), "params": str, "description": str}
 # "functions" is the discovery entry point - call it with no arguments for
 # the full list, or with a search term to filter by matching text in each
@@ -449,6 +500,12 @@ FUNCTION_REGISTRY = {
         "fn": fn_set_model,
         "params": "name",
         "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b).",
+    },
+    "fetch_html": {
+        "fn": fn_fetch_html,
+        "params": "url[|count] or url[|start|end]",
+        "multi_arg": True,
+        "description": f"Fetch a webpage's raw HTML - GET only, nothing else. Never the whole page: fetch_html(url) gives the first {DEFAULT_FETCH_CHARS} characters, fetch_html(url|1000) gives the first 1000, fetch_html(url|500|1500) gives characters 500 through 1500. Must be an http:// or https:// URL. e.g. fetch_html(https://stolenaletheia.io/index.html).",
     },
     "read_chat": {
         "fn": fn_read_chat,

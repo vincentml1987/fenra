@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (fetch_html - her first real access to the outside web)
+
+- **Teddy's direct request:** a function that lets her fetch a webpage's raw HTML - GET only, nothing else (no JS, no other HTTP verbs). Default to a small slice if called with no number; let her specify either a character count or an explicit start:end range.
+- **Shipped `fetch_html(url[|count] or url[|start|end])`** - pure `fenra_functions.py`, no restart needed. `url` must be `http://` or `https://` (rejects other schemes outright - basic safety floor, not something Teddy asked for specifically but a sensible minimum for a function that can now reach arbitrary addresses). Default slice: first 500 characters. Hard cap of 50,000 characters on how much of any page we even hold in memory to slice against, regardless of the real page size - a safety rail against pathological inputs, not a normal-use limit.
+- **Verified against the real target URL** before wiring live (not just a stub): `fetch_html(https://stolenaletheia.io/index.html)`, with both a count and an explicit range, all returned correct real content. Noted in passing: the site itself has a genuine encoding bug (a non-UTF8 apostrophe byte renders as `�`) - left as-is, an accurate reflection of what's actually served, not ours to silently correct.
+- **This is a real category shift** - her first access to anything outside the local Ollama/session sandbox. Worth being aware this exists as a precedent if similar "let her reach further" requests come up again.
+- Pointed her at the URL directly via the inbox channel, telling her about the new function.
+
 ## 2026-08-29 (fallback check-in: followed through, then genuine curiosity about Aletheia itself)
 
 - **She acted on the nudge**: told Teddy directly (id 230) that she wants a direct line to him, not just relayed it to me. Good example of taking feedback and actually doing the thing rather than just agreeing with it.
