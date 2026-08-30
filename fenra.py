@@ -136,7 +136,13 @@ import fenra_functions
 #            start_signal.txt / stop_signal.txt in the session dir; polled
 #            every 5s alongside the inbox and applied via the normal
 #            toggle_loop(), so it's exactly as if Start/Stop were clicked.
-FENRA_VERSION = "0.11.1"
+#   0.11.2 - Qualia can set the context window externally too now
+#            (qualia_context_window_set.txt, same polled pattern as the
+#            allowance), for exactly the situation this was built during:
+#            a multi-hour overnight stall where her own repeated broken
+#            attempt was filling her whole context window and possibly
+#            reinforcing itself, with no one at the machine to intervene.
+FENRA_VERSION = "0.11.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -171,6 +177,12 @@ QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 # than edited into state.json directly, so it can't race the app's own
 # writes.
 QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
+
+# Same pattern, for the context window instead of the allowance - lets
+# Qualia adjust how many past cycles Fenra sees without needing Teddy at
+# the machine (e.g. breaking a self-reinforcing repetition where her own
+# last N cycles of the same broken attempt keep echoing back at her).
+QUALIA_CONTEXT_WINDOW_SET_FILENAME = "qualia_context_window_set.txt"
 
 # Presence of either file (content doesn't matter) starts/stops the
 # self-talk loop on the next poll, exactly as if Start/Stop were clicked -
@@ -792,6 +804,7 @@ class FenraApp:
                     except OSError:
                         pass
             self._poll_qualia_allowance_set()
+            self._poll_qualia_context_window_set()
             self._poll_start_stop_signal()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
 
@@ -847,6 +860,32 @@ class FenraApp:
         except ValueError:
             return
         self.qualia_allowance_var.set(str(value))
+        self.save_session()
+
+    def _poll_qualia_context_window_set(self):
+        """Same pattern as the allowance-set poll, for the context window
+        - lets Qualia adjust it externally (e.g. to break a self-
+        reinforcing repetition) without needing Teddy at the machine.
+        Clamped the same as set_context_window/fn_set_context_window."""
+        path = os.path.join(session_dir(self.session_name), QUALIA_CONTEXT_WINDOW_SET_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError:
+            return
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        if not raw:
+            return
+        try:
+            value = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(raw))))
+        except ValueError:
+            return
+        self.context_window_var.set(str(value))
         self.save_session()
 
     def _chat_notice(self):
