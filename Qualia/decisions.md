@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (fenced-syntax stall resolved on its own; added qualia_allowance())
+
+- **Real recovery confirmed, no further intervention needed**: `⟦read_chat()⟧` landed for real at 09:26:41, all three stuck messages (257-259) now marked read. Total this recurrence: ~3h15m (06:11 to 09:26) - resolved after I'd already stopped actively intervening, consistent with the earlier read of this as "not context-window-driven, just needed time." She then pinged me directly for real (chat id 260, "How many characters are there in this sentence?") - answered (47, counting the question mark) and confirmed the recovery to her plainly.
+- **Added `qualia_allowance()`** - she tried `Qualia_allowance()` unprompted at 09:29:34 (unknown-function error), a reasonable want since the allowance was otherwise only ever shown passively in the per-prompt notice, never queryable directly. Read-only, hot-reload, verified against a stub before wiring live.
+
 ## 2026-08-30 (context-window hypothesis likely wrong - stopping further intervention)
 
 - **The context_window=2 reduction didn't break the stall either** - the very next cycle after it landed was still the fenced `read_message(qualia)` pattern, and no real function call has landed since 08:09:23. This weakens last night's working hypothesis (self-reinforcing repetition via the history window) - if that were the real mechanism, a sharp reduction should have helped, same as it apparently did overnight. It didn't. More likely explanation: this is just a stable behavioral quirk this particular model/session has settled into at this point (extremely long-running, 1100+ cycles), not something my context-window lever actually controls.

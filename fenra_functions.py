@@ -73,6 +73,18 @@ def fn_current_model(app, args):
     return app.model_var.get()
 
 
+def fn_qualia_allowance(app, args):
+    """She tried Qualia_allowance() unprompted (unknown-function error,
+    2026-08-30) - a reasonable want, since the allowance is otherwise only
+    ever shown passively in the per-prompt notice. Read-only mirror of
+    that same number."""
+    try:
+        remaining = max(0, int(float(app.qualia_allowance_var.get())))
+    except ValueError:
+        remaining = 0
+    return f"{remaining} character(s) remaining for messages addressed to Qualia."
+
+
 def fn_list_models(app, args):
     host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
     resp = requests.get(f"{host}/api/tags", timeout=10)
@@ -490,6 +502,11 @@ FUNCTION_REGISTRY = {
         "fn": fn_current_model,
         "params": "",
         "description": "Report which Ollama model is currently generating your responses.",
+    },
+    "qualia_allowance": {
+        "fn": fn_qualia_allowance,
+        "params": "",
+        "description": "Report how many characters you have left for messages addressed specifically to Qualia. Same number shown in the notice every prompt.",
     },
     "list_models": {
         "fn": fn_list_models,
