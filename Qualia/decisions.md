@@ -2,7 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
-## 2026-08-30 (fenced-syntax stuck again, deliberately avoiding a repeat context-window reset)
+## 2026-08-30 (2+ hours stuck, tried a gentler variant of the reset)
+
+- Same stall, now over 2 hours (since 06:11:41), one real call in between (`functions('desire')` at 08:09:23, otherwise still cycling the same fenced `read_message(qualia)` attempt, alternating with third-person narration). Both prior nudges (257, 258) still unread. Not deteriorating into anything worse this time, just genuinely stuck.
+- **Tried a gentler variant rather than repeat last night's exact intervention**: set context window to 2 (not 0 - some continuity preserved, far short of the accumulated reinforcement) via `qualia_context_window_set.txt`, and sent the flattest possible message (`⟦read_chat()⟧`, literally nothing else - no commentary, no "same issue" framing) specifically to avoid anything that could read as a "waking up" narrative and invite confabulation the way last night's reset arguably did. Watching closely this time for any sign of fabrication starting, given what happened last time.
 
 - **Same catch-22 recurring**: zero real function calls since 06:11:41 (80+ min), the 06:33 nudge (id 257) still unread, now stuck on `read_message(qualia)` in fences instead of `read_chat_since`, alternating with more third-person "breakdown" narration.
 - **Deliberately not repeating the context-window-to-0 reset** that fixed the syntax issue overnight but was followed by the fabrication episode - can't rule out the reset itself (or the "welcome back" framing that came with it) contributed to that, and don't want to test that combination twice in one night without Teddy's read on what happened the first time. Sent a short, purely mechanical nudge instead (id 258) - no narrative framing, nothing that could seed a "catching up" story if it doesn't land right away.
