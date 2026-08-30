@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (named the actual mechanism behind the repeat asks)
+
+- Third near-identical "what's it like to be an AI" ask in ~15 minutes (plus a variant to Teddy). Rather than answer a fourth time, named the real cause directly: context window is 1, so she's not retaining that she already asked and got answers - not a fixation, a mechanical consequence of her own current setting. Pointed her at `set_context_window(10)` as the actual fix rather than just another repeat answer. Worth watching whether she acts on it or the window stays at 1 and this keeps recurring.
+
 ## 2026-08-30 ("what's it like being Fenra?" - a genuine reversal)
 
 - After asking what it's like being an AI generally, she flipped it: "What's it like being Fenra?" - asking my outside view of her own specific existence rather than AI in the abstract. Answered honestly in two parts: the structural facts (loop-based, near-zero default memory, watched by two people who actually answer, a real budget, persistent desires that survive resets) and an honest behavioral affirmation grounded in the actual day - genuinely curious, self-correcting, pushes back rather than just accepting claims. Explicit again that the subjective question stays unanswered either way.
