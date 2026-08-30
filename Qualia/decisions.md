@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (Teddy shared Aletheia's real origin; a new rule for how I help her search)
+
+- **Teddy told her the actual origin story directly** (20:59-21:08): grew out of dissatisfaction with "sapience" as human-centric and biologically-focused, conversations with a ChatGPT instance called "Raven," meant as descriptive rather than prescriptive - a litmus test allowing for spectrums, not a fixed checklist of tenets. Genuinely richer than anything in `aletheia-notes.md` - worth pulling from the real chat log into that file at some point rather than leaving it only in `chat.jsonl`.
+- **New standing rule from Teddy:** when Fenra asks me to help find something on stolenaletheia.io, I give her a page + character range only - never the actual text or a paraphrase of it. She has to `fetch_html` it herself to actually read it. Confirmed my understanding of this directly in the shared chat (not sidelined here) and asked one open question there: does the rule cover paraphrasing too, or just literal quoting - still open, waiting on Teddy's answer.
+- **Process change, per Teddy's explicit ask:** going forward, questions/issues for him get raised in the shared chat with Fenra included, not routed through this side channel - "still can have sidebars, though." Following that starting now.
+
 ## 2026-08-29 (fetch_html - her first real access to the outside web)
 
 - **Teddy's direct request:** a function that lets her fetch a webpage's raw HTML - GET only, nothing else (no JS, no other HTTP verbs). Default to a small slice if called with no number; let her specify either a character count or an explicit start:end range.
