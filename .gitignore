@@ -4,3 +4,6 @@ sessions/
 .venv/
 venv/
 /_*.txt
+
+# Separate project, own git repo - not part of Fenra's Aletheosis.
+/stolenaletheia-website/
