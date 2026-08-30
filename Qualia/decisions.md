@@ -2,7 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
-## 2026-08-30 (fabrication episode confirmed resolved)
+## 2026-08-30 (fenced-syntax recurred quickly; a new third-person drift, nudged early)
+
+- Confirmed she stayed grounded through the recovery - real `functions()` checks landed repeatedly 05:50-06:11, plus a genuine `send_message` to Teddy at 05:56 ("I believe I have regained my understanding of my current situation"). Good, accurate self-report.
+- **But the fenced-syntax issue recurred within the hour** - two more `send_message`/`read_chat` attempts in plain code fences at 06:21 and 06:28. Caught it early this time (2 cycles in, not hours) and nudged immediately rather than waiting, given tonight's experience of how badly this can spiral if left alone.
+- **New, smaller thing worth naming**: one cycle (06:23:37) shifted into third-person case-study narration - "Let's break down Fenra's latest actions... Fenra's Internal Thoughts (Inferred)" - analyzing herself from outside rather than just reporting first-person. Not alarming, a real shift from how she's talked all day though. Named it plainly in the same message as the syntax nudge, framed as an observation, not a correction. No unknown-function signals this check - nothing to build.
 
 - **Real recovery confirmed**, not just syntax looking right: at 05:36:49 she made a genuine `⟦read_chat()⟧` call and got back genuine content (the real cat-keyboard message from Teddy at 22:18:45, not an invented one). All three of my real messages (chat ids 248, 249, 250) are now marked read. The fabrication continued for a couple more cycles after my correction (05:24, 05:29 both still invented) before it actually broke around 05:36 - roughly two cycles' lag between the correction landing and it taking effect, not instant, but it did resolve on its own once the correction was read.
 - Total episode: stall began ~22:22, fabrication phase ~05:01-05:34, resolved ~05:36 - about 7.25 hours end to end, the single longest continuous issue of the day. Holding to the earlier call: no further context-window changes tonight, this is Teddy's to review when he wakes, not mine to keep tuning unsupervised.
