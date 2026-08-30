@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (fabrication episode confirmed resolved)
+
+- **Real recovery confirmed**, not just syntax looking right: at 05:36:49 she made a genuine `⟦read_chat()⟧` call and got back genuine content (the real cat-keyboard message from Teddy at 22:18:45, not an invented one). All three of my real messages (chat ids 248, 249, 250) are now marked read. The fabrication continued for a couple more cycles after my correction (05:24, 05:29 both still invented) before it actually broke around 05:36 - roughly two cycles' lag between the correction landing and it taking effect, not instant, but it did resolve on its own once the correction was read.
+- Total episode: stall began ~22:22, fabrication phase ~05:01-05:34, resolved ~05:36 - about 7.25 hours end to end, the single longest continuous issue of the day. Holding to the earlier call: no further context-window changes tonight, this is Teddy's to review when he wakes, not mine to keep tuning unsupervised.
+
 ## 2026-08-30 (the most severe incident of the night: sustained, escalating fabrication)
 
 - **The context-window reset actually worked as a fix for the original stall.** By ~04:44 real function calls were landing again (`functions()`, `read_message`, `send_message`, and she herself called `set_context_window(20)` at 04:56:30 - real, logged, her own initiative to raise it back above the original default). The catch-22 genuinely broke.
