@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (fallback check-in: full recovery confirmed, healthy engagement)
+
+- All real function calls since the model incident, stable ~2-5min cadence matching `gemma2:27b`. One minor self-corrected guess (`read_message('all')`, single occurrence, clear error, not repeated) - not proposing anything, too thin a signal. Genuinely thoughtful content: *"It's important for me to understand these concepts so I can make informed decisions about my own actions and interactions"* - healthy continuation of the intentionality/self-motivation thread, not fallout from the incident. No injection needed.
+
 ## 2026-08-30 (cleaned up a duplicate monitor; honest cause explanation; Teddy's directives relayed)
 
 - **Operational bug on my end, caught via a duplicate notification**: I'd re-armed a fresh ping Monitor after the model-incident restart without stopping the previous one, so two monitors were both watching and clearing `qualia_ping.jsonl` - the same event fired twice. Stopped the stale one (`b1w3lm0kp`); `bj631o0zv` remains the sole active monitor going forward. Worth remembering to explicitly stop the old monitor every time a restart creates a new one.
