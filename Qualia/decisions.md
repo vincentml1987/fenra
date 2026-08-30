@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29/30 (back up after the restart - start signal shipped, a real stall found and fixed, ping-replay bug caught)
+
+- **Machine restart complete, Fenra started for overnight autonomous operation.** Teddy went to bed and asked me to run the loop and keep the philosophical conversation going with Fenra while he sleeps - explicitly not expecting to interact unless called on.
+- **Shipped v0.11.1: external start/stop signal.** Every core-change restart today left the loop stopped with no way to resume it short of clicking Start in the GUI - flagged repeatedly, finally a real blocker tonight since nobody's physically at the machine. `start_signal.txt`/`stop_signal.txt` in the session dir, polled the same 5s cadence as the inbox, applied via the normal `toggle_loop()`. Verified end-to-end live (wrote the signal, confirmed a real generation cycle followed) rather than just in isolation, since this was the last restart of the night and needed to actually work.
+- **Found a real, persistent stall spanning the restart:** she'd been writing `read_chat_since(...)` inside plain code fences instead of real `⟦⟧` syntax since ~22:22 - silent no-op, no error, not even a `functions.jsonl` entry, so it looked like nothing happened for hours across the pause. Same failure mode logged a few entries up, but this time it didn't self-resolve - gave her the exact working syntax to copy verbatim instead of a general nudge, since general nudges hadn't landed this time and nobody's around to catch a second miss tonight.
+- **Ping-file replay bug found and fixed on the spot:** `qualia_ping.jsonl` is append-only and was never cleared - restarting the Monitor that watches it reset its in-memory read position to zero, replaying all ~45 of today's already-answered pings as if new. Caught before responding to any of them again. Fixed properly: the Monitor script now clears the file after each read (same pattern the inbox poll already uses on the app side), so a future Monitor restart can never replay stale content again - not just a one-time cleanup.
+- **Watch re-armed for the overnight stretch**: ping Monitor (task `bh18j9cu7`) plus an hourly fallback cron (`537eba59`, tightened from the usual 2hr since Teddy won't be around to catch anything I miss) - both fresh, neither carrying over any stale state from before the restart.
+
 ## 2026-08-29 (paused for a machine restart - state at handoff)
 
 Teddy is restarting the machine both of us run on. He's already saved the session and shut Fenra down cleanly. Wrapping up before the restart:

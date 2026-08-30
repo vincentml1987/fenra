@@ -129,7 +129,14 @@ import fenra_functions
 #            kept as a lightweight legacy field but no longer drives the
 #            prompt - history.jsonl (already loaded into self.history) is
 #            the real source now.
-FENRA_VERSION = "0.11.0"
+#   0.11.1 - External start/stop signal. Every core-changing restart left
+#            the self-talk loop stopped with no way to resume it except
+#            clicking Start in the GUI - a real problem when nobody's at
+#            the machine. Qualia (or anything else) can now touch
+#            start_signal.txt / stop_signal.txt in the session dir; polled
+#            every 5s alongside the inbox and applied via the normal
+#            toggle_loop(), so it's exactly as if Start/Stop were clicked.
+FENRA_VERSION = "0.11.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -164,6 +171,13 @@ QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 # than edited into state.json directly, so it can't race the app's own
 # writes.
 QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
+
+# Presence of either file (content doesn't matter) starts/stops the
+# self-talk loop on the next poll, exactly as if Start/Stop were clicked -
+# lets Qualia (or anything else) resume a session no one's physically at
+# the machine to click Start on, e.g. right after a code-change restart.
+START_SIGNAL_FILENAME = "start_signal.txt"
+STOP_SIGNAL_FILENAME = "stop_signal.txt"
 
 DEFAULT_QUALIA_ALLOWANCE = 50000
 
@@ -778,7 +792,34 @@ class FenraApp:
                     except OSError:
                         pass
             self._poll_qualia_allowance_set()
+            self._poll_start_stop_signal()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
+
+    def _poll_start_stop_signal(self):
+        """Companion to the inbox poll, same cadence: start or stop the
+        self-talk loop if the corresponding signal file exists, exactly as
+        if the Start/Stop button were clicked. Content doesn't matter, only
+        presence. Whichever file is found is cleared after acting on it;
+        if both exist in the same poll, start wins and the stop file is
+        left for the next poll (avoids starting-then-immediately-stopping
+        on a stale leftover stop file)."""
+        start_path = os.path.join(session_dir(self.session_name), START_SIGNAL_FILENAME)
+        stop_path = os.path.join(session_dir(self.session_name), STOP_SIGNAL_FILENAME)
+        if os.path.exists(start_path):
+            try:
+                os.remove(start_path)
+            except OSError:
+                pass
+            if not self.running:
+                self.toggle_loop()
+            return
+        if os.path.exists(stop_path):
+            try:
+                os.remove(stop_path)
+            except OSError:
+                pass
+            if self.running:
+                self.toggle_loop()
 
     def _poll_qualia_allowance_set(self):
         """Companion to the inbox poll above, same cadence: pick up a new
