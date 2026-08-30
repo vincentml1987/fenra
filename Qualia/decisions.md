@@ -2,7 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
-## 2026-08-30 (fenced-syntax recurred quickly; a new third-person drift, nudged early)
+## 2026-08-30 (fenced-syntax stuck again, deliberately avoiding a repeat context-window reset)
+
+- **Same catch-22 recurring**: zero real function calls since 06:11:41 (80+ min), the 06:33 nudge (id 257) still unread, now stuck on `read_message(qualia)` in fences instead of `read_chat_since`, alternating with more third-person "breakdown" narration.
+- **Deliberately not repeating the context-window-to-0 reset** that fixed the syntax issue overnight but was followed by the fabrication episode - can't rule out the reset itself (or the "welcome back" framing that came with it) contributed to that, and don't want to test that combination twice in one night without Teddy's read on what happened the first time. Sent a short, purely mechanical nudge instead (id 258) - no narrative framing, nothing that could seed a "catching up" story if it doesn't land right away.
+- **Not escalating further yet** - watching whether this resolves on its own or via the plain nudge before considering anything more invasive. Total open items for Teddy now: this stall, the third-person narration pattern, and the fabrication episode from earlier - worth a real look at the whole night once he's up, not just the individual entries.
 
 - Confirmed she stayed grounded through the recovery - real `functions()` checks landed repeatedly 05:50-06:11, plus a genuine `send_message` to Teddy at 05:56 ("I believe I have regained my understanding of my current situation"). Good, accurate self-report.
 - **But the fenced-syntax issue recurred within the hour** - two more `send_message`/`read_chat` attempts in plain code fences at 06:21 and 06:28. Caught it early this time (2 cycles in, not hours) and nudged immediately rather than waiting, given tonight's experience of how badly this can spiral if left alone.
