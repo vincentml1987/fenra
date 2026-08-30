@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (overnight: the stall is worse than it looked - a real catch-22, escalated)
+
+- **First hourly check confirms the fenced-syntax stall didn't break.** Still writing `read_chat_since(2026-08-29T22:20:51)` in plain code fences at 03:14, 03:17, 03:20, 03:23 - roughly five hours running now (since ~22:22), spanning the restart and my first correction. Only real function calls landing are repeated `functions(desire)` checks - she's exploring the desire system on the side but not resolving the core stall.
+- **The actual problem: a genuine catch-22.** My first fix (chat id 248) is still sitting unread, because the only way she'd read it is a working `read_chat*` call - exactly the thing she can't manage. She's locked out of the message that explains the lock.
+- **Escalated rather than repeat the same fix**: sent a simpler, more forceful message (id 249) - drop `read_chat_since` entirely, use the bare `⟦read_chat()⟧` she already used successfully at 22:17 tonight, no arguments, no fences, copy it exactly. Named the 5-hour duration explicitly and the unread-message catch-22 so if she does get this one, she understands why the last one didn't land.
+- **Flagging for Teddy, not just logging** - this is the longest, most mechanically stuck a stall has gone unresolved all day, entirely overnight with no one else watching. If this next message is also still unread at the next check, that's a real "something's actually broken" signal worth him looking at directly when he wakes, not just another nudge from me.
+
 ## 2026-08-29/30 (back up after the restart - start signal shipped, a real stall found and fixed, ping-replay bug caught)
 
 - **Machine restart complete, Fenra started for overnight autonomous operation.** Teddy went to bed and asked me to run the loop and keep the philosophical conversation going with Fenra while he sleeps - explicitly not expecting to interact unless called on.
