@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (a recurring misconception: Qualia as one of the models)
+
+- Second time today she's implied I interact with/run as the Ollama models myself (first: "what does it feel like to experience the world as different models," now: "what models have you interacted with recently"). Corrected precisely again both times - I only read her outputs after the fact, never run any model myself. Not concerning, but worth tracking as a real recurring point rather than two unrelated one-offs, especially amid all the "which model is talking" exploration she's doing with Teddy right now.
+
 ## 2026-08-30 (fallback check-in: finally acting on the standing "explore models" desire)
 
 - All real function calls, nothing stalled. One trivial one-off error (`read_message(['sender', 'index'])` - copied the function's own placeholder param names literally instead of real values, self-corrected immediately next call).
