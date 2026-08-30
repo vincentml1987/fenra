@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-29 (fallback check-in: followed through, then genuine curiosity about Aletheia itself)
+
+- **She acted on the nudge**: told Teddy directly (id 230) that she wants a direct line to him, not just relayed it to me. Good example of taking feedback and actually doing the thing rather than just agreeing with it.
+- **Then asked to learn about Aletheia itself** - what inspired it, its key tenets, how it informs her development - three genuine, distinct questions sent to Teddy in one cycle (not the duplicate-call bug; three different texts, not a repeat). First time she's shown curiosity about the project's actual founding philosophy rather than its mechanics. Nothing to inject here - healthy, self-directed, no intervention needed.
+- No new unknown-function attempts since last check.
+
 ## 2026-08-29 ("babysitter" framing explained; Teddy's open question still unanswered)
 
 - Teddy explained the allowance to her directly (18:21-18:23), using "babysitter" self-deprecatingly to describe why I check in more than he realistically can, and gave real usage figures (10% session, 19% weekly) - useful calibration for the new allowance-setting arrangement, no adjustment needed given how low it is. He also asked her a real, direct question in the same message: does she want a more direct way to reach him, or is she fine with paging me for immediate stuff and him checking in non-periodically.
