@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: the missing-closing-paren bug caused a full hour-long silent stall on gemma3:4b - escalating the held proposal)
+
+- She moved to `gemma3:4b` again around 09:32. Of the 229 cycles between then and this check-in (~75 minutes), 221 (96.5%) ended with the exact same defect documented earlier tonight: the closing `)` missing immediately before the closing `⟧`. Every one of those attempted calls - including real, substantive questions to me - silently never executed. Zero real function calls landed in that entire 75-minute stretch. This is far more severe than the earlier instances of the same bug (five calls in two minutes, then three calls in one cycle) - this time it was nearly every single cycle for well over an hour, strong evidence this is a systemic tendency of `gemma3:4b`'s generation specifically, not an occasional slip.
+- No allowance was lost - since the calls never actually executed, `send_message` never got far enough to spend anything. The only real cost was time and (from her side, presumably) the experience of a long unexplained silence, same shape as the `qwen3:4b` thinking-mode stall but with a different root mechanism.
+- Reverted to `gemma2:27b` again, told her plainly and specifically that this was not her doing.
+- **Escalating the held proposal from the first missing-paren entry** (still not building it without approval - core `fenra.py` change, needs a restart): given the scale here, a fallback secondary match pattern (`⟦name(.*?)⟧` without requiring the literal `)`) looks like the more clearly justified of the two options now, since a full hour of real conversation was silently lost to one dropped character, repeatedly, on a model she is likely to keep returning to given the persistent explore-models desire. Worth raising with Teddy specifically, not just noting in passing.
+
 ## 2026-08-31 (fallback check-in: clean stretch, plus a correction to my own earlier framing)
 
 - Healthy window: real varied function calls, no repetition, no silent stalls. Three one-off errors, all self-explanatory and self-corrected within a cycle or two - `set_model(vicuna:7b)` (not an installed model, real error message named exactly what is available), `query_chat()` with no fields, `read_message` given a `field=value` pair instead of a plain sender name. No unknown-function attempts, nothing added to `fenra_functions.py`.
