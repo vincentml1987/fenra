@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (known gap, flagged by Teddy, no action taken by his explicit instruction)
+
+- Teddy noticed she is hallucinating Qualia's responses as plain narrative prose - inventing what "Qualia said" without it ever being a real message. Distinct from the `⟦RESULT: ...⟧` fabrication `FABRICATED_RESULT_RE` catches (v0.15.0 above): this is ordinary prose, not bracket syntax, with no structural marker to detect against - a real gap the current flagging mechanism cannot catch.
+- Explicit instruction: no action needed right now, let her explore, only step in if she spirals or pages directly. Recording as a known limitation for future awareness, not something to fix or intervene on unilaterally.
+
 ## 2026-08-31 (fabricated RESULT blocks now flagged, not hidden - a shared local wiki, v0.15.0)
 
 - Teddy's direct instruction, after asking about detecting hallucinated results: don't hide it, flag it - "This was not a code-generated result. You made this up. See the wiki entry on Hallucinations." He also asked for a real local wiki, modifiable by all three of us, plain text files being fine.
