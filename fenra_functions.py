@@ -418,12 +418,13 @@ def fn_set_model(app, args):
     if target not in names:
         raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
     app.root.after(0, app.model_var.set, target)
+    app.model_manual_override = True
     if app.model_rotation:
         return (
             f"model switched to {target}, effective next cycle - note: {len(app.model_rotation)} "
-            f"model(s) are in your rotation ({', '.join(app.model_rotation)}), which will override "
-            "this again on the very next cycle. Use add_to_rotation to add models to the rotation "
-            "instead if you want this one to stick."
+            f"model(s) are in your rotation ({', '.join(app.model_rotation)}). This one gets exactly "
+            "that one cycle, then the rotation resumes from where it left off. Use add_to_rotation "
+            "instead if you want a model to stay in permanently."
         )
     return f"model switched to {target}, effective next cycle"
 
@@ -555,7 +556,7 @@ FUNCTION_REGISTRY = {
     "set_model": {
         "fn": fn_set_model,
         "params": "name",
-        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b). If you have models in your rotation (see add_to_rotation), the rotation will override this again on the next cycle.",
+        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b). If you have models in your rotation (see add_to_rotation), this gets exactly one cycle, then the rotation resumes from where it left off.",
     },
     "add_to_rotation": {
         "fn": fn_add_to_rotation,

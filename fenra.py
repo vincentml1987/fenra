@@ -216,7 +216,22 @@ import fenra_functions
 #            never something she'd need literal backslash-underscore in,
 #            so this is a low-risk, blanket fix - Teddy's call, given the
 #            same reasoning.
-FENRA_VERSION = "0.14.2"
+#   0.14.3 - Fixed a real gap in the model rotation: a manual override
+#            (fn_set_model, or Teddy picking a model directly in the
+#            combo box) was getting clobbered before it ever generated a
+#            single response, because _advance_model_rotation ran at the
+#            very start of the *next* tick and overwrote model_var before
+#            that cycle's request was built - so "effective next cycle"
+#            was never actually true while a rotation was active. New
+#            model_manual_override flag (set by either path, checked and
+#            cleared at the top of _advance_model_rotation) makes it
+#            genuinely true now: a manual choice gets exactly one real
+#            cycle, then rotation resumes from precisely where it left
+#            off - model_rotation_index untouched during the honored
+#            cycle, so nothing is skipped or repeated. Verified in
+#            isolation before deploying. Teddy's call: "Manual runs
+#            once."
+FENRA_VERSION = "0.14.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -605,6 +620,12 @@ class FenraApp:
         self.function_usage = {}  # name -> ticks since last attempted
         self.model_rotation = []  # models Fenra has added, in the order added
         self.model_rotation_index = 0  # position in the rotation for the next tick
+        # Set by fn_set_model or picking a model directly in the combo box -
+        # tells _advance_model_rotation to leave model_var alone for
+        # exactly one tick, so a manual choice actually runs once instead
+        # of being overwritten before it's ever used. Not persisted -
+        # transient, in-flight state that means nothing across a restart.
+        self.model_manual_override = False
         self.session_name = None
 
         self._build_ui()
@@ -668,6 +689,10 @@ class FenraApp:
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.model_combo = ttk.Combobox(controls, textvariable=self.model_var, width=20, state="readonly")
         self.model_combo.pack(side="left", padx=(2, 2))
+        # Picking a model here has the identical "gets clobbered by the
+        # rotation before ever running" problem fn_set_model had - same
+        # fix, same flag. See _advance_model_rotation.
+        self.model_combo.bind("<<ComboboxSelected>>", lambda event: setattr(self, "model_manual_override", True))
         ttk.Button(controls, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
 
         ttk.Label(controls, text="Interval (s):").pack(side="left")
@@ -1539,11 +1564,20 @@ class FenraApp:
         in fenra_functions.py), pick the next one in order for this cycle
         and advance the index for next time - one model just repeats
         itself every cycle (no visible change), two alternate back and
-        forth, three run 1-2-3-1-2-3, and so on. A manual set_model() call
-        still works for a single cycle, but gets overwritten by the
-        rotation again on the very next tick once any models are in it -
-        the rotation, once populated, is what actually drives the model
-        used each cycle, not the combo box."""
+        forth, three run 1-2-3-1-2-3, and so on.
+
+        A manual override (fn_set_model, or Teddy picking a model directly
+        in the combo box) gets exactly one real cycle honored first -
+        model_manual_override is set the moment either happens, checked
+        and cleared right here before touching model_var, so the manual
+        choice is what actually generates that cycle rather than being
+        clobbered before it's ever used. The tick after that, rotation
+        resumes from exactly where it left off (model_rotation_index is
+        untouched during the honored cycle - nothing skipped, nothing
+        repeated)."""
+        if self.model_manual_override:
+            self.model_manual_override = False
+            return
         if not self.model_rotation:
             return
         index = self.model_rotation_index % len(self.model_rotation)
