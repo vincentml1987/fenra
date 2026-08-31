@@ -151,7 +151,16 @@ import fenra_functions
 #            calls, invented content. The stop_signal halted generation
 #            immediately; this lets the model be switched back without
 #            hand-editing state.json while the app process is live.
-FENRA_VERSION = "0.11.3"
+#   0.12.0 - Function reminders: a per-function "ticks since last called"
+#            counter (any attempt resets it, success or failure), shown
+#            in the prompt with escalating detail the longer a function
+#            goes unused - name only past 10 ticks, name+description past
+#            15, full signature+description past 20. Nothing shown for
+#            functions used recently. Addresses functions going
+#            undiscovered (query_chat, fetch_html) or a guessed name
+#            being reached for instead of the real one that already
+#            exists. Persisted per session like desires/allowance.
+FENRA_VERSION = "0.12.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -212,6 +221,14 @@ DEFAULT_QUALIA_ALLOWANCE = 50000
 # count via add_desire(text|ticks). -1 means persistent - never decrements,
 # never drops off.
 DEFAULT_DESIRE_TICKS = 10
+
+# Function reminders: how many ticks since a function was last attempted
+# (called for real, success or failure - not just mentioned) before it
+# starts showing up in the reminder block, and at what point the detail
+# escalates. Below LEVEL1 ticks, a function isn't mentioned at all.
+FUNCTION_REMINDER_LEVEL1_TICKS = 10  # name only
+FUNCTION_REMINDER_LEVEL2_TICKS = 15  # name + description
+FUNCTION_REMINDER_LEVEL3_TICKS = 20  # full signature + description
 
 # How many of her own past cycles (from history, oldest to newest) go into
 # her prompt, instead of just the single most recent. Not the same thing as
@@ -292,6 +309,9 @@ def run_function_calls(app, response_text):
             "args": args,
         }
         if name in registry:
+            # Any real attempt resets the function-reminder counter,
+            # success or failure - she reached for it, that's what counts.
+            app.function_usage[name] = 0
             try:
                 result = registry[name]["fn"](app, args)
                 call_entry["success"] = True
@@ -352,6 +372,7 @@ def default_state():
         "desires": [],
         "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         "context_window": DEFAULT_CONTEXT_WINDOW,
+        "function_usage": {},
     }
 
 
@@ -438,6 +459,7 @@ class FenraApp:
         self.history = []
         self.chat_messages = []
         self.desires = []
+        self.function_usage = {}  # name -> ticks since last attempted
         self.session_name = None
 
         self._build_ui()
@@ -658,6 +680,7 @@ class FenraApp:
             "desires": [],
             "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
             "context_window": DEFAULT_CONTEXT_WINDOW,
+            "function_usage": {},
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -679,6 +702,7 @@ class FenraApp:
             "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
             "context_window": self.context_window_var.get(),
+            "function_usage": self.function_usage,
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
@@ -732,6 +756,7 @@ class FenraApp:
         self._refresh_desires_display()
         self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
+        self.function_usage = dict(state.get("function_usage", {}))
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -1039,6 +1064,53 @@ class FenraApp:
         self.desires = updated
         self.root.after(0, self._refresh_desires_display)
 
+    # ----------------------------------------------------- function reminders --
+
+    def _age_function_usage(self):
+        """Called once at the end of every tick: every currently-known
+        function's 'ticks since last attempted' counter goes up by one.
+        Resetting a function to 0 (any real attempt, success or failure)
+        happens immediately in run_function_calls, not here - this only
+        ages what's already tracked."""
+        for name in list(self.function_usage.keys()):
+            self.function_usage[name] = self.function_usage.get(name, 0) + 1
+
+    def _function_reminder_block(self):
+        """Always-checked, only sometimes present: functions that haven't
+        been attempted in a while, with detail escalating the longer
+        they've gone unused - name only past LEVEL1 ticks, name+
+        description past LEVEL2, full signature+description past LEVEL3.
+        Nothing shown for functions used recently, and no block at all if
+        nothing currently qualifies. Newly-discovered functions (hot-
+        reloaded into the registry, never seen before) start at 0 ticks,
+        same as a function that was just called."""
+        registry, _ = reload_function_registry()
+        for name in registry:
+            if name not in self.function_usage:
+                self.function_usage[name] = 0
+
+        level3, level2, level1 = [], [], []
+        for name, meta in registry.items():
+            ticks = self.function_usage.get(name, 0)
+            if ticks >= FUNCTION_REMINDER_LEVEL3_TICKS:
+                level3.append((name, meta))
+            elif ticks >= FUNCTION_REMINDER_LEVEL2_TICKS:
+                level2.append((name, meta))
+            elif ticks >= FUNCTION_REMINDER_LEVEL1_TICKS:
+                level1.append((name, meta))
+
+        if not (level1 or level2 or level3):
+            return ""
+
+        lines = ["[Functions you haven't used in a while - a reminder they exist, not an instruction to use them:]"]
+        for name, meta in level1:
+            lines.append(f"- {name}")
+        for name, meta in level2:
+            lines.append(f"- {name}: {meta['description']}")
+        for name, meta in level3:
+            lines.append(f"- {name}({meta['params']}): {meta['description']}")
+        return "\n".join(lines)
+
     # ------------------------------------------------------------- context --
 
     def _recent_thoughts_block(self):
@@ -1163,11 +1235,12 @@ class FenraApp:
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice()
+        function_reminder = self._function_reminder_block()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
         prompt = (
             f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{bottom_text}\n\n"
-            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}"
+            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{function_reminder}"
         ).strip()
 
         payload = {
@@ -1209,6 +1282,7 @@ class FenraApp:
 
         self.last_thought = display_text
         self._decrement_desires()
+        self._age_function_usage()
         save_session_state(self.session_name, {
             "top": top_text,
             "bottom": bottom_text,
@@ -1220,6 +1294,7 @@ class FenraApp:
             "desires": self.desires,
             "qualia_allowance": self.qualia_allowance_var.get(),
             "context_window": self.context_window_var.get(),
+            "function_usage": self.function_usage,
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)

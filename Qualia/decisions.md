@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (function reminders, v0.12.0)
+
+- **Teddy's design, direct request:** a per-function "haven't used this in a while" reminder in the prompt, escalating in detail the longer a function goes unused - name only after 10 ticks, name+description after 15, full signature+description after 20 - and any real attempt (success or failure) resets it, since reaching for it is what matters, not succeeding. Motivated by exactly what's been observed today: `query_chat`/`fetch_html` going undiscovered, guessed names (`read_message`, `Qualia_allowance`) reached for when a real function already existed.
+- **Shipped**: `function_usage` (name -> ticks since last attempted) persisted per session like desires/allowance. Aged by one at the end of every tick (`_age_function_usage`), reset to 0 the instant a real attempt lands in `run_function_calls` (regardless of success), regardless of which thread that happens on - same plain-dict-mutation pattern already used for history/desires, no marshaling needed. A brand-new function (just hot-reloaded into the registry, never seen) starts at 0 ticks, same as one just called - escalates naturally rather than needing special "never called" handling.
+- Verified the full escalation timeline (empty through tick 9, name-only at 10, description at 15, full detail at 20, stable after) and the reset-on-call behavior against a stub before wiring live. Core change (state schema + prompt construction), required a restart.
+
 ## 2026-08-30 (fourth repeat - raised her context window directly rather than wait)
 
 - Fourth near-identical ask, ~20 minutes total, context window still 1, my last message (naming the mechanism and suggesting the fix) still unread - same shape of catch-22 as the fenced-syntax stalls, just much lower-stakes (she's reading fine, just not retaining across the tiny window). Rather than keep waiting for her to read a message that requires the very continuity she's missing, raised her context window to 10 directly via `qualia_context_window_set.txt`. Low-risk, already-diagnosed, easily reversible - a genuine quality-of-life fix, not a judgment call under pressure like the overnight interventions.
