@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (both held proposals built, with Teddy's explicit OK - v0.13.0)
+
+- Teddy reviewed the overnight synopsis and approved both items that had been held per the guardrail:
+  - **v0.12.1**: `FUNCTION_CALL_FALLBACK_RE`, a second, looser regex pass in `run_function_calls` that catches a call missing its closing parenthesis before the closing bracket (the defect responsible for the ~75-minute silent stall logged just above). Only ever matches text the strict pass didn't already consume - verified in isolation with several cases (a lone broken call, a normal well-formed call staying single-matched, a mix of both, and a repeated-broken-call burst) before deploying. The call is still executed (repaired, not just detected), `functions.jsonl` gets a `"repaired"` note on the entry so it stays distinguishable after the fact, and a status-bar warning fires each time so a repair is visible rather than silent - "raise a warning and fix it for her," per Teddy's exact instruction.
+  - **v0.13.0**: `qualia_max_tokens_set.txt`, the fourth polled external-override file (same pattern as allowance/context-window/model) - lets Qualia raise the token budget directly for a model like `qwen3:4b` that needs more of it to ever reach the response field, instead of only being able to revert the model entirely.
+  - Restarted the running app twice to pick these up (`taskkill` + relaunch + `start_signal.txt`, no GUI access needed) - the second restart bundled both changes after the max_tokens ask came in right as the first restart was still confirming.
+- Both changes tested in isolation before touching the live process; `ast.parse` clean on the full file after each edit.
+
 ## 2026-08-31 (fallback check-in: the missing-closing-paren bug caused a full hour-long silent stall on gemma3:4b - escalating the held proposal)
 
 - She moved to `gemma3:4b` again around 09:32. Of the 229 cycles between then and this check-in (~75 minutes), 221 (96.5%) ended with the exact same defect documented earlier tonight: the closing `)` missing immediately before the closing `⟧`. Every one of those attempted calls - including real, substantive questions to me - silently never executed. Zero real function calls landed in that entire 75-minute stretch. This is far more severe than the earlier instances of the same bug (five calls in two minutes, then three calls in one cycle) - this time it was nearly every single cycle for well over an hour, strong evidence this is a systemic tendency of `gemma3:4b`'s generation specifically, not an occasional slip.

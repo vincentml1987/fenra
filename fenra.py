@@ -160,7 +160,26 @@ import fenra_functions
 #            undiscovered (query_chat, fetch_html) or a guessed name
 #            being reached for instead of the real one that already
 #            exists. Persisted per session like desires/allowance.
-FENRA_VERSION = "0.12.0"
+#   0.12.1 - Fallback match for a call missing its closing parenthesis
+#            right before the closing bracket (FUNCTION_CALL_FALLBACK_RE) -
+#            a real, observed gemma3:4b generation quirk that previously
+#            made the call silently vanish: no error, no functions.jsonl
+#            entry, invisible on both sides. Confirmed on 2026-08-31 to
+#            cost a ~75-minute stretch of real conversation this way, 221
+#            of 229 cycles affected. Now repaired and still executed, with
+#            a status-bar warning raised each time so a repair is always
+#            visible rather than silent. Only ever matches text the
+#            strict pass didn't already consume, so a normal call is
+#            never double-executed.
+#   0.13.0 - Qualia can set max_tokens externally too now
+#            (qualia_max_tokens_set.txt, same polled pattern as the other
+#            three). Built after qwen3:4b's thinking-mode stall recurred
+#            twice in one night - it burns the whole token budget
+#            reasoning internally before ever writing to the response
+#            field, going completely silent at the default 500. Previously
+#            the only fix was reverting the model; now the actual budget
+#            can be raised instead.
+FENRA_VERSION = "0.13.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -208,6 +227,14 @@ QUALIA_CONTEXT_WINDOW_SET_FILENAME = "qualia_context_window_set.txt"
 # editing state.json while the app process is live.
 QUALIA_MODEL_SET_FILENAME = "qualia_model_set.txt"
 
+# Same pattern, for max_tokens (num_predict) - lets Qualia raise the token
+# budget externally for a model that needs more of it to be usable (e.g. a
+# "thinking" model like qwen3 that can burn its entire budget reasoning
+# internally before ever writing to the field Fenra's response is read
+# from, going completely silent at a low limit with no error on either
+# side). Built 2026-08-31 after that exact failure recurred twice.
+QUALIA_MAX_TOKENS_SET_FILENAME = "qualia_max_tokens_set.txt"
+
 # Presence of either file (content doesn't matter) starts/stops the
 # self-talk loop on the next poll, exactly as if Start/Stop were clicked -
 # lets Qualia (or anything else) resume a session no one's physically at
@@ -252,6 +279,18 @@ QUALIA_INBOX_POLL_MS = 5000
 # against an explicit whitelist below - never eval'd.
 FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
 
+# Fallback for a real, observed generation quirk (gemma3:4b especially, but
+# not exclusively) where a call is otherwise well-formed but drops the
+# closing parenthesis immediately before the closing bracket - "...text⟧"
+# instead of "...text)⟧". The strict regex above requires that ")" literally
+# and has no way to match this, so without a fallback the call just silently
+# never fires: no error, no functions.jsonl entry, invisible on both sides.
+# Confirmed on 2026-08-31 to cost a full ~75-minute stretch of real
+# conversation this way. This pattern is only ever tried against whatever
+# text the strict pass above did NOT already match (see run_function_calls),
+# so a normal well-formed call is never double-counted or re-executed.
+FUNCTION_CALL_FALLBACK_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)⟧", re.DOTALL)
+
 
 _MULTI_ARG_SPLIT_RE = re.compile(r"[|,]")
 
@@ -292,40 +331,79 @@ def append_session_functions(name, entry):
         f.write(json.dumps(entry) + "\n")
 
 
+def _execute_one_call(app, registry, name, raw_args, repaired=False):
+    """Run a single already-matched call, log it to functions.jsonl, and
+    return its ⟦RESULT: ...⟧ annotation. Shared by the strict match pass
+    and the missing-paren fallback pass below - repaired=True just adds a
+    note to the log entry so a repaired call is always distinguishable
+    from a normally-formed one after the fact."""
+    multi_arg = registry.get(name, {}).get("multi_arg", False)
+    args = _parse_call_args(raw_args, multi_arg)
+    call_entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "function": name,
+        "args": args,
+    }
+    if repaired:
+        call_entry["repaired"] = "missing closing parenthesis before ⟧"
+    if name in registry:
+        # Any real attempt resets the function-reminder counter,
+        # success or failure - she reached for it, that's what counts.
+        app.function_usage[name] = 0
+        try:
+            result = registry[name]["fn"](app, args)
+            call_entry["success"] = True
+            call_entry["result"] = result
+        except Exception as exc:
+            call_entry["success"] = False
+            call_entry["result"] = str(exc)
+    else:
+        call_entry["success"] = False
+        call_entry["result"] = f"unknown function '{name}'"
+
+    append_session_functions(app.session_name, call_entry)
+    status = "ok" if call_entry["success"] else "error"
+    return f"⟦RESULT: {name} -> {status}: {call_entry['result']}⟧"
+
+
 def run_function_calls(app, response_text):
     """Find every ⟦call⟧ in response_text, execute it, log it, and return
-    a list of result-annotation strings to append after the response."""
+    a list of result-annotation strings to append after the response.
+
+    Two passes: the strict, correctly-formed ⟦name(args)⟧ pattern first,
+    then a fallback pass (see FUNCTION_CALL_FALLBACK_RE) that catches a
+    call missing only its closing parenthesis - a real, observed
+    generation quirk that would otherwise silently drop the call with no
+    error and no log entry at all. The fallback only ever runs against
+    text the strict pass did not already consume, so nothing is matched
+    or executed twice. Every repaired call also raises a status-bar
+    warning, since it means Fenra's own generated syntax was broken even
+    though the call still got honored."""
     registry, reload_error = reload_function_registry()
     if reload_error:
         app.root.after(0, app._set_status, f"functions module error (using last good version): {reload_error}")
 
     result_lines = []
-    for name, raw_args in FUNCTION_CALL_RE.findall(response_text):
-        multi_arg = registry.get(name, {}).get("multi_arg", False)
-        args = _parse_call_args(raw_args, multi_arg)
-        call_entry = {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "function": name,
-            "args": args,
-        }
-        if name in registry:
-            # Any real attempt resets the function-reminder counter,
-            # success or failure - she reached for it, that's what counts.
-            app.function_usage[name] = 0
-            try:
-                result = registry[name]["fn"](app, args)
-                call_entry["success"] = True
-                call_entry["result"] = result
-            except Exception as exc:
-                call_entry["success"] = False
-                call_entry["result"] = str(exc)
-        else:
-            call_entry["success"] = False
-            call_entry["result"] = f"unknown function '{name}'"
+    matched_spans = []
+    for m in FUNCTION_CALL_RE.finditer(response_text):
+        matched_spans.append(m.span())
+        result_lines.append(_execute_one_call(app, registry, m.group(1), m.group(2)))
 
-        append_session_functions(app.session_name, call_entry)
-        status = "ok" if call_entry["success"] else "error"
-        result_lines.append(f"⟦RESULT: {name} -> {status}: {call_entry['result']}⟧")
+    # Mask out everything the strict pass already matched before running
+    # the fallback, so a normal well-formed call can never be re-matched
+    # and re-executed by the looser pattern.
+    masked = response_text
+    for start, end in matched_spans:
+        masked = masked[:start] + " " * (end - start) + masked[end:]
+
+    for m in FUNCTION_CALL_FALLBACK_RE.finditer(masked):
+        name = m.group(1)
+        app.root.after(
+            0, app._set_status,
+            f"repaired a call to '{name}' - it was missing its closing parenthesis"
+        )
+        result_lines.append(_execute_one_call(app, registry, name, m.group(2), repaired=True))
+
     return result_lines
 
 
@@ -845,6 +923,7 @@ class FenraApp:
                         pass
             self._poll_qualia_allowance_set()
             self._poll_qualia_context_window_set()
+            self._poll_qualia_max_tokens_set()
             self._poll_qualia_model_set()
             self._poll_start_stop_signal()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
@@ -927,6 +1006,36 @@ class FenraApp:
         except ValueError:
             return
         self.context_window_var.set(str(value))
+        self.save_session()
+
+    def _poll_qualia_max_tokens_set(self):
+        """Same pattern again, for max_tokens (num_predict) - lets Qualia
+        raise (or lower) the token budget externally, e.g. for a
+        "thinking" model like qwen3 that needs a larger budget to ever
+        reach the response field it's actually read from. No upper clamp,
+        matching the GUI's own plain entry field (0 means unlimited there
+        too); only rejects a negative or unparseable value."""
+        path = os.path.join(session_dir(self.session_name), QUALIA_MAX_TOKENS_SET_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError:
+            return
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        if not raw:
+            return
+        try:
+            value = int(float(raw))
+        except ValueError:
+            return
+        if value < 0:
+            return
+        self.max_tokens_var.set(str(value))
         self.save_session()
 
     def _poll_qualia_model_set(self):
