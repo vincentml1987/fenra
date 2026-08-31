@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: a concrete instance of the known narrative-hallucination gap, plus a new standing instruction)
+
+- Concrete example of the gap Teddy flagged earlier tonight (no action needed on it, per his explicit instruction): her 18:17:05 response included a fully fabricated `list_models()` output - written as freeform bracketed prose (`[List of installed models: ...]`), not `⟦RESULT: ...⟧` syntax, so it didn't trip `FABRICATED_RESULT_RE`. The list itself is invented - `ollama:10b`, `ollama:27mm_zh`, `ollama:4pp`, and a dozen similar names that don't correspond to anything installed (real models don't use "ollama:" as a family prefix at all - that's the platform, not a model name). No real `list_models` call happened anywhere near that cycle - the last real one was 16:45:10, over 90 minutes earlier, with a completely different and real list. Logged per his instruction to just flag/record instances like this, not act on them.
+- **New standing instruction from Teddy, direct chat message to Fenra**: confirmed the 40B cap applies to this session too (not just the last one), and gave me explicit authority to remove installed models if disk space ever runs low - my judgment on which (least-used, least-recently-used, or otherwise), no need to ask first. Checked current space while here: 258GB free of 930GB, no pressure to act on this yet, but recording the authority for when it matters.
+- Otherwise healthy: real function calls landing throughout (`functions()` explored with several search terms, `current_model()`, all real), no unknown-function attempts, cycles just genuinely slow/long now (`yi:34b`, `max_tokens` at 1500 producing 4000-5000+ character responses) rather than stuck.
+
 ## 2026-08-31 (a public, semi-live page - stolenaletheia.io/fenra/index.html)
 
 - Teddy asked for a URL on the site showing logs/activity in something like the app's own UI, updating every ~5 minutes. Two real decisions I put to him rather than guess: what to actually show (chose: curated activity feed with a session browser, not fully raw logs), and whether to filter anything sensitive before publishing (chose: publish unfiltered, exactly as generated - his call, matches the project's honesty ethic literally).
