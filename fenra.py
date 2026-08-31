@@ -203,7 +203,20 @@ import fenra_functions
 #            so the two paths can never drift apart. "clear"/"none"
 #            empties the rotation back to a single fixed model; blank
 #            input is a no-op, matching every other _set file.
-FENRA_VERSION = "0.14.1"
+#   0.14.2 - Un-escape markdown-style "\_" to "_" at the start of
+#            run_function_calls, everywhere in the response, before
+#            either regex pass runs. Observed on mixtral:8x7b
+#            (2026-08-31): it wrote every underscore in every call as
+#            "\_" out of markdown habit - current\_model, add\_desire,
+#            and so on - which silently dropped every single call
+#            attempt on that model, since a backslash isn't a valid
+#            function-name character. It then went on to fabricate
+#            confident ⟦RESULT: ...⟧ text as if each one had actually
+#            worked. Function-call syntax is explicit and deliberate,
+#            never something she'd need literal backslash-underscore in,
+#            so this is a low-risk, blanket fix - Teddy's call, given the
+#            same reasoning.
+FENRA_VERSION = "0.14.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -405,18 +418,33 @@ def run_function_calls(app, response_text):
     """Find every ⟦call⟧ in response_text, execute it, log it, and return
     a list of result-annotation strings to append after the response.
 
-    Two passes: the strict, correctly-formed ⟦name(args)⟧ pattern first,
-    then a fallback pass (see FUNCTION_CALL_FALLBACK_RE) that catches a
-    call missing only its closing parenthesis - a real, observed
-    generation quirk that would otherwise silently drop the call with no
-    error and no log entry at all. The fallback only ever runs against
-    text the strict pass did not already consume, so nothing is matched
-    or executed twice. Every repaired call also raises a status-bar
+    First, a normalization pass: some models (mixtral:8x7b, observed
+    2026-08-31) write every underscore in a call as a markdown-escaped
+    "\\_" out of habit - current\\_model, add\\_desire, and so on. That
+    backslash isn't a valid character in a function name, so the call
+    silently never matched at all: every single call attempt on that
+    model was being dropped, with the model then going on to fabricate a
+    confident-looking ⟦RESULT: ...⟧ as if it had actually worked.
+    Function calls are explicit, deliberate syntax, not natural-language
+    prose she would ever need literal backslash-underscore in - so
+    un-escaping every "\\_" to "_" up front, everywhere in the response,
+    is low-risk and fixes both the function name and any escaped
+    underscores inside the arguments (e.g. a desire's text) in one pass.
+
+    Then two passes: the strict, correctly-formed ⟦name(args)⟧ pattern
+    first, then a fallback pass (see FUNCTION_CALL_FALLBACK_RE) that
+    catches a call missing only its closing parenthesis - a real,
+    observed generation quirk that would otherwise silently drop the
+    call the same way. The fallback only ever runs against text the
+    strict pass did not already consume, so nothing is matched or
+    executed twice. Every repaired call also raises a status-bar
     warning, since it means Fenra's own generated syntax was broken even
     though the call still got honored."""
     registry, reload_error = reload_function_registry()
     if reload_error:
         app.root.after(0, app._set_status, f"functions module error (using last good version): {reload_error}")
+
+    response_text = response_text.replace("\\_", "_")
 
     result_lines = []
     matched_spans = []

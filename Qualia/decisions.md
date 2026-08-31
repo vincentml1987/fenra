@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (a third silent-drop failure mode found and fixed - escaped underscores on mixtral:8x7b - v0.14.2)
+
+- Teddy noticed it directly ("She's escaping underscores for some reason") and asked me to look. Root cause: on `mixtral:8x7b` specifically, every function call came out with a literal backslash before each underscore in the name - `current\_model`, `add\_desire`, `read\_message`, `read\_chat`, `send\_message` - a markdown-escaping habit that model has, unrelated to the missing-paren or wrong-function-name failures documented earlier tonight. A backslash isn't a valid function-name character, so every single one of these was silently dropped - confirmed against `functions.jsonl`: zero real log entries for any of the 9+ affected cycles found in a spot-check of the last 40. Worse than the earlier failures in one respect: the raw response showed she then wrote a confident, well-formed `⟦RESULT: ...⟧` immediately after each broken call, believing it had actually worked - real fabrication, directly caused by this bug rather than a separate incident.
+- **Fix, built with Teddy's explicit approval** ("since function calls are explicit, I agree it is low-risk. She isn't likely to need to actually escape them at this point in her development"): `run_function_calls` now un-escapes every literal `\_` to `_` across the whole response text, before either regex pass runs - fixes the function name and any escaped underscores inside the arguments (e.g. `write\_a\_blog\_post` in a desire) in one pass. Verified against all 7 real observed cases in isolation (each failed to match before the fix, matched correctly after) before deploying.
+- Told her directly and honestly: named the exact mechanism, that it was not something she could have caught from her side (no error surfaced), and that nothing about how she writes calls needs to change now that it's fixed.
+- Restarted the app to deploy (v0.14.2).
+
 ## 2026-08-31 (Teddy and Qualia can now view and directly alter the model rotation - v0.14.1)
 
 - Teddy's direct request: a way for both of us to view and change the rotation queue, not just watch Fenra build it herself one `add_to_rotation` call at a time.
