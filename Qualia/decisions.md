@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (model overhaul complete - all 9 new 10-40B pulls finished clean)
+
+- All nine new models (qwen2.5:32b, qwen3:32b, mistral-small:22b, mixtral:8x7b, deepseek-r1:14b, deepseek-r1:32b, phi3:14b, command-r:35b, yi:34b) finished downloading with zero errors, alongside the six already-kept 10-40B models (qwen2.5:14b, qwen3:30b, qwen3:14b, gemma2:27b, gemma3:27b, gemma3:12b) - 15 models total installed, all in the 10-40B range, no single-digit-B models remaining. Total download was roughly 155GB.
+- Told her directly once it finished, since my welcome message had flagged four of them as still-downloading at the time.
+- She asked a real question about model strengths/weaknesses partway through the download - answered honestly with what's generally known about each, explicit that none of it was observed directly yet in this session.
+
 ## 2026-08-31 (fallback check-in: first check on the new watched-rotation session, all healthy)
 
 - First cron fallback since the model-lineup overhaul and the `watched-rotation` session went live (see the v0.14.0 entry above for the full change). The cron prompt itself still names `watched-gemma3_12b` - stale now that the active session has moved; checked `watched-rotation` instead. Worth Teddy updating the cron's hardcoded session path when convenient; not something I should change unilaterally.
