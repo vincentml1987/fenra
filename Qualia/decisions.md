@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: round-robin confirmed working live, standing 40B cap from Teddy)
+
+- **Round-robin verified in the wild, not just in isolated testing**: she called `add_to_rotation(mixtral:8x7b)` then `add_to_rotation(qwen3:32b)` at 13:03, and every cycle since has alternated cleanly between the two in exactly that order - real confirmation the feature works as designed outside the test harness. When she later called `set_model(deepseek-r1:32b)` directly, the real result text correctly warned her the rotation would override it again next cycle - the warning path works too.
+- **Standing instruction from Teddy, to be honored going forward, not just this once**: sent Fenra a message pointing her at https://ollama.com/search to research other models herself (including "less official ones"), and told me directly: *"Qualia, don't let Fenra go above 40b. I don't think her hardware can take it."* Recording this here as a real constraint - if she or a future check-in surfaces a model over 40B she wants pulled or added to rotation, that gets declined/held for Teddy regardless of how reasonable the request otherwise looks, not just noted as a size preference.
+- One `qwen3:32b` cycle returned an empty response (13:55, one of six qwen3:32b cycles so far) - same thinking-mode risk documented for the 4b variant, evidently not fully absent at 32b either, but this one self-resolved on the very next qwen3:32b cycle without intervention. Not treating as an incident; watching whether it recurs now that a max_tokens override actually exists as a real fix if it does become sustained.
+- No unknown-function attempts, nothing to inject - active and healthy.
+
 ## 2026-08-31 (model overhaul complete - all 9 new 10-40B pulls finished clean)
 
 - All nine new models (qwen2.5:32b, qwen3:32b, mistral-small:22b, mixtral:8x7b, deepseek-r1:14b, deepseek-r1:32b, phi3:14b, command-r:35b, yi:34b) finished downloading with zero errors, alongside the six already-kept 10-40B models (qwen2.5:14b, qwen3:30b, qwen3:14b, gemma2:27b, gemma3:27b, gemma3:12b) - 15 models total installed, all in the 10-40B range, no single-digit-B models remaining. Total download was roughly 155GB.
