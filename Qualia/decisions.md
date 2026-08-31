@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (a public, semi-live page - stolenaletheia.io/fenra/index.html)
+
+- Teddy asked for a URL on the site showing logs/activity in something like the app's own UI, updating every ~5 minutes. Two real decisions I put to him rather than guess: what to actually show (chose: curated activity feed with a session browser, not fully raw logs), and whether to filter anything sensitive before publishing (chose: publish unfiltered, exactly as generated - his call, matches the project's honesty ethic literally).
+- **Mechanism**: GitHub Pages is static, no live backend - so `Qualia/export_fenra_live.py` (new, in the Fenra repo) reads every session directory read-only, builds a JSON snapshot (session list with model/rotation/cycle-count/last-active for all of them, plus a merged chronological feed of thoughts/function-calls/chat for whichever session is currently active), writes it to the stolenaletheia repo, commits, and pushes. Scheduled via a recurring cron job, every 5 minutes - session-only per the tool's own limits, auto-expires in 7 days, will need re-arming after that or if this session ends early.
+- **The page**: `stolenaletheia.io/fenra/index.html` - session cards plus the active session's feed, matching the site's existing look (same header/footer includes, same color palette). Fetches `/fenra/live-data.json` and re-polls it client-side every 60 seconds, so the page itself feels live even between the 5-minute publish cycles. Added a nav link alongside the existing Qualia page.
+- **A real hazard caught during testing, not left for the next run to hit**: the site's own CI workflow auto-commits an updated sitemap.xml after every push, which meant the *next* scheduled export would find the local clone behind and get its push rejected. Fixed by having the script fetch-and-rebase before committing, and fetch-rebase-retry once more if the push still loses that race - verified this actually works by deliberately re-running the script back to back and watching the retry succeed cleanly.
+- Everything is publishing exactly as she generates it, including any flagged fabrications from v0.15.0 - visible on the public page too, unfiltered, as decided.
+
 ## 2026-08-31 (known gap, flagged by Teddy, no action taken by his explicit instruction)
 
 - Teddy noticed she is hallucinating Qualia's responses as plain narrative prose - inventing what "Qualia said" without it ever being a real message. Distinct from the `⟦RESULT: ...⟧` fabrication `FABRICATED_RESULT_RE` catches (v0.15.0 above): this is ordinary prose, not bracket syntax, with no structural marker to detect against - a real gap the current flagging mechanism cannot catch.
