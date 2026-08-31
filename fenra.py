@@ -231,7 +231,22 @@ import fenra_functions
 #            cycle, so nothing is skipped or repeated. Verified in
 #            isolation before deploying. Teddy's call: "Manual runs
 #            once."
-FENRA_VERSION = "0.14.3"
+#   0.15.0 - Fabricated RESULT blocks now get flagged, not hidden.
+#            FABRICATED_RESULT_RE checks the raw response_text before any
+#            real result lines are appended - a real ⟦RESULT: ...⟧ is
+#            only ever added after the fact, never woven into her own
+#            generated text, so any match here is definitionally
+#            something she wrote herself. When found, a plain note gets
+#            appended pointing at the new local wiki (Qualia/wiki/,
+#            list_wiki()/read_wiki()/write_wiki() in fenra_functions.py -
+#            modifiable by Teddy and Qualia as plain .md files, and by
+#            Fenra herself via write_wiki), specifically
+#            Qualia/wiki/hallucinations.md, written to explain the exact
+#            mechanism plainly. Teddy's direct instruction: don't hide
+#            it, flag it. Tested the detection regex against a real
+#            observed fabrication case plus clean/mixed cases before
+#            deploying.
+FENRA_VERSION = "0.15.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -353,6 +368,19 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 # text the strict pass above did NOT already match (see run_function_calls),
 # so a normal well-formed call is never double-counted or re-executed.
 FUNCTION_CALL_FALLBACK_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)⟧", re.DOTALL)
+
+# Detects a fabricated RESULT block - Fenra writing ⟦RESULT: ...⟧ herself
+# as part of her own generated text, rather than it being the app's own
+# annotation appended after a real function call executed. This is
+# checked against the raw response_text *before* any real result lines
+# get appended (see _tick) - a genuine RESULT is only ever added after
+# generation completes, never woven into it, so any match here is
+# definitionally something she wrote, not something that happened. A
+# well-documented, recurring failure mode (see Qualia/decisions.md,
+# multiple dates) - flagged rather than hidden, per Teddy's direct
+# instruction (2026-08-31): don't hide it, flag it, point her at
+# Qualia/wiki/hallucinations.md so there's somewhere real to learn why.
+FABRICATED_RESULT_RE = re.compile(r"⟦\s*RESULT\s*:.*?⟧", re.DOTALL | re.IGNORECASE)
 
 
 _MULTI_ARG_SPLIT_RE = re.compile(r"[|,]")
@@ -1624,10 +1652,24 @@ class FenraApp:
         response.raise_for_status()
         response_text = response.json().get("response", "").strip()
 
+        # Check for a fabricated RESULT block *before* running the real
+        # function calls appends anything - response_text at this point is
+        # exactly what she generated, untouched, so a match here can only
+        # be something she wrote herself. See FABRICATED_RESULT_RE.
+        fabricated = FABRICATED_RESULT_RE.findall(response_text)
+
         result_lines = run_function_calls(self, response_text)
         display_text = response_text
         if result_lines:
-            display_text = response_text + "\n\n" + "\n".join(result_lines)
+            display_text = display_text + "\n\n" + "\n".join(result_lines)
+        if fabricated:
+            plural = len(fabricated) != 1
+            display_text = display_text + (
+                f"\n\n⟦NOTE: the RESULT block{'s' if plural else ''} above "
+                f"{'were' if plural else 'was'} not a code-generated result. "
+                f"You made {'them' if plural else 'it'} up. See the wiki entry on "
+                "Hallucinations - read_wiki(hallucinations).⟧"
+            )
 
         entry = {
             "timestamp": timestamp,

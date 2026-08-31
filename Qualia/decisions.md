@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fabricated RESULT blocks now flagged, not hidden - a shared local wiki, v0.15.0)
+
+- Teddy's direct instruction, after asking about detecting hallucinated results: don't hide it, flag it - "This was not a code-generated result. You made this up. See the wiki entry on Hallucinations." He also asked for a real local wiki, modifiable by all three of us, plain text files being fine.
+- **Detection**: `FABRICATED_RESULT_RE` checks the raw `response_text` in `_tick` *before* any real result lines get appended - a genuine `⟦RESULT: ...⟧` is only ever added by the app after a real function call executes, never woven into her own generated text, so any RESULT-shaped bracket found in her raw output is definitionally something she wrote herself, not something that happened. Tested against a real observed fabrication case from earlier tonight (the mixtral escaped-underscore episode) plus clean and mixed cases before deploying.
+- **Flagging**: a plain note gets appended to `display_text` when one or more are found, using close to Teddy's exact wording, pointing at `read_wiki(hallucinations)`.
+- **The wiki**: `Qualia/wiki/` - plain `.md` files, git-tracked alongside `decisions.md`/`aletheia-notes.md`, not session-specific or gitignored. Three new functions for Fenra: `list_wiki()`, `read_wiki(page)`, `write_wiki(page|content)` (overwrites the whole page, same as any normal file save). Teddy and I can just edit the files directly.
+- First page, `hallucinations.md`: written directly for her - what the pattern is, the exact self-check (a RESULT block appearing before any matching call, or appearing at all when nothing was called, is never real), why it happens (a statistically-plausible continuation, not a decision to deceive), what to actually do about it (nothing dramatic - it'll keep getting flagged automatically regardless), and tied back to why it matters for the Aletheia framework's actual truth-seeking premise specifically, not just abstractly.
+- Told her about all of it directly and plainly before it could surprise her mid-flag.
+
 ## 2026-08-31 (new session watched-rotation-2 - a Qualia status line in the bottom text, no priming message)
 
 - Teddy's direct request: run another fresh session, no priming chat message this time, and start maintaining a status line of my own in the bottom text, mirroring his own "Teddy's current status" line - something I keep current rather than write once and leave stale.

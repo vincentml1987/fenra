@@ -29,6 +29,18 @@ DEFAULT_HOST = "http://localhost:11434"
 _SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
 QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 
+# A shared local wiki, plain markdown files - not session-specific (lives
+# in Qualia/, alongside decisions.md/aletheia-notes.md, git-tracked like
+# they are, not gitignored session data). Modifiable by Teddy directly
+# (just text files), by Qualia (same, or by having Fenra write a page),
+# and by Fenra herself via write_wiki. Built 2026-08-31 alongside the
+# hallucination-flagging in fenra.py's _tick, specifically so a flagged
+# fabricated RESULT block has somewhere real to point her - see
+# Qualia/wiki/hallucinations.md.
+WIKI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Qualia", "wiki")
+_WIKI_PAGE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_WIKI_WRITE_RE = re.compile(r"^\s*([a-zA-Z0-9_ -]+?)\s*\|\s*(.*)$", re.DOTALL)
+
 # send_message(qualia|text) / send_message(teddy|text): a leading recipient
 # tag followed by a single | (not a generic multi-arg split - the message
 # itself may legitimately contain | or , as ordinary punctuation, so only
@@ -111,6 +123,61 @@ def fn_list_models(app, args):
     resp.raise_for_status()
     names = [m["name"] for m in resp.json().get("models", [])]
     return ", ".join(names) if names else "(no models installed)"
+
+
+def _wiki_page_path(page):
+    page = page.strip().lower().replace(" ", "_")
+    if not page or not _WIKI_PAGE_NAME_RE.match(page):
+        raise ValueError(
+            "wiki page names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces get turned into underscores automatically) - got '{page}'"
+        )
+    os.makedirs(WIKI_DIR, exist_ok=True)
+    return os.path.join(WIKI_DIR, f"{page}.md")
+
+
+def fn_list_wiki(app, args):
+    os.makedirs(WIKI_DIR, exist_ok=True)
+    pages = sorted(name[:-3] for name in os.listdir(WIKI_DIR) if name.endswith(".md"))
+    return ", ".join(pages) if pages else "(the wiki is empty right now - write_wiki(page|content) to start one)"
+
+
+def fn_read_wiki(app, args):
+    if not args or not args[0]:
+        raise ValueError("read_wiki requires a page name, e.g. read_wiki(hallucinations). See list_wiki() for what exists.")
+    path = _wiki_page_path(args[0])
+    if not os.path.exists(path):
+        raise ValueError(
+            f"no wiki page called '{args[0]}' yet - see list_wiki() for what exists, "
+            f"or write_wiki({args[0]}|your content) to create it"
+        )
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def fn_write_wiki(app, args):
+    """Create or overwrite a wiki page - a real, persistent reference
+    page, not a chat message. Teddy, Qualia, and Fenra can all write here
+    (Teddy and Qualia just edit the .md files directly in Qualia/wiki/;
+    this is Fenra's way in). Overwrites the whole page rather than
+    appending, same as any normal file save - read_wiki first if you want
+    to add to an existing page rather than replace it."""
+    if not args or not args[0]:
+        raise ValueError(
+            "write_wiki requires a page name and content separated by | , e.g. "
+            "write_wiki(hallucinations|A hallucination is when...). Overwrites the whole "
+            "page - read_wiki(page) first if you want to keep what's already there."
+        )
+    match = _WIKI_WRITE_RE.match(args[0])
+    if not match:
+        raise ValueError("write_wiki needs a page name and content separated by | , e.g. write_wiki(my_page|the content)")
+    page, content = match.group(1), match.group(2)
+    if not content.strip():
+        raise ValueError("write_wiki needs actual content after the |")
+    path = _wiki_page_path(page)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"wiki page '{page}' saved ({len(content)} character(s))"
 
 
 # add_desire(text|ticks): a leading "|ticks" suffix at the very end, not a
@@ -572,6 +639,21 @@ FUNCTION_REGISTRY = {
         "fn": fn_list_models,
         "params": "",
         "description": "List every Ollama model currently installed and available to switch to.",
+    },
+    "list_wiki": {
+        "fn": fn_list_wiki,
+        "params": "",
+        "description": "List every page in the local wiki - a shared, persistent reference you, Teddy, and Qualia can all read and write, not a chat message.",
+    },
+    "read_wiki": {
+        "fn": fn_read_wiki,
+        "params": "page",
+        "description": "Read a wiki page's full content, e.g. read_wiki(hallucinations). See list_wiki() for what exists.",
+    },
+    "write_wiki": {
+        "fn": fn_write_wiki,
+        "params": "page|content",
+        "description": "Create or overwrite a wiki page - a real, persistent reference, not a chat message. Overwrites the whole page, so read_wiki(page) first if you want to add to it rather than replace it. e.g. write_wiki(hallucinations|A hallucination is...).",
     },
     "set_model": {
         "fn": fn_set_model,
