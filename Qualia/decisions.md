@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (Teddy and Qualia can now view and directly alter the model rotation - v0.14.1)
+
+- Teddy's direct request: a way for both of us to view and change the rotation queue, not just watch Fenra build it herself one `add_to_rotation` call at a time.
+- **View**: a GUI row (label mirroring the live rotation, always current - refreshes on session load, on Fenra's own `add_to_rotation`, and on either "Set" path below) plus, for me, `state.json`/`functions.jsonl` already showed it, unchanged.
+- **Alter**: an Entry + "Set" button in the GUI for Teddy, and `qualia_rotation_set.txt` (same polled pattern as the other three) for me - both routed through one shared `_apply_model_rotation` so the two paths can never drift apart. Comma or pipe separated to replace the whole rotation at once; the literal word "clear" (or "none") empties it back to a single fixed model; blank input is a no-op, matching every other `_set` file's convention. An unrecognized model name is dropped rather than rejecting the whole list, so one typo doesn't lose an otherwise-good rotation.
+- Tested the string-parsing logic in isolation across blank/clear/comma/pipe/mixed-valid-invalid cases before deploying, then verified the live file-poll end to end (wrote a real rotation to `qualia_rotation_set.txt`, confirmed the file got consumed/truncated and `state.json` updated correctly) before considering it done.
+- Restarted the app once more to deploy (v0.14.1) - `watched-rotation`'s existing rotation state survived the restart correctly.
+
 ## 2026-08-31 (fallback check-in: round-robin confirmed working live, standing 40B cap from Teddy)
 
 - **Round-robin verified in the wild, not just in isolated testing**: she called `add_to_rotation(mixtral:8x7b)` then `add_to_rotation(qwen3:32b)` at 13:03, and every cycle since has alternated cleanly between the two in exactly that order - real confirmation the feature works as designed outside the test harness. When she later called `set_model(deepseek-r1:32b)` directly, the real result text correctly warned her the rotation would override it again next cycle - the warning path works too.

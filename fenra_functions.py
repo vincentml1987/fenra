@@ -418,7 +418,46 @@ def fn_set_model(app, args):
     if target not in names:
         raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
     app.root.after(0, app.model_var.set, target)
+    if app.model_rotation:
+        return (
+            f"model switched to {target}, effective next cycle - note: {len(app.model_rotation)} "
+            f"model(s) are in your rotation ({', '.join(app.model_rotation)}), which will override "
+            "this again on the very next cycle. Use add_to_rotation to add models to the rotation "
+            "instead if you want this one to stick."
+        )
     return f"model switched to {target}, effective next cycle"
+
+
+def fn_add_to_rotation(app, args):
+    """Add a model to the automatic round-robin rotation - see the
+    per-prompt "Model rotation" notice for exactly how the rotation
+    itself behaves (one model repeats, two alternate, three or more
+    cycle through in the order added). Validates against Ollama's
+    installed-models list the same way set_model does. A model already
+    in the rotation is a no-op, not an error - no duplicate entries."""
+    if not args or not args[0]:
+        raise ValueError(
+            "add_to_rotation requires a model name, e.g. add_to_rotation(gemma3:27b) - "
+            "must be an installed model (see list_models())."
+        )
+    target = args[0]
+    host = app.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+    resp = requests.get(f"{host}/api/tags", timeout=10)
+    resp.raise_for_status()
+    names = [m["name"] for m in resp.json().get("models", [])]
+    if target not in names:
+        raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
+    if target in app.model_rotation:
+        return (
+            f"'{target}' is already in the rotation ({len(app.model_rotation)} model(s)): "
+            f"{', '.join(app.model_rotation)}"
+        )
+    app.model_rotation.append(target)
+    app.root.after(0, app._refresh_model_rotation_display)
+    return (
+        f"added '{target}' to the rotation - now {len(app.model_rotation)} model(s), "
+        f"cycling in this order: {', '.join(app.model_rotation)}"
+    )
 
 
 DEFAULT_FETCH_CHARS = 500
@@ -516,7 +555,12 @@ FUNCTION_REGISTRY = {
     "set_model": {
         "fn": fn_set_model,
         "params": "name",
-        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b).",
+        "description": "Switch which Ollama model generates your responses, effective next cycle. Requires the exact name of an installed model, e.g. set_model(gemma3:4b). If you have models in your rotation (see add_to_rotation), the rotation will override this again on the next cycle.",
+    },
+    "add_to_rotation": {
+        "fn": fn_add_to_rotation,
+        "params": "name",
+        "description": "Add a model to your automatic round-robin rotation - one model repeats itself every cycle, two alternate back and forth, three or more cycle through in the order added, forever, automatically. Requires the exact name of an installed model, e.g. add_to_rotation(gemma2:27b). See list_models() for what's installed.",
     },
     "fetch_html": {
         "fn": fn_fetch_html,

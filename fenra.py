@@ -179,7 +179,31 @@ import fenra_functions
 #            field, going completely silent at the default 500. Previously
 #            the only fix was reverting the model; now the actual budget
 #            can be raised instead.
-FENRA_VERSION = "0.13.0"
+#   0.14.0 - Model rotation: Fenra can add models to an automatic
+#            round-robin (add_to_rotation(name)) instead of only ever
+#            running on one fixed model. One model in rotation repeats
+#            itself every cycle, two alternate back and forth, three or
+#            more cycle through in the order added, forever - advanced
+#            once per tick in _advance_model_rotation, which overrides
+#            whatever set_model last set as soon as any models are in
+#            the rotation. A new per-prompt notice
+#            (_model_rotation_notice) always shows what's in it and what
+#            the current cycle is running on, so it's never a silent
+#            mystery to her. Persisted per session like desires/allowance.
+#            Teddy's direct request, alongside a reshuffle of the
+#            installed Ollama models (single-digit-B ones dropped,
+#            several 10-40B ones across new families brought in) and a
+#            new session to try it all on from scratch.
+#   0.14.1 - Teddy and Qualia can both now view and directly set/clear
+#            the whole model rotation, not just watch Fenra build it one
+#            add_to_rotation call at a time: a GUI row (label mirrors the
+#            live rotation, Entry + Set button replaces it wholesale) and
+#            qualia_rotation_set.txt (same polled pattern as the other
+#            three), both routed through one shared _apply_model_rotation
+#            so the two paths can never drift apart. "clear"/"none"
+#            empties the rotation back to a single fixed model; blank
+#            input is a no-op, matching every other _set file.
+FENRA_VERSION = "0.14.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -234,6 +258,17 @@ QUALIA_MODEL_SET_FILENAME = "qualia_model_set.txt"
 # from, going completely silent at a low limit with no error on either
 # side). Built 2026-08-31 after that exact failure recurred twice.
 QUALIA_MAX_TOKENS_SET_FILENAME = "qualia_max_tokens_set.txt"
+
+# Same pattern, for the whole model rotation (see _advance_model_rotation
+# and fn_add_to_rotation) - lets Qualia view (state.json/functions.jsonl
+# already show it) and directly set or clear it externally, not just
+# watch Fenra build it herself one add_to_rotation call at a time.
+# Comma- or pipe-separated model names replace the whole rotation; the
+# literal word "clear" (or "none") empties it back to a single fixed
+# model. Blank content is a no-op, same as the other _set files. Shares
+# _apply_model_rotation with the GUI's own "Set" button next to it, so
+# Teddy has the identical capability directly in the app.
+QUALIA_ROTATION_SET_FILENAME = "qualia_rotation_set.txt"
 
 # Presence of either file (content doesn't matter) starts/stops the
 # self-talk loop on the next poll, exactly as if Start/Stop were clicked -
@@ -451,6 +486,8 @@ def default_state():
         "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         "context_window": DEFAULT_CONTEXT_WINDOW,
         "function_usage": {},
+        "model_rotation": [],
+        "model_rotation_index": 0,
     }
 
 
@@ -538,6 +575,8 @@ class FenraApp:
         self.chat_messages = []
         self.desires = []
         self.function_usage = {}  # name -> ticks since last attempted
+        self.model_rotation = []  # models Fenra has added, in the order added
+        self.model_rotation_index = 0  # position in the rotation for the next tick
         self.session_name = None
 
         self._build_ui()
@@ -626,7 +665,8 @@ class FenraApp:
         body.rowconfigure(2, weight=0)   # desire row       - fixed height
         body.rowconfigure(3, weight=0)   # allowance row    - fixed height
         body.rowconfigure(4, weight=0)   # context window row - fixed height
-        body.rowconfigure(5, weight=1)   # bottom box       - 10%
+        body.rowconfigure(5, weight=0)   # model rotation row - fixed height
+        body.rowconfigure(6, weight=1)   # bottom box       - 10%
 
         self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
@@ -674,8 +714,29 @@ class FenraApp:
         context_window_entry.bind("<Return>", lambda event: self.set_context_window())
         ttk.Button(context_window_row, text="Set", command=self.set_context_window).pack(side="left")
 
+        # Model rotation: view + set, both Teddy (here) and Qualia
+        # (qualia_rotation_set.txt) can view and alter it directly - not
+        # just watch Fenra build it herself via add_to_rotation. Display
+        # label always mirrors self.model_rotation; the Entry/Set pair
+        # replaces the whole rotation at once (comma or pipe separated,
+        # "clear" to empty it) via the same _apply_model_rotation shared
+        # with the external poll. See _advance_model_rotation for how the
+        # rotation actually drives which model runs each cycle.
+        rotation_row = ttk.Frame(body)
+        rotation_row.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(rotation_row, text="Model rotation:").pack(side="left")
+        self.model_rotation_display_var = tk.StringVar(value="(empty - single fixed model)")
+        ttk.Label(rotation_row, textvariable=self.model_rotation_display_var, foreground="#666").pack(
+            side="left", padx=(4, 10)
+        )
+        self.model_rotation_entry_var = tk.StringVar(value="")
+        rotation_entry = ttk.Entry(rotation_row, textvariable=self.model_rotation_entry_var, width=30)
+        rotation_entry.pack(side="left", padx=(0, 4))
+        rotation_entry.bind("<Return>", lambda event: self.set_model_rotation())
+        ttk.Button(rotation_row, text="Set", command=self.set_model_rotation).pack(side="left")
+
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=5, column=0, sticky="nsew", pady=(4, 0))
+        self.bottom_box.grid(row=6, column=0, sticky="nsew", pady=(4, 0))
 
     def _build_chat_tab(self):
         frame = self.chat_tab
@@ -759,6 +820,8 @@ class FenraApp:
             "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
             "context_window": DEFAULT_CONTEXT_WINDOW,
             "function_usage": {},
+            "model_rotation": [],
+            "model_rotation_index": 0,
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -781,6 +844,8 @@ class FenraApp:
             "qualia_allowance": self.qualia_allowance_var.get(),
             "context_window": self.context_window_var.get(),
             "function_usage": self.function_usage,
+            "model_rotation": self.model_rotation,
+            "model_rotation_index": self.model_rotation_index,
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
@@ -814,6 +879,66 @@ class FenraApp:
         self.save_session()
         self.session_status_var.set(f"Context window set to {value} ({datetime.now().strftime('%H:%M:%S')})")
 
+    def _apply_model_rotation(self, raw_text):
+        """Shared by the GUI's 'Set' button and the external
+        qualia_rotation_set.txt poll - replace the whole model rotation
+        at once from a comma- or pipe-separated list of names, or clear
+        it with the literal word "clear"/"none". Best-effort validation
+        against Ollama's installed-models list, same tolerance as
+        _poll_qualia_model_set (applies anyway if the check itself fails,
+        rather than block on an extra failure mode) - an unrecognized
+        name is just dropped rather than rejecting the whole list, so one
+        typo doesn't lose an otherwise-good rotation. Blank input is a
+        no-op (returns None), not a clear - matches every other _set
+        file's convention of "nothing written, nothing to do"."""
+        stripped = raw_text.strip()
+        if not stripped:
+            return None
+        if stripped.lower() in ("clear", "none", "-"):
+            self.model_rotation = []
+            self.model_rotation_index = 0
+            self.save_session()
+            self.root.after(0, self._refresh_model_rotation_display)
+            return "cleared - back to a single fixed model"
+
+        names = [n.strip() for n in _MULTI_ARG_SPLIT_RE.split(stripped) if n.strip()]
+        try:
+            host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
+            resp = requests.get(f"{host}/api/tags", timeout=5)
+            resp.raise_for_status()
+            installed = [m["name"] for m in resp.json().get("models", [])]
+            if installed:
+                names = [n for n in names if n in installed]
+        except Exception:
+            pass
+
+        self.model_rotation = names
+        self.model_rotation_index = 0
+        self.save_session()
+        self.root.after(0, self._refresh_model_rotation_display)
+        if not names:
+            return "no recognized/installed model names found - rotation left empty"
+        return f"set to {len(names)} model(s): {', '.join(names)}"
+
+    def set_model_rotation(self):
+        """Teddy's GUI-side equivalent of qualia_rotation_set.txt - see
+        _apply_model_rotation for the shared logic."""
+        result = self._apply_model_rotation(self.model_rotation_entry_var.get())
+        if result is None:
+            messagebox.showinfo(
+                "Fenra",
+                "Type model name(s) - comma or pipe separated for more than one - or \"clear\" to empty the rotation."
+            )
+            return
+        self.model_rotation_entry_var.set("")
+        self.session_status_var.set(f"Model rotation {result} ({datetime.now().strftime('%H:%M:%S')})")
+
+    def _refresh_model_rotation_display(self):
+        if self.model_rotation:
+            self.model_rotation_display_var.set(", ".join(self.model_rotation))
+        else:
+            self.model_rotation_display_var.set("(empty - single fixed model)")
+
     def _load_session(self, name):
         if self.running:
             self.toggle_loop()
@@ -835,6 +960,9 @@ class FenraApp:
         self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
         self.function_usage = dict(state.get("function_usage", {}))
+        self.model_rotation = list(state.get("model_rotation", []))
+        self.model_rotation_index = int(state.get("model_rotation_index", 0) or 0)
+        self._refresh_model_rotation_display()
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -925,6 +1053,7 @@ class FenraApp:
             self._poll_qualia_context_window_set()
             self._poll_qualia_max_tokens_set()
             self._poll_qualia_model_set()
+            self._poll_qualia_rotation_set()
             self._poll_start_stop_signal()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
 
@@ -1037,6 +1166,26 @@ class FenraApp:
             return
         self.max_tokens_var.set(str(value))
         self.save_session()
+
+    def _poll_qualia_rotation_set(self):
+        """Same pattern again, for the whole model rotation - lets Qualia
+        view (state.json/functions.jsonl already show it) and directly
+        set or clear it externally too, not just watch it get built one
+        add_to_rotation call at a time. Shares _apply_model_rotation with
+        the GUI's own 'Set' button."""
+        path = os.path.join(session_dir(self.session_name), QUALIA_ROTATION_SET_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+        except OSError:
+            return
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        self._apply_model_rotation(raw)
 
     def _poll_qualia_model_set(self):
         """Same pattern again, for the model. Best-effort validation
@@ -1256,6 +1405,27 @@ class FenraApp:
             f"Teddy or you can change this - set_context_window(n), {MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}.]"
         )
 
+    def _model_rotation_notice(self):
+        """Always-present, every prompt: what's actually driving the model
+        each cycle. With nothing in the rotation, current_model() is the
+        only way to know what's running (a single fixed model, same as
+        before this feature existed). With one or more, the app itself
+        advances through them automatically each cycle in the order
+        added - this notice exists so that isn't a mystery to her."""
+        if not self.model_rotation:
+            return (
+                "[Model rotation: empty - you are on a single fixed model (see current_model()). "
+                "add_to_rotation(name) starts an automatic rotation: one model repeats itself, two "
+                "alternate back and forth each cycle, three or more cycle through in the order added.]"
+            )
+        current = self.model_var.get().strip()
+        order = ", ".join(self.model_rotation)
+        return (
+            f"[Model rotation: {len(self.model_rotation)} model(s) in rotation, cycling automatically "
+            f"every cycle in this order: {order}. This cycle is running on {current}. "
+            f"add_to_rotation(name) to add another.]"
+        )
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
@@ -1336,7 +1506,24 @@ class FenraApp:
     def _set_status(self, text):
         self.status_var.set(text)
 
+    def _advance_model_rotation(self):
+        """If Fenra has added any models to her rotation (fn_add_to_rotation
+        in fenra_functions.py), pick the next one in order for this cycle
+        and advance the index for next time - one model just repeats
+        itself every cycle (no visible change), two alternate back and
+        forth, three run 1-2-3-1-2-3, and so on. A manual set_model() call
+        still works for a single cycle, but gets overwritten by the
+        rotation again on the very next tick once any models are in it -
+        the rotation, once populated, is what actually drives the model
+        used each cycle, not the combo box."""
+        if not self.model_rotation:
+            return
+        index = self.model_rotation_index % len(self.model_rotation)
+        self.model_var.set(self.model_rotation[index])
+        self.model_rotation_index = (index + 1) % len(self.model_rotation)
+
     def _tick(self):
+        self._advance_model_rotation()
         top_text = self.top_box.get("1.0", "end-1c")
         bottom_text = self.bottom_box.get("1.0", "end-1c")
         recent_thoughts = self._recent_thoughts_block()
@@ -1344,12 +1531,13 @@ class FenraApp:
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice()
+        rotation_notice = self._model_rotation_notice()
         function_reminder = self._function_reminder_block()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
         prompt = (
             f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{bottom_text}\n\n"
-            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{function_reminder}"
+            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n{function_reminder}"
         ).strip()
 
         payload = {
@@ -1404,6 +1592,8 @@ class FenraApp:
             "qualia_allowance": self.qualia_allowance_var.get(),
             "context_window": self.context_window_var.get(),
             "function_usage": self.function_usage,
+            "model_rotation": self.model_rotation,
+            "model_rotation_index": self.model_rotation_index,
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)
