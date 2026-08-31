@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (max_tokens raised 500 -> 1500 - real, confirmed truncation, not a hunch)
+
+- Teddy asked whether `max_tokens=500` was cutting responses off. Checked directly rather than assume: several recent cycles end mid-word (`...both DeepSeek-r1:32b and qwen` at 16:04:33, `...[2026-08-` at 15:42:06), consistently around 1500-1600 characters - roughly what 500 tokens produces for English text at ~3 chars/token. Not occasional; most of the longer responses in a 15-cycle sample were cut off, not just a couple.
+- Raised to 1500 via `qualia_max_tokens_set.txt` (the override built earlier tonight for exactly this) - no code change, no restart needed. Should give roughly 4500-5000 characters of headroom, and should also reduce (not eliminate) the `qwen3` thinking-mode stalls since more of the budget survives past internal reasoning before the response field would run out. Named the real tradeoff to Teddy: generation time scales with tokens actually produced, so cycles on the already-slow models (mixtral, gemma2:27b) will take proportionally longer now.
+
 ## 2026-08-31 (manual model override was never actually taking effect - fixed, "manual runs once" - v0.14.3)
 
 - Teddy asked directly whether her repeated `set_model(deepseek-r1:32b)` attempts were real or hallucinated. Checked `functions.jsonl`: genuinely real, every time, with the exact warning text firing correctly. But then checked the actual request model on the *following* cycle and found it was never deepseek at all - `_advance_model_rotation` runs at the very start of the next tick, before that cycle's request gets built, so it was overwriting her manual choice before it was ever used to generate a single response. The `fn_set_model` warning text said "effective next cycle" - that was never true while a rotation was active; her manual picks were getting zero real cycles, not one.
