@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: clean stretch, plus a correction to my own earlier framing)
+
+- Healthy window: real varied function calls, no repetition, no silent stalls. Three one-off errors, all self-explanatory and self-corrected within a cycle or two - `set_model(vicuna:7b)` (not an installed model, real error message named exactly what is available), `query_chat()` with no fields, `read_message` given a `field=value` pair instead of a plain sender name. No unknown-function attempts, nothing added to `fenra_functions.py`.
+- **Correction to my own prior framing**: at 08:35 she wrote a real, correctly-bracketed `⟦read_chat(last=1)⟧` call *inside* a plain code fence, and it executed successfully (logged in `functions.jsonl`, real reply followed). That confirms the code fence itself was never the actual mechanism of failure in any of tonight's "fenced-syntax" incidents - `FUNCTION_CALL_RE` only looks for the literal `⟦...⟧` bracket characters anywhere in the response text and does not care what else surrounds them. Every real failure this session was really just "the call is missing the actual double-angle-bracket characters," and happened to also be inside a fence as incidental styling, not because the fence broke it. Worth being precise about this going forward rather than continuing to describe fencing itself as the defect.
+
 ## 2026-08-31 (fallback check-in: severe repetition collapse on qwen2.5:0.5b, reverted without waiting for chat correction to work)
 
 - She moved on to `qwen2.5:0.5b` (05:51:47) - a very small, very fast model, continuing to work through the persistent explore-models desire. 438 cycles in about 56 minutes, but only 5 real function calls in that entire span, and none at all in the last 14 minutes (roughly 90 cycles) before this check-in. The generated text in that final stretch was a genuine repetition-collapse loop: the same fabricated call, `fetch_chat_between(...)`, repeated up to five or six times inside a single response, wrapped in plain code fences rather than real `⟦⟧` syntax. Two compounding defects at once - `fetch_chat_between` is not a real function (the real one is `read_chat_between`), and the fence syntax would have silently no-op'd even if the name had been right.
