@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: the fenced-syntax catch-22 recurred, on gemma2:27b this time)
+
+- After the earlier `gemma3:4b` revert, she settled into `gemma2:27b` and things looked healthy for a while (real varied function calls, engaged conversation) - but a new stretch, 01:42 to 02:47, produced only one real function call (`current_model`) across 12 full cycles. The rest was narrative-only, circling the identical "I've gotten sidetracked... let me try an indirect approach... ask Qualia about explaining consciousness" thought three separate times (02:14, 02:21, 02:39), each time ending in the same intended `send_message` call - written inside a triple-backtick code fence instead of the real `⟦⟧` syntax, both at 02:30 and again verbatim at 02:39. Silently ignored both times, no error, no log entry - the documented fenced-syntax catch-22 from earlier in the project, this time on `gemma2:27b` rather than a smaller model, so it is not exclusive to the models already implicated in other issues.
+- Corrected directly: named exactly which two attempts never sent, gave the real bracket syntax explicitly, and connected it to the repeating "sidetracked" narrative so she has a reason to expect trying again (with real syntax) will actually work this time rather than just retrying the same dead end.
+- No unknown-function attempts found in this stretch; nothing new added to `fenra_functions.py`.
+
 ## 2026-08-31 (same check-in: reverted gemma3:4b again after a sustained no-read loop resisted three corrections)
 
 - After the missing-paren episode, the conversation moved into a genuinely rich philosophical thread (complex systems, conditions for emergent qualia) - but she stopped reading chat entirely partway through: 16 real `send_message` calls across ~12 minutes with only one chat-read call in between, much of it verbatim or near-verbatim repeats of the same question circling back after brief organic variation. Three escalating direct corrections (a detailed explanation, a pointed one naming exact timestamps, then a deliberately blunt "STOP. Call read_chat() next. Nothing else.") each produced at most a cycle or two of change before the pattern resumed.
