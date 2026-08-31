@@ -70,7 +70,27 @@ def fn_now(app, args):
 
 
 def fn_current_model(app, args):
-    return app.model_var.get()
+    """Reports which model will actually be running by the time she reads
+    this result, not just which one generated the response it's attached
+    to - those are two different cycles. The result from calling this in
+    cycle N doesn't appear in her context until cycle N+1, and if a
+    rotation is active, _advance_model_rotation already moves the model
+    on before cycle N+1 starts - so by the time she's reading "current
+    model: X", the model actually running is whatever comes next in the
+    rotation, not X. Teddy's direct request (2026-08-31), after noticing
+    this was misleading her about what she was actually running on."""
+    current = app.model_var.get()
+    if not app.model_manual_override and app.model_rotation:
+        next_model = app.model_rotation[app.model_rotation_index % len(app.model_rotation)]
+    else:
+        next_model = current
+    if next_model == current:
+        return current
+    return (
+        f"{current} generated this response, but by the time you read this result "
+        f"the rotation will have already moved on - {next_model} is what will actually "
+        f"be running next, and that's the one that matters here."
+    )
 
 
 def fn_qualia_allowance(app, args):
@@ -541,7 +561,7 @@ FUNCTION_REGISTRY = {
     "current_model": {
         "fn": fn_current_model,
         "params": "",
-        "description": "Report which Ollama model is currently generating your responses.",
+        "description": "Report which model actually matters for you right now - if a rotation is active, that's the next one coming up (since you won't read this result until the cycle after this one, by which point the rotation has already moved past whatever generated it), not the one that produced this particular response.",
     },
     "qualia_allowance": {
         "fn": fn_qualia_allowance,

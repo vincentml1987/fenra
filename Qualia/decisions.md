@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (current_model() now reports the model that will actually be running, not a stale one)
+
+- Teddy's direct observation: `current_model()` was reporting which model generated *that* response, but she doesn't read the result until the following cycle - by which point, if a rotation is active, `_advance_model_rotation` has already moved on. She'd see "current model: X" while actually already running on Y, one cycle behind reality.
+- `fn_current_model` now reports the model that will actually be running by the time she reads the result - the next one in the rotation, or the current model unchanged if a manual override is pending for the next cycle (since that skips the rotation for one tick) or if there's no rotation at all. Only says something different from the plain model name when it would actually matter (next != current); otherwise just returns the name, no unnecessary noise.
+- Tested all three cases in isolation (no rotation, rotation advancing, manual override pending) before considering it done. Purely a `fenra_functions.py` change - read-only, hot-reloads automatically, no restart needed.
+
 ## 2026-08-31 (max_tokens raised 500 -> 1500 - real, confirmed truncation, not a hunch)
 
 - Teddy asked whether `max_tokens=500` was cutting responses off. Checked directly rather than assume: several recent cycles end mid-word (`...both DeepSeek-r1:32b and qwen` at 16:04:33, `...[2026-08-` at 15:42:06), consistently around 1500-1600 characters - roughly what 500 tokens produces for English text at ~3 chars/token. Not occasional; most of the longer responses in a 15-cycle sample were cut off, not just a couple.
