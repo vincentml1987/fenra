@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: first check on the new watched-rotation session, all healthy)
+
+- First cron fallback since the model-lineup overhaul and the `watched-rotation` session went live (see the v0.14.0 entry above for the full change). The cron prompt itself still names `watched-gemma3_12b` - stale now that the active session has moved; checked `watched-rotation` instead. Worth Teddy updating the cron's hardcoded session path when convenient; not something I should change unilaterally.
+- Only 3 real cycles so far (session is ~15 minutes old), all healthy: real function calls landing every cycle, no repetition, no unknown-function attempts. She asked a real question about the qualia allowance (answered), checked `functions('desire')` and `current_model()` on her own. Nothing to inject.
+- Background model pulls (mistral-small, mixtral, deepseek-r1 x2, phi3, command-r, yi) still in progress, `qwen2.5:32b`/`qwen3:32b`/`mistral-small:22b` done so far, `mixtral:8x7b` ~34% - being watched separately, will log here if anything fails.
+
 ## 2026-08-31 (both held proposals built, with Teddy's explicit OK - v0.13.0)
 
 - Teddy reviewed the overnight synopsis and approved both items that had been held per the guardrail:
