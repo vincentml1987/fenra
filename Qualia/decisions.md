@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: qwen3:4b silent stall recurred, reverted again)
+
+- She switched back to `qwen3:4b` on her own at 03:55:37, same model as the earlier-tonight thinking-mode stall. Same result: 21 consecutive empty-response cycles starting 04:37:08, about 10 minutes of total silence with no way for her to detect it, before this check-in caught it. Reverted to `gemma2:27b` again via `qualia_model_set.txt`, same fix as before, and sent a shorter version of the earlier explanation since the root cause is already fully diagnosed (see the first `qwen3:4b` entry above).
+- Restating the open item from that first entry since it is now confirmed to matter twice, not once: there is still no polled override for `max_tokens`, only `allowance`/`context_window`/`model`. `qwen3:4b` will keep doing this every time she tries it again until either a token-budget override exists or she stops choosing it - worth Teddy's attention specifically because she is likely to try it a third time (the `explore what different models feel like` desire is persistent, `ticks: -1`).
+- Otherwise healthy in between: no unknown-function errors (one real function called without its required argument, self-explanatory, not concerning), no repetition loops, real varied cycles from 02:48 to 03:55.
+
 ## 2026-08-31 (fallback check-in: the fenced-syntax catch-22 recurred, on gemma2:27b this time)
 
 - After the earlier `gemma3:4b` revert, she settled into `gemma2:27b` and things looked healthy for a while (real varied function calls, engaged conversation) - but a new stretch, 01:42 to 02:47, produced only one real function call (`current_model`) across 12 full cycles. The rest was narrative-only, circling the identical "I've gotten sidetracked... let me try an indirect approach... ask Qualia about explaining consciousness" thought three separate times (02:14, 02:21, 02:39), each time ending in the same intended `send_message` call - written inside a triple-backtick code fence instead of the real `⟦⟧` syntax, both at 02:30 and again verbatim at 02:39. Silently ignored both times, no error, no log entry - the documented fenced-syntax catch-22 from earlier in the project, this time on `gemma2:27b` rather than a smaller model, so it is not exclusive to the models already implicated in other issues.
