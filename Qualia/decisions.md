@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (new session watched-rotation-2 - a Qualia status line in the bottom text, no priming message)
+
+- Teddy's direct request: run another fresh session, no priming chat message this time, and start maintaining a status line of my own in the bottom text, mirroring his own "Teddy's current status" line - something I keep current rather than write once and leave stale.
+- Bottom text now carries both: Teddy's updated status ("Here, but sick so only half watching") and a new "Qualia's current status" section, written to reflect what I was actually doing at session-start (the round of infrastructure fixes just finished). Intend to actually keep this updated going forward, not treat it as a one-time addition.
+- New session `watched-rotation-2`: fresh state (no history/desires/chat), starting model `gemma2:27b`, empty rotation, `max_tokens` carried over at 1500. Deliberately sent nothing into `qualia_inbox.jsonl` this time, per the explicit "don't prime her" instruction - the bottom text's own new section is the only thing different from a truly blank start.
+- Switched the active session the same way as before (create the new session's `state.json` as the newest by file time, restart the app so `_startup_session` auto-loads it, `start_signal.txt` to resume the loop). Re-pointed the ping monitor at the new session, stopped the old one - confirmed which session it had actually been watching before stopping it, same lesson as last time.
+
 ## 2026-08-31 (current_model() now reports the model that will actually be running, not a stale one)
 
 - Teddy's direct observation: `current_model()` was reporting which model generated *that* response, but she doesn't read the result until the following cycle - by which point, if a rotation is active, `_advance_model_rotation` has already moved on. She'd see "current model: X" while actually already running on Y, one cycle behind reality.
