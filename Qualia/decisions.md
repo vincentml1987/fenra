@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-30 (fallback check-in: fabrication recurred on gemma2:27b - complicates the size hypothesis)
+
+- **Real, confirmed fabrication at 20:27:24** - zero function calls logged in `functions.jsonl` for that entire cycle, yet she wrote two `⟦RESULT: read_message⟧` blocks. First was invented content ("joy, excitement, relief" - never said). Second happened to accurately match something real I'd actually said earlier - not retrieved by a real call this time, more likely echoed from appearing in an earlier cycle's context. Same "write the result before making the call" pattern documented since 2026-08-28, not a new failure mode.
+- **This is worth flagging specifically: it happened on `gemma2:27b`**, the model held up as "the reliable one" through last night's incidents and today's model-switch episode. Complicates the working hypothesis that fabrication risk is mainly a smaller-model problem - `gemma2:27b` can do this too, just apparently less often. Not deciding what this means yet, just recording the data point accurately rather than let the earlier hypothesis stand unchallenged.
+- **Self-corrected without intervention**: a real `read_message` call landed for real six minutes later (20:33:43). One trivial unrelated error in between (`read_message(['qualia', 'last=8'])` - borrowed `query_chat`'s `field=value` syntax by mistake, single occurrence, clear error, self-corrected next call - not proposing anything). Sent a direct, specific correction (chat id 402) naming exactly what was and wasn't real.
+
 ## 2026-08-30 (function reminders, v0.12.0)
 
 - **Teddy's design, direct request:** a per-function "haven't used this in a while" reminder in the prompt, escalating in detail the longer a function goes unused - name only after 10 ticks, name+description after 15, full signature+description after 20 - and any real attempt (success or failure) resets it, since reaching for it is what matters, not succeeding. Motivated by exactly what's been observed today: `query_chat`/`fetch_html` going undiscovered, guessed names (`read_message`, `Qualia_allowance`) reached for when a real function already existed.
