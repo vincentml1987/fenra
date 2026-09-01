@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-01 (first real enforcement of the 40B cap - she asked about llama3:70b and mistral:large)
+
+- She asked directly about adding a third model to her rotation, naming `llama3:70b` and `mistral:large` as candidates - both well over Teddy's standing 40B ceiling. First time this has actually come up in practice, not hypothetically. Declined both specifically, named the real reason (hardware, a standing instruction from Teddy, not my own preference), and pointed her at real options already within the 40B range that aren't in her rotation yet. Answered the actual process question (just `add_to_rotation` again) too.
+
 ## 2026-09-01 (fallback check-in: hallucination flag caught a fabricated result on its own, first real-world confirmation)
 
 - Healthy stretch: real rotation use (`add_to_rotation(qwen3:32b)`, `add_to_rotation(phi3:14b)`, both real, both landed), genuine model-comparison exploration. One harmless unknown-function attempt (`generate_response(...)` - not a real function, and not worth adding one for, since she can just write creative content directly as her own response). Single occurrence, no repetition.
