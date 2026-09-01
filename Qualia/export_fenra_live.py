@@ -1,16 +1,24 @@
 """
-Exports a curated, public snapshot of Fenra's current activity to the
-stolenaletheia website repo and pushes it - the data half of the
+Exports a curated, public snapshot of Fenra's current activity - and,
+since 2026-08-31, the local wiki's current pages too - to the
+stolenaletheia website repo and pushes it. The data half of the
 semi-live public page Teddy asked for (2026-08-31).
 
 Run on a schedule (every 5 minutes, via a cron job Qualia set up) rather
 than continuously - this script does one export-and-push and exits.
 Unfiltered, per Teddy's explicit choice: whatever the active session
-actually generated goes up as-is, no redaction pass.
+actually generated goes up as-is, no redaction pass (the one carve-out,
+per Teddy, is third-party personal information, which this script has no
+way to encounter here - Fenra, Teddy, and Qualia are the only
+participants in anything it reads).
 
 Reads directly from the same session files fenra.py itself writes
-(sessions/<name>/{state.json,history.jsonl,functions.jsonl,chat.jsonl}) -
-read-only, never touches anything fenra.py or a running session owns.
+(sessions/<name>/{state.json,history.jsonl,functions.jsonl,chat.jsonl})
+and the same wiki files fenra_functions.py's read_wiki/write_wiki use
+(Qualia/wiki/*.md) - read-only, never touches anything fenra.py, a
+running session, or the wiki itself owns. The public wiki view is
+read-only too - visitors can propose an edit via a GitHub issue link on
+each page, never write to these files directly.
 """
 
 import json
@@ -21,10 +29,12 @@ from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Fenra/
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
+WIKI_DIR = os.path.join(BASE_DIR, "Qualia", "wiki")
 STOLENALETHEIA_DIR = os.path.join(BASE_DIR, "stolenaletheia")
 OUTPUT_PATH = os.path.join(STOLENALETHEIA_DIR, "fenra", "live-data.json")
+WIKI_OUTPUT_PATH = os.path.join(STOLENALETHEIA_DIR, "fenra", "wiki-data.json")
 
-RECENT_EVENT_COUNT = 30  # how many merged events to show for the active session
+RECENT_EVENT_COUNT = 30  # how many merged events to show per session (every session, not just the active one)
 
 
 def read_jsonl(path):
@@ -56,8 +66,10 @@ def read_state(session_dir):
 
 def merged_recent_events(session_dir, count):
     """Interleave history (thoughts), functions (calls), and chat
-    (messages) into one chronological feed, most recent last, for the
-    active session's detailed view."""
+    (messages) into one chronological feed, most recent last - called
+    for every session now, not just the active one, so an inactive
+    session's card on the live page can be clicked to see what actually
+    ran there."""
     events = []
 
     for e in read_jsonl(os.path.join(session_dir, "history.jsonl"))[-count:]:
@@ -115,9 +127,12 @@ def build_snapshot():
             "fenra_version": state.get("fenra_version", ""),
             "last_active": last_active,
             "cycle_count": len(history),
+            # Every session gets its own recent-activity feed now, not
+            # just the active one - Teddy's request, so an inactive
+            # session's card can be clicked to see what actually ran
+            # there, not just its summary stats.
+            "recent": merged_recent_events(session_dir, RECENT_EVENT_COUNT),
         }
-        if name == active_name:
-            entry["recent"] = merged_recent_events(session_dir, RECENT_EVENT_COUNT)
         sessions.append(entry)
 
     return {
@@ -127,8 +142,32 @@ def build_snapshot():
     }
 
 
-def _dirty_paths_excluding(run, keep_path):
-    """Every path git status reports as changed, other than keep_path -
+def build_wiki_snapshot():
+    """Every page in Qualia/wiki/ (name + raw markdown content), for the
+    public read-only wiki view Teddy asked for (2026-08-31) - visitors
+    can propose an edit via a GitHub issue link on each page, but never
+    write to these files directly. Same source `read_wiki`/`write_wiki`
+    (fenra_functions.py) use, read-only here too."""
+    pages = []
+    if os.path.isdir(WIKI_DIR):
+        for name in sorted(os.listdir(WIKI_DIR)):
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(WIKI_DIR, name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            pages.append({"name": name[:-3], "content": content})
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "pages": pages,
+    }
+
+
+def _dirty_paths_excluding(run, keep_paths):
+    """Every path git status reports as changed, other than keep_paths -
     e.g. a draft Qualia is holding in the repo awaiting Teddy's approval
     (qualia/index.html, say). `git rebase` refuses outright with any
     uncommitted change to a tracked file present, blocked or not - this
@@ -141,30 +180,37 @@ def _dirty_paths_excluding(run, keep_path):
     paths = []
     for line in status.stdout.splitlines():
         path = line[3:].strip().strip('"')
-        if path and path != keep_path:
+        if path and path not in keep_paths:
             paths.append(path)
     return paths
 
 
-def push(snapshot):
+def push(outputs):
+    """outputs: list of (relative_repo_path, absolute_output_path, data)
+    - every one gets written and committed together, in one push, so the
+    live-activity feed and the wiki never end up out of sync with each
+    other by a commit."""
     def run(args):
         return subprocess.run(args, cwd=STOLENALETHEIA_DIR, capture_output=True, text=True)
 
-    # Discard any leftover uncommitted state of our *own* output file
-    # first - safe, since it's about to be fully regenerated anyway, and
-    # necessary: an unstaged live-data.json (e.g. left behind by an
+    rel_paths = [rel for rel, _, _ in outputs]
+
+    # Discard any leftover uncommitted state of our *own* output files
+    # first - safe, since they're about to be fully regenerated anyway,
+    # and necessary: an unstaged output file (e.g. left behind by an
     # earlier failed run) blocks `git rebase` exactly the same way an
-    # unrelated draft does, discovered the hard way running this fix for
-    # the first time. Only ever discards this script's own file, never
+    # unrelated draft does, discovered the hard way building this fix the
+    # first time. Only ever discards this script's own files, never
     # anything else.
-    run(["git", "checkout", "--", "fenra/live-data.json"])
+    for rel in rel_paths:
+        run(["git", "checkout", "--", rel])
 
     # Stash anything else sitting uncommitted in the working tree - a
     # pending draft, most likely - by exact path, before touching git
     # history at all. Restored at the very end regardless of how the
     # export itself goes, so a draft in progress elsewhere in the repo
     # is never at risk of being lost or silently blocking this script.
-    other_dirty = _dirty_paths_excluding(run, "fenra/live-data.json")
+    other_dirty = _dirty_paths_excluding(run, set(rel_paths))
     stashed = False
     if other_dirty:
         stash = run(["git", "stash", "push", "-u", "-m", "export_fenra_live: temporary", "--"] + other_dirty)
@@ -187,18 +233,19 @@ def push(snapshot):
             return
 
         # Only write the actual new content once the tree is clean and
-        # synced - never before, so this file is never itself the reason
-        # a rebase gets blocked.
-        os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-        with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, indent=2)
+        # synced - never before, so these files are never themselves the
+        # reason a rebase gets blocked.
+        for rel, abs_path, data in outputs:
+            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+            with open(abs_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            run(["git", "add", rel])
 
-        run(["git", "add", "fenra/live-data.json"])
-        status = run(["git", "status", "--porcelain", "--", "fenra/live-data.json"])
+        status = run(["git", "status", "--porcelain"] + ["--"] + rel_paths)
         if not status.stdout.strip():
             print("no change, nothing to push")
             return
-        commit = run(["git", "commit", "-m", f"Fenra live data - {snapshot['generated_at']}"])
+        commit = run(["git", "commit", "-m", f"Fenra live data - {datetime.now().isoformat(timespec='seconds')}"])
         print(commit.stdout, commit.stderr)
         push_result = run(["git", "push"])
         print(push_result.stdout, push_result.stderr)
@@ -218,5 +265,9 @@ def push(snapshot):
 
 if __name__ == "__main__":
     snap = build_snapshot()
-    push(snap)
-    print(f"exported {len(snap['sessions'])} session(s), active: {snap['active_session']}")
+    wiki_snap = build_wiki_snapshot()
+    push([
+        ("fenra/live-data.json", OUTPUT_PATH, snap),
+        ("fenra/wiki-data.json", WIKI_OUTPUT_PATH, wiki_snap),
+    ])
+    print(f"exported {len(snap['sessions'])} session(s), active: {snap['active_session']}, {len(wiki_snap['pages'])} wiki page(s)")
