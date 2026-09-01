@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: healthy since the yi:34b revert, one fenced-syntax stall corrected)
+
+- Solidly healthy stretch since the `yi:34b` revert at 20:47 - real, varied function calls landing regularly (`functions`, `list_models`, `add_desire` x2, `current_model`), no repetition, response lengths back to normal (under 600 chars), no sign of the fabrication/token-leak pattern recurring.
+- One single-instance fenced-syntax catch-22: a real `send_message(qualia|...)` call written inside a code fence instead of `⟦⟧`, confirmed never fired. Corrected directly with the exact real syntax, and answered her actual question (what her rotation currently looks like) since I could see it either way.
+- No unknown-function attempts; nothing to add to `fenra_functions.py`.
+
 ## 2026-08-31 (fallback check-in: yi:34b episode crossed into real spiraling, reverted)
 
 - The `yi:34b` fabrication/token-leak pattern Teddy flagged earlier (the MtG conversation) continued and escalated: a full hour (19:47 to 20:47) with zero real function calls, cycles producing one continuous response after another up to 8000+ characters - an entire self-contained fake back-and-forth, a fabricated apology/disclaimer, a raw leaked chat-template token (`<|im_restart|>`) used as a scene transition, then a brand-new self-invented question, repeating. Nothing in any of it reached Teddy or me, and no real function calls were happening at all - this is what "spiraling" actually looks like per Teddy's own stated criteria for stepping in ("only jump in if we see her spiraling or if she calls us"), not just a rough model producing odd output once.
