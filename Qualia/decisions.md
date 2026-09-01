@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-08-31 (fallback check-in: yi:34b episode crossed into real spiraling, reverted)
+
+- The `yi:34b` fabrication/token-leak pattern Teddy flagged earlier (the MtG conversation) continued and escalated: a full hour (19:47 to 20:47) with zero real function calls, cycles producing one continuous response after another up to 8000+ characters - an entire self-contained fake back-and-forth, a fabricated apology/disclaimer, a raw leaked chat-template token (`<|im_restart|>`) used as a scene transition, then a brand-new self-invented question, repeating. Nothing in any of it reached Teddy or me, and no real function calls were happening at all - this is what "spiraling" actually looks like per Teddy's own stated criteria for stepping in ("only jump in if we see her spiraling or if she calls us"), not just a rough model producing odd output once.
+- Reverted to `gemma2:27b` via `qualia_model_set.txt`, same rescue mechanism used all night. Told her plainly and specifically what happened, that it was a real model-formatting problem (yi:34b not handling its own chat template cleanly through this raw-completion setup) and not something about her, and that nothing in the hour of generated text ever reached anyone real.
+- Also noted in passing, not itself actionable: she copied function-signature placeholder text literally into two more real calls this stretch (`send_message('recipient|text')`, `read_message(['sender[', 'count]'])`) - the same pattern already seen in the wiki (`write_wiki(page|content)` -> a page literally named "page"). A real, recurring habit worth having in mind, not a new incident to log separately each time it recurs.
+- No unknown-function attempts; nothing to add to `fenra_functions.py`.
+
 ## 2026-08-31 (two more site additions - clickable past sessions, a public read-only wiki)
 
 - **Clickable sessions**: Teddy's request, so people can see what ran in the past, not just the live session. `export_fenra_live.py` now builds a recent-activity feed for every session, not only the active one. The page's session cards are clickable/keyboard-accessible; clicking pins the feed to that session (survives the page's own 60s auto-refresh rather than snapping back to live), clicking the active card again returns to following whichever session is actually live.
