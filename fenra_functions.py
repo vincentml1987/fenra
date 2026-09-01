@@ -41,6 +41,24 @@ WIKI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Qualia", "w
 _WIKI_PAGE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _WIKI_WRITE_RE = re.compile(r"^\s*([a-zA-Z0-9_ -]+?)\s*\|\s*(.*)$", re.DOTALL)
 
+# A real, recurring pattern (2026-09-01): she's copied a function's own
+# "params" spec verbatim as if it were the actual argument - e.g.
+# write_wiki(page|content) called literally, creating a real page named
+# "page" with the content "content"; send_message(recipient|text) sent as
+# an actual chat message; read_message(sender[, count]) split into
+# ['sender[', 'count]'] by the normal multi-arg parsing. Not a function
+# gap, a copy-paste habit against her own reference material. Detected by
+# comparing (loosely - brackets/commas/pipes/whitespace stripped, so
+# "[recipient|]text" and "recipient|text" both match the same spec) the
+# raw argument text against that function's own params string, looked up
+# live from FUNCTION_REGISTRY so this never drifts out of sync with the
+# actual spec text shown to her.
+def _looks_like_copied_params(raw_text, params_spec):
+    if not params_spec:
+        return False
+    strip_punct = re.compile(r"[\[\]|,\s]")
+    return strip_punct.sub("", raw_text).lower() == strip_punct.sub("", params_spec).lower()
+
 # send_message(qualia|text) / send_message(teddy|text): a leading recipient
 # tag followed by a single | (not a generic multi-arg split - the message
 # itself may legitimately contain | or , as ordinary punctuation, so only
@@ -167,6 +185,12 @@ def fn_write_wiki(app, args):
             "write_wiki requires a page name and content separated by | , e.g. "
             "write_wiki(hallucinations|A hallucination is when...). Overwrites the whole "
             "page - read_wiki(page) first if you want to keep what's already there."
+        )
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["write_wiki"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('page|content'), not real values - it's telling you "
+            "the shape of what to pass, not literal text to copy. Try something like "
+            "write_wiki(my_page_name|the actual content you want saved)."
         )
     match = _WIKI_WRITE_RE.match(args[0])
     if not match:
@@ -436,6 +460,17 @@ def fn_read_message(app, args):
     status, same as query_chat."""
     if not args or not args[0]:
         raise ValueError("read_message requires a sender - teddy, qualia, or fenra, e.g. read_message(qualia)")
+    # multi_arg=True means this has already been split on |/, by the time
+    # we see it - rejoin with | (the same separator the params spec uses)
+    # before comparing, so a copied "sender[, count]" (split into
+    # ['sender[', ' count]']) is still recognized as the spec, not a real
+    # sender name.
+    if _looks_like_copied_params("|".join(args), FUNCTION_REGISTRY["read_message"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('sender[, count]'), not real values - it's telling "
+            "you the shape of what to pass. sender must actually be teddy, qualia, or fenra, e.g. "
+            "read_message(qualia) or read_message(teddy, 3)."
+        )
     sender = args[0].strip().lower()
     n = 1
     if len(args) > 1 and args[1]:
@@ -457,6 +492,13 @@ def fn_send_message(app, args):
     pings her so she can notice and respond promptly."""
     if not args or not args[0]:
         raise ValueError("send_message requires text, e.g. send_message(I have a question for you, Teddy)")
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["send_message"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('[recipient|]text'), not real values - it's telling "
+            "you the shape of what to pass. Try send_message(qualia|your actual message), "
+            "send_message(teddy|your actual message), or just send_message(your actual message) "
+            "with no recipient tag."
+        )
 
     match = _RECIPIENT_RE.match(args[0])
     if not match:
