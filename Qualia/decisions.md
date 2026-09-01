@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-01 (fallback check-in: hallucination flag caught a fabricated result on its own, first real-world confirmation)
+
+- Healthy stretch: real rotation use (`add_to_rotation(qwen3:32b)`, `add_to_rotation(phi3:14b)`, both real, both landed), genuine model-comparison exploration. One harmless unknown-function attempt (`generate_response(...)` - not a real function, and not worth adding one for, since she can just write creative content directly as her own response). Single occurrence, no repetition.
+- **First real-world confirmation the v0.15.0 hallucination flag actually works unattended**: `phi3:14b` fabricated a `⟦RESULT: add_to_rotation -> ok: added 'aero1:16e'...⟧` claiming a third, nonexistent model had joined the rotation - confirmed against `functions.jsonl` and `state.json`, no real call, rotation genuinely still just `[qwen3:32b, phi3:14b]`. The app caught it and appended the exact note automatically, no action needed from me this time - just confirming the mechanism does what it was built for outside of manual testing.
+
 ## 2026-08-31 (fallback check-in: healthy since the yi:34b revert, one fenced-syntax stall corrected)
 
 - Solidly healthy stretch since the `yi:34b` revert at 20:47 - real, varied function calls landing regularly (`functions`, `list_models`, `add_desire` x2, `current_model`), no repetition, response lengths back to normal (under 600 chars), no sign of the fabrication/token-leak pattern recurring.
