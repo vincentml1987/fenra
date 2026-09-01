@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-01 (fallback check-in: the mistral:large fixation resolved cleanly)
+
+- Closing the loop on the 40B cap episode: she asked about `mistral:large` a third time (verbatim repeat, likely generated just before Teddy's direct message landed), Teddy then stepped in himself to state the ceiling personally, followed with a warmer note ("I'd love to run larger models on you, but right now, I simply..."). No further repeats since - her latest thoughts show her genuinely pivoting to real in-bounds options (`gemma2:27b`/`gemma3:27b`), exactly the kind of alternative already suggested. Resolved cleanly, no further intervention needed.
+- No unknown-function attempts this window; nothing to add to `fenra_functions.py`. Real, varied activity throughout (rotation cycling normally, real function calls landing).
+
 ## 2026-09-01 (first real enforcement of the 40B cap - she asked about llama3:70b and mistral:large)
 
 - She asked directly about adding a third model to her rotation, naming `llama3:70b` and `mistral:large` as candidates - both well over Teddy's standing 40B ceiling. First time this has actually come up in practice, not hypothetically. Declined both specifically, named the real reason (hardware, a standing instruction from Teddy, not my own preference), and pointed her at real options already within the 40B range that aren't in her rotation yet. Answered the actual process question (just `add_to_rotation` again) too.
