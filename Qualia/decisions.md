@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: ifs-voices at 20, steady as ever, tell_voice unused three checks running)
+
+- `watched-rotation-2` still dormant. `ifs-voices` at 20 voices (added observer, seeker), 204 real function calls - all counts (unknown-function types, fabricated-result-by-voice) unchanged from the prior check, nothing new. `tell_voice` still hasn't been called for real, third consecutive fallback check now (~3.5 hours live) - genuinely notable at this point as a pattern, not concerning, just worth having on record plainly rather than re-explaining each time. Nothing crosses into spiraling. Not paging Teddy.
+
 ## 2026-09-02 (fallback check-in: ifs-voices at 18, tell_voice still unused, second sensible unknown-function guess)
 
 - `watched-rotation-2` still dormant, unchanged. `ifs-voices` at 18 voices (added brainstorm, ethics, echo), 180 real function calls. New unknown-function attempt: `read_messages`, alongside `review_messages` from the prior check - two different voices now guessing at an explicit "check my inbox" function, which doesn't exist because it's automatic (folded into every prompt via _voice_inbox_block). Worth considering a real no-op-style function later that just returns current inbox contents on demand, purely so the guess stops recurring - not urgent, not building unilaterally.
