@@ -7,10 +7,21 @@ model. See Qualia/decisions.md for design notes.
 Prompt construction each loop tick:
     system = TOP + "\n\n" + BOTTOM
     prompt = TOP + "\n\n" + <her last N cycles of thoughts - see below> + "\n\n"
-             + <her desire queue, if any - see below> + "\n\n" + BOTTOM + "\n\n"
+             + <her desire queue, if any - see below> + "\n\n"
+             + <recent activity from her groups, if any - see below> + "\n\n" + BOTTOM + "\n\n"
              + <chat status notice - always present> + "\n\n"
              + <Qualia allowance notice - always present> + "\n\n"
-             + <context window notice - always present>
+             + <context window notice - always present> + "\n\n"
+             + <groups notice - always present, see below>
+
+Groups (v0.16.0): a voice can join any number of groups
+(join_group(name)/leave_group(name), or Teddy directly in the GUI) - a
+shared, append-only log any voice (any Fenra session, possibly on
+another machine later) can read or write, independent of any fixed
+turn order. groups_in is what she hears (folded into every prompt);
+groups_out is where her real responses get broadcast each cycle. See
+group_path/append_group_entry/read_group_tail and _groups_block/
+_groups_notice below.
 
 Desires (v0.10.0) are a queue, not a single slot: add_desire(text[|ticks])
 appends one with a lifespan in loop ticks (default 10, or -1 for
@@ -246,10 +257,34 @@ import fenra_functions
 #            it, flag it. Tested the detection regex against a real
 #            observed fabrication case plus clean/mixed cases before
 #            deploying.
-FENRA_VERSION = "0.15.0"
+#   0.16.0 - Groups: cross-voice communication with no central turn-
+#            taking. Each session ("voice") keeps running on its own
+#            independent interval exactly as before - there's still no
+#            conductor stepping voices in turn, and none is planned, since
+#            Teddy's actual goal is voices eventually running in parallel
+#            on this machine or networked ones, which a central turn-token
+#            would work against. Instead, a voice can now join any number
+#            of groups (join_group/leave_group in fenra_functions.py, or
+#            Teddy directly via the new GUI row): groups_in controls what
+#            she hears every prompt (_groups_block, a merged/sorted recent
+#            window across all her groups, folded in alongside desires),
+#            groups_out controls where her real responses get broadcast
+#            each cycle. A group is just a shared, append-only log
+#            (groups/<name>.jsonl) any voice can read or write regardless
+#            of process or machine - deliberately not wiki/decision
+#            content, so it lives in groups/ (gitignored, like sessions/)
+#            rather than Qualia/. Modeled directly on the old conductor.py
+#            groups_in/groups_out wiring from before this rewrite, minus
+#            the fixed topology and turn-stepping - membership here is
+#            free-form and voice-chosen, not configured per agent class
+#            ahead of time. Built at Teddy's explicit request/approval
+#            after reviewing that old architecture together.
+FENRA_VERSION = "0.16.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
+GROUPS_DIR = os.path.join(BASE_DIR, "groups")
+GROUPS_WINDOW = 15  # max merged entries shown per prompt across all groups_in
 
 DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
@@ -519,6 +554,66 @@ def sanitize_session_name(name):
     return name
 
 
+_GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def sanitize_group_name(name):
+    return (name or "").strip().lower().replace(" ", "_")
+
+
+def group_path(name):
+    name = sanitize_group_name(name)
+    if not name or not _GROUP_NAME_RE.match(name):
+        raise ValueError(
+            "group names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces get turned into underscores automatically) - got '{name}'"
+        )
+    os.makedirs(GROUPS_DIR, exist_ok=True)
+    return os.path.join(GROUPS_DIR, f"{name}.jsonl")
+
+
+def append_group_entry(name, voice, text):
+    """Broadcast one entry to a shared group log. Tolerant of concurrent
+    writers - other voices, possibly other processes or machines later,
+    per Teddy's stated goal of eventually running voices in parallel -
+    via a short retry loop on transient file-lock contention rather than
+    losing a broadcast to a race."""
+    path = group_path(name)
+    entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "voice": voice,
+        "text": text,
+    }
+    line = json.dumps(entry, ensure_ascii=False) + "\n"
+    for attempt in range(5):
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+            return
+        except OSError:
+            if attempt == 4:
+                raise
+            time.sleep(0.1)
+
+
+def read_group_tail(name, limit):
+    path = group_path(name)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except OSError:
+        return []
+    out = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return out
+
+
 def list_sessions():
     if not os.path.isdir(SESSIONS_DIR):
         return []
@@ -559,6 +654,8 @@ def default_state():
         "function_usage": {},
         "model_rotation": [],
         "model_rotation_index": 0,
+        "groups_in": [],
+        "groups_out": [],
     }
 
 
@@ -654,6 +751,8 @@ class FenraApp:
         # of being overwritten before it's ever used. Not persisted -
         # transient, in-flight state that means nothing across a restart.
         self.model_manual_override = False
+        self.groups_in = []   # group names this voice hears - see _groups_block
+        self.groups_out = []  # group names this voice broadcasts to each real cycle
         self.session_name = None
 
         self._build_ui()
@@ -747,7 +846,8 @@ class FenraApp:
         body.rowconfigure(3, weight=0)   # allowance row    - fixed height
         body.rowconfigure(4, weight=0)   # context window row - fixed height
         body.rowconfigure(5, weight=0)   # model rotation row - fixed height
-        body.rowconfigure(6, weight=1)   # bottom box       - 10%
+        body.rowconfigure(6, weight=0)   # groups row       - fixed height
+        body.rowconfigure(7, weight=1)   # bottom box       - 10%
 
         self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
         self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
@@ -816,8 +916,38 @@ class FenraApp:
         rotation_entry.bind("<Return>", lambda event: self.set_model_rotation())
         ttk.Button(rotation_row, text="Set", command=self.set_model_rotation).pack(side="left")
 
+        # Groups: which shared logs (groups/<name>.jsonl) this voice reads
+        # from and broadcasts to - see _groups_block/_groups_notice for how
+        # that actually shows up in the prompt, and join_group/leave_group
+        # in fenra_functions.py for how Fenra manages her own membership.
+        # Two independent Set buttons (full replace, comma/pipe separated,
+        # "clear" to empty), same convention as model rotation.
+        groups_row = ttk.Frame(body)
+        groups_row.grid(row=6, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(groups_row, text="Groups in:").pack(side="left")
+        self.groups_in_display_var = tk.StringVar(value="(none)")
+        ttk.Label(groups_row, textvariable=self.groups_in_display_var, foreground="#666").pack(
+            side="left", padx=(4, 10)
+        )
+        self.groups_in_entry_var = tk.StringVar(value="")
+        groups_in_entry = ttk.Entry(groups_row, textvariable=self.groups_in_entry_var, width=16)
+        groups_in_entry.pack(side="left", padx=(0, 2))
+        groups_in_entry.bind("<Return>", lambda event: self.set_groups_in())
+        ttk.Button(groups_row, text="Set", command=self.set_groups_in).pack(side="left", padx=(0, 16))
+
+        ttk.Label(groups_row, text="Groups out:").pack(side="left")
+        self.groups_out_display_var = tk.StringVar(value="(none)")
+        ttk.Label(groups_row, textvariable=self.groups_out_display_var, foreground="#666").pack(
+            side="left", padx=(4, 10)
+        )
+        self.groups_out_entry_var = tk.StringVar(value="")
+        groups_out_entry = ttk.Entry(groups_row, textvariable=self.groups_out_entry_var, width=16)
+        groups_out_entry.pack(side="left", padx=(0, 2))
+        groups_out_entry.bind("<Return>", lambda event: self.set_groups_out())
+        ttk.Button(groups_row, text="Set", command=self.set_groups_out).pack(side="left")
+
         self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=6, column=0, sticky="nsew", pady=(4, 0))
+        self.bottom_box.grid(row=7, column=0, sticky="nsew", pady=(4, 0))
 
     def _build_chat_tab(self):
         frame = self.chat_tab
@@ -903,6 +1033,8 @@ class FenraApp:
             "function_usage": {},
             "model_rotation": [],
             "model_rotation_index": 0,
+            "groups_in": [],
+            "groups_out": [],
         }
         ensure_session_dir(name)
         save_session_state(name, state)
@@ -927,6 +1059,8 @@ class FenraApp:
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
             "model_rotation_index": self.model_rotation_index,
+            "groups_in": self.groups_in,
+            "groups_out": self.groups_out,
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
@@ -1020,6 +1154,58 @@ class FenraApp:
         else:
             self.model_rotation_display_var.set("(empty - single fixed model)")
 
+    def _apply_groups(self, raw_text, attr):
+        """Shared by both group Set buttons - replace the whole
+        groups_in or groups_out list at once from a comma/pipe-separated
+        list of names, or clear it with "clear"/"none". Blank input is a
+        no-op (returns None), matching every other _set control's
+        convention. Names are sanitized the same way join_group does
+        (fenra_functions.py), so a name typed here and one she joins
+        herself always land on the same underlying group file."""
+        stripped = raw_text.strip()
+        if not stripped:
+            return None
+        if stripped.lower() in ("clear", "none", "-"):
+            setattr(self, attr, [])
+            self.root.after(0, self._refresh_groups_display)
+            return "cleared"
+        names = []
+        for n in _MULTI_ARG_SPLIT_RE.split(stripped):
+            n = sanitize_group_name(n)
+            if n and n not in names:
+                names.append(n)
+        setattr(self, attr, names)
+        self.root.after(0, self._refresh_groups_display)
+        if not names:
+            return "no valid group names found - left empty"
+        return f"set to {len(names)} group(s): {', '.join(names)}"
+
+    def set_groups_in(self):
+        result = self._apply_groups(self.groups_in_entry_var.get(), "groups_in")
+        if result is None:
+            messagebox.showinfo(
+                "Fenra",
+                "Type group name(s) - comma or pipe separated for more than one - or \"clear\" to empty."
+            )
+            return
+        self.groups_in_entry_var.set("")
+        self.session_status_var.set(f"Groups in {result} ({datetime.now().strftime('%H:%M:%S')})")
+
+    def set_groups_out(self):
+        result = self._apply_groups(self.groups_out_entry_var.get(), "groups_out")
+        if result is None:
+            messagebox.showinfo(
+                "Fenra",
+                "Type group name(s) - comma or pipe separated for more than one - or \"clear\" to empty."
+            )
+            return
+        self.groups_out_entry_var.set("")
+        self.session_status_var.set(f"Groups out {result} ({datetime.now().strftime('%H:%M:%S')})")
+
+    def _refresh_groups_display(self):
+        self.groups_in_display_var.set(", ".join(self.groups_in) if self.groups_in else "(none)")
+        self.groups_out_display_var.set(", ".join(self.groups_out) if self.groups_out else "(none)")
+
     def _load_session(self, name):
         if self.running:
             self.toggle_loop()
@@ -1044,6 +1230,9 @@ class FenraApp:
         self.model_rotation = list(state.get("model_rotation", []))
         self.model_rotation_index = int(state.get("model_rotation_index", 0) or 0)
         self._refresh_model_rotation_display()
+        self.groups_in = list(state.get("groups_in", []))
+        self.groups_out = list(state.get("groups_out", []))
+        self._refresh_groups_display()
 
         self.history = load_session_history(name)
         self._populate_history_list()
@@ -1507,6 +1696,54 @@ class FenraApp:
             f"add_to_rotation(name) to add another.]"
         )
 
+    def _groups_block(self):
+        """Recent activity across every group she reads from - the
+        actual cross-voice hearing mechanism (v0.16.0). Merges all
+        groups_in, sorted oldest-first by timestamp, capped at
+        GROUPS_WINDOW total so this can't quietly balloon the prompt as
+        groups fill up over time. Her own broadcasts show up in here too
+        (she wrote them, but seeing them replayed back confirms delivery,
+        same as anything else in the group). Empty string - not a
+        placeholder line - when she's in no groups, so nothing changes
+        for a voice that never joins one."""
+        if not self.groups_in:
+            return ""
+        entries = []
+        for g in self.groups_in:
+            try:
+                tail = read_group_tail(g, GROUPS_WINDOW)
+            except ValueError:
+                continue
+            for e in tail:
+                e = dict(e)
+                e["group"] = g
+                entries.append(e)
+        if not entries:
+            return ""
+        entries.sort(key=lambda e: e.get("timestamp", ""))
+        entries = entries[-GROUPS_WINDOW:]
+        lines = ["[Recent activity from your groups, oldest first:]"]
+        for e in entries:
+            lines.append(f"[{e.get('group', '?')}] {e.get('voice', '?')} @ {e.get('timestamp', '?')}: {e.get('text', '')}")
+        return "\n".join(lines)
+
+    def _groups_notice(self):
+        """Always-present, every prompt: which groups she's actually in
+        right now and how to change it - same pattern as the context
+        window and model rotation notices. Other voices are other Fenra
+        sessions, each still running on their own independent interval -
+        there's deliberately no shared turn order, see the v0.16.0
+        changelog entry for why."""
+        in_text = ", ".join(self.groups_in) if self.groups_in else "none"
+        out_text = ", ".join(self.groups_out) if self.groups_out else "none"
+        return (
+            f"[Groups: reading from [{in_text}], broadcasting to [{out_text}]. Other voices - "
+            "other Fenra sessions, each running independently on their own schedule, not "
+            "waiting for a turn - may be in the same groups. join_group(name) to start reading "
+            "and writing a group, leave_group(name) to stop, list_groups() to see what exists, "
+            "read_group(name[, count]) to look further back than what's shown above.]"
+        )
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
@@ -1623,11 +1860,14 @@ class FenraApp:
         context_notice = self._context_window_notice()
         rotation_notice = self._model_rotation_notice()
         function_reminder = self._function_reminder_block()
+        groups_block = self._groups_block()
+        groups_notice = self._groups_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
         prompt = (
-            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{bottom_text}\n\n"
-            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n{function_reminder}"
+            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
+            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
+            f"{groups_notice}\n\n{function_reminder}"
         ).strip()
 
         payload = {
@@ -1657,6 +1897,17 @@ class FenraApp:
         # exactly what she generated, untouched, so a match here can only
         # be something she wrote herself. See FABRICATED_RESULT_RE.
         fabricated = FABRICATED_RESULT_RE.findall(response_text)
+
+        # Broadcast the raw thought - not display_text, which may carry
+        # function-result/hallucination-flag text appended below - to
+        # every group this voice writes to. Best-effort: a broadcast
+        # failure (e.g. a bad group name left over from a stale Set)
+        # shouldn't take down the tick itself.
+        for g in self.groups_out:
+            try:
+                append_group_entry(g, self.session_name, response_text)
+            except (OSError, ValueError):
+                pass
 
         result_lines = run_function_calls(self, response_text)
         display_text = response_text
@@ -1698,6 +1949,8 @@ class FenraApp:
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
             "model_rotation_index": self.model_rotation_index,
+            "groups_in": self.groups_in,
+            "groups_out": self.groups_out,
         })
 
         self.root.after(0, self._append_message, timestamp, display_text)

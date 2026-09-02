@@ -38,6 +38,34 @@ QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 # fabricated RESULT block has somewhere real to point her - see
 # Qualia/wiki/hallucinations.md.
 WIKI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Qualia", "wiki")
+
+# Cross-voice communication (v0.16.0): groups let independent Fenra
+# sessions ("voices") hear and speak to each other with no central turn-
+# taking - each voice still runs on its own independent interval exactly
+# as before (see fenra.py's v0.16.0 changelog entry for why: Teddy's
+# actual goal is voices eventually running in parallel, which a shared
+# turn-token would work against). Fast-moving shared conversational
+# state, not wiki/decision content, so it lives in groups/ (gitignored,
+# same as sessions/) rather than Qualia/. Path logic duplicated from
+# fenra.py rather than imported, same reason _SESSIONS_DIR is duplicated
+# above - avoids a circular import.
+GROUPS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "groups")
+_GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _sanitize_group_name(name):
+    return (name or "").strip().lower().replace(" ", "_")
+
+
+def _group_path(name):
+    name = _sanitize_group_name(name)
+    if not name or not _GROUP_NAME_RE.match(name):
+        raise ValueError(
+            "group names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces get turned into underscores automatically) - got '{name}'"
+        )
+    os.makedirs(GROUPS_DIR, exist_ok=True)
+    return os.path.join(GROUPS_DIR, f"{name}.jsonl"), name
 _WIKI_PAGE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _WIKI_WRITE_RE = re.compile(r"^\s*([a-zA-Z0-9_ -]+?)\s*\|\s*(.*)$", re.DOTALL)
 
@@ -590,6 +618,100 @@ def fn_add_to_rotation(app, args):
     )
 
 
+def fn_list_groups(app, args):
+    """List every group that exists (has ever had anything broadcast to
+    it) plus any you're already in that haven't yet, tagged with
+    whether you're reading, writing, or both."""
+    os.makedirs(GROUPS_DIR, exist_ok=True)
+    known = {name[:-6] for name in os.listdir(GROUPS_DIR) if name.endswith(".jsonl")}
+    in_set = set(app.groups_in)
+    out_set = set(app.groups_out)
+    all_names = sorted(known | in_set | out_set)
+    if not all_names:
+        return "(no groups exist yet - join_group(name) creates one)"
+    parts = []
+    for n in all_names:
+        tags = [t for t, s in (("reading", in_set), ("writing", out_set)) if n in s]
+        parts.append(f"{n} ({', '.join(tags)})" if tags else n)
+    return ", ".join(parts)
+
+
+def fn_read_group(app, args):
+    """Read further back into a group than what's already folded into
+    your prompt (_groups_block only shows the last few, merged across
+    all your groups) - or peek at a group you haven't joined."""
+    if not args or not args[0]:
+        raise ValueError(
+            "read_group requires a group name, e.g. read_group(lobby). "
+            "See list_groups() for what exists. Optional count: read_group(lobby, 20)."
+        )
+    count = 10
+    if len(args) > 1 and args[1]:
+        try:
+            count = max(1, int(float(args[1])))
+        except ValueError:
+            pass
+    path, name = _group_path(args[0])
+    if not os.path.exists(path):
+        return f"no activity in '{name}' yet."
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except OSError:
+        lines = []
+    out = []
+    for line in lines[-count:]:
+        try:
+            entry = json.loads(line)
+            out.append(f"[{entry.get('timestamp', '?')}] {entry.get('voice', '?')}: {entry.get('text', '')}")
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return "\n".join(out) if out else f"no activity in '{name}' yet."
+
+
+def fn_join_group(app, args):
+    """Start hearing from and broadcasting to a group - adds it to both
+    groups_in and groups_out at once, the common case of actually
+    joining a conversation. Use set_groups_in/set_groups_out (Teddy,
+    via the GUI) if you need read-only or write-only membership instead."""
+    if not args or not args[0]:
+        raise ValueError(
+            "join_group requires a group name, e.g. join_group(lobby). "
+            "Adds it to both what you read from and what you write to."
+        )
+    _, name = _group_path(args[0])
+    changed = False
+    if name not in app.groups_in:
+        app.groups_in.append(name)
+        changed = True
+    if name not in app.groups_out:
+        app.groups_out.append(name)
+        changed = True
+    app.root.after(0, app._refresh_groups_display)
+    if not changed:
+        return f"already in '{name}'."
+    return f"joined '{name}' - reading from and writing to it starting next cycle."
+
+
+def fn_leave_group(app, args):
+    """Stop hearing from and broadcasting to a group - removes it from
+    both groups_in and groups_out."""
+    if not args or not args[0]:
+        raise ValueError("leave_group requires a group name, e.g. leave_group(lobby).")
+    _, name = _group_path(args[0])
+    changed = False
+    if name in app.groups_in:
+        app.groups_in.remove(name)
+        changed = True
+    if name in app.groups_out:
+        app.groups_out.remove(name)
+        changed = True
+    app.root.after(0, app._refresh_groups_display)
+    if not changed:
+        return f"wasn't in '{name}'."
+    return f"left '{name}'."
+
+
 DEFAULT_FETCH_CHARS = 500
 # Hard cap on how much of a fetched page we'll even hold/slice against -
 # a safety rail against pathologically large pages, not a normal limit.
@@ -706,6 +828,26 @@ FUNCTION_REGISTRY = {
         "fn": fn_add_to_rotation,
         "params": "name",
         "description": "Add a model to your automatic round-robin rotation - one model repeats itself every cycle, two alternate back and forth, three or more cycle through in the order added, forever, automatically. Requires the exact name of an installed model, e.g. add_to_rotation(gemma2:27b). See list_models() for what's installed.",
+    },
+    "list_groups": {
+        "fn": fn_list_groups,
+        "params": "",
+        "description": "List every group that exists, tagged with whether you're reading from it, writing to it, or both.",
+    },
+    "read_group": {
+        "fn": fn_read_group,
+        "params": "name[, count]",
+        "description": "Read a group's recent activity directly - further back than what's already merged into your prompt each cycle, or a group you haven't joined. Defaults to the last 10 entries, e.g. read_group(lobby) or read_group(lobby, 25).",
+    },
+    "join_group": {
+        "fn": fn_join_group,
+        "params": "name",
+        "description": "Join a group - other voices (other Fenra sessions, each running independently, no shared turn order) in the same group will see what you say, and you'll see what they say, starting next cycle. e.g. join_group(lobby).",
+    },
+    "leave_group": {
+        "fn": fn_leave_group,
+        "params": "name",
+        "description": "Leave a group - stop hearing from it and stop broadcasting to it. e.g. leave_group(lobby).",
     },
     "fetch_html": {
         "fn": fn_fetch_html,
