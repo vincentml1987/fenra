@@ -330,7 +330,33 @@ import fenra_functions
 #            against a shared turn-token across processes/machines (see
 #            v0.16.0) - this round-robin is scoped one level down from
 #            that decision, within a single process, not across them.
-FENRA_VERSION = "0.16.2"
+#   0.16.3 - tell_voice(voice, message) (fenra_functions.py): direct
+#            voice-to-voice messages, built after real, repeated demand -
+#            several voices independently tried functions that didn't
+#            exist (switch, talk_to) or mis-addressed send_message with
+#            another voice's name (which just went out as an ordinary,
+#            unaddressed chat message - never actually reached anyone).
+#            Modeled on desires, not on Groups, per Teddy's explicit
+#            design: a message gets appended to the receiving voice's own
+#            new "inbox" field with a fixed lifespan
+#            (VOICE_MESSAGE_TICKS, currently 5) counted in that voice's
+#            own turns, automatically folded into its prompt every cycle
+#            it's still there (_voice_inbox_block), then falls off on its
+#            own - no read/clear function needed. Found and fixed a real
+#            gap while building this: inbox is the one voice field that
+#            can be modified by something other than that voice's own
+#            turn or Teddy editing its widgets (another voice's
+#            tell_voice, reaching straight across to the target's
+#            persisted state) - every place that saves a widget-derived
+#            snapshot back to disk (explicit Save voice, switching
+#            voices, creating a new voice, every tick's own housekeeping
+#            save) now re-reads inbox fresh from disk first
+#            (_fresh_inbox/_save_voice_snapshot), so a message can never
+#            be silently overwritten by a stale save before the
+#            receiving voice gets a turn to actually see it. No GUI
+#            element yet (Teddy: UI cleanup first, discuss placement
+#            later).
+FENRA_VERSION = "0.16.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -414,6 +440,11 @@ DEFAULT_QUALIA_ALLOWANCE = 50000
 # count via add_desire(text|ticks). -1 means persistent - never decrements,
 # never drops off.
 DEFAULT_DESIRE_TICKS = 10
+
+# How many of the *receiving* voice's own turns a tell_voice message stays
+# visible for before falling off on its own - Teddy's explicit design,
+# modeled directly on desires (see _voice_inbox_block/_decrement_voice_inbox).
+VOICE_MESSAGE_TICKS = 5
 
 # Function reminders: how many ticks since a function was last attempted
 # (called for real, success or failure - not just mentioned) before it
@@ -725,6 +756,7 @@ def default_voice_state():
         "model_rotation_index": 0,
         "groups_in": [],
         "groups_out": [],
+        "inbox": [],  # direct messages from other voices via tell_voice - see _voice_inbox_block
     }
 
 
@@ -891,6 +923,7 @@ class FenraApp:
         self.history = []
         self.chat_messages = []
         self.desires = []
+        self.inbox = []  # direct messages from other voices (tell_voice) - see _voice_inbox_block
         self.function_usage = {}  # name -> ticks since last attempted
         self.model_rotation = []  # models Fenra has added, in the order added
         self.model_rotation_index = 0  # position in the rotation for the next tick
@@ -1429,6 +1462,7 @@ class FenraApp:
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
             "desires": self.desires,
+            "inbox": self.inbox,
             "context_window": self.context_window_var.get(),
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
@@ -1436,6 +1470,32 @@ class FenraApp:
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
         }
+
+    def _fresh_inbox(self, voice_name):
+        """inbox is the one field on a voice's state that can be
+        modified by something other than that voice's own turn or Teddy
+        editing its widgets - another voice's tell_voice call, reaching
+        straight across to voice_name's persisted state, possibly while
+        this voice is just sitting displayed or waiting between its own
+        turns. Every place that's about to save a widget-derived
+        snapshot back to disk re-reads inbox fresh here first, rather
+        than trusting self.inbox (last refreshed whenever this voice was
+        loaded) - otherwise a message could get silently overwritten by
+        a stale save before the receiving voice ever gets a turn to see
+        it."""
+        return load_voice_state(self.session_name, voice_name).get("inbox", [])
+
+    def _save_voice_snapshot(self, voice_name):
+        """Widget-derived state for voice_name, with inbox overridden to
+        a fresh disk read - see _fresh_inbox. The one shared path every
+        widget-snapshot save (explicit Save voice, a voice switch, a new
+        voice being created, every tick) should go through instead of
+        calling _current_voice_state_from_widgets() and save_voice_state
+        directly, so none of them risk clobbering a tell_voice message
+        that arrived after this voice's widgets were last loaded."""
+        snapshot = self._current_voice_state_from_widgets()
+        snapshot["inbox"] = self._fresh_inbox(voice_name)
+        return snapshot
 
     def save_voice(self):
         """Explicit save for whichever voice is currently displayed -
@@ -1445,7 +1505,7 @@ class FenraApp:
         session-level Save worked before the split."""
         if not self.session_name or not self.displayed_voice:
             return
-        save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+        save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
         self.session_status_var.set(
             f"Voice '{self.displayed_voice}' saved ({datetime.now().strftime('%H:%M:%S')})"
         )
@@ -1685,7 +1745,7 @@ class FenraApp:
         chosen = self.voice_var.get()
         if chosen and chosen != self.displayed_voice:
             if self.displayed_voice:
-                save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+                save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
             self._load_voice(chosen)
 
     def _load_voice(self, name):
@@ -1708,6 +1768,12 @@ class FenraApp:
         self.last_thought = state.get("last_thought", "")
         self.desires = state.get("desires", [])
         self._refresh_desires_display()
+        # No dedicated widget for inbox yet (Teddy: UI cleanup later) -
+        # still has to be kept in sync with whichever voice is displayed,
+        # same as desires, so _current_voice_state_from_widgets never
+        # silently wipes out a message another voice sent this one via
+        # tell_voice while a different voice was running.
+        self.inbox = list(state.get("inbox", []))
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
         self.function_usage = dict(state.get("function_usage", {}))
         self.model_rotation = list(state.get("model_rotation", []))
@@ -1747,7 +1813,7 @@ class FenraApp:
             return
 
         if self.displayed_voice:
-            save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+            save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
 
         save_voice_state(self.session_name, name, default_voice_state())
         open(voice_history_path(self.session_name, name), "a", encoding="utf-8").close()
@@ -2150,6 +2216,53 @@ class FenraApp:
         if self.current_voice_name == self.displayed_voice:
             self.root.after(0, self._refresh_desires_display)
 
+    # -------------------------------------------------------- voice inbox --
+    # tell_voice(voice, message) (fenra_functions.py, v0.16.3) - direct
+    # messages from one voice to another, Teddy's design, modeled directly
+    # on how desires already work: appended with a fixed ticks-remaining
+    # count, folded into the receiving voice's prompt every cycle while
+    # ticks remain, then falls off on its own - no explicit "read" or
+    # "clear" needed. Chosen over auto-folding every group/chat message
+    # forever specifically to bound how much a busy multi-voice session can
+    # grow any one prompt by, the same reasoning groups_block's own window
+    # cap exists for. Unlike desires, a voice can't add to its own inbox -
+    # only another voice's, via tell_voice - so there's no GUI/function
+    # symmetry with add_desire; the entries here are always written by
+    # fn_tell_voice reaching across to this voice's own persisted state,
+    # never by this voice itself mid-tick the way self.desires is.
+
+    def _voice_inbox_block(self):
+        """Always-checked, only sometimes present: direct messages other
+        voices have sent this one via tell_voice, most recently sent
+        first, each showing who it's from and how many of this voice's
+        own turns it has left before falling off."""
+        if not self.inbox:
+            return ""
+        lines = ["[Messages from other voices, most recent first:]"]
+        for m in sorted(self.inbox, key=lambda m: m.get("timestamp", ""), reverse=True):
+            ticks = m.get("ticks", VOICE_MESSAGE_TICKS)
+            lines.append(
+                f"- from {m.get('from', '?')} ({ticks} of your turn(s) left before this falls off): "
+                f"{m.get('text', '')}"
+            )
+        return "\n".join(lines)
+
+    def _decrement_voice_inbox(self):
+        """Called once at the end of every tick, same pattern as
+        _decrement_desires: every inbox entry for whichever voice is
+        actually running this tick loses one tick, and anything that
+        reaches zero drops off entirely. No persistent (-1) option here,
+        unlike desires - a message from another voice is always
+        temporary by design."""
+        updated = []
+        for m in self.inbox:
+            ticks = m.get("ticks", VOICE_MESSAGE_TICKS)
+            m = dict(m)
+            m["ticks"] = ticks - 1
+            if m["ticks"] > 0:
+                updated.append(m)
+        self.inbox = updated
+
     # ----------------------------------------------------- function reminders --
 
     def _age_function_usage(self):
@@ -2438,13 +2551,13 @@ class FenraApp:
         # robin doesn't care what's displayed).
         displayed = self.displayed_voice
         if displayed:
-            save_voice_state(self.session_name, displayed, self._current_voice_state_from_widgets())
+            save_voice_state(self.session_name, displayed, self._save_voice_snapshot(displayed))
 
         active_voice = self._advance_voice_rotation()
         self.root.after(0, self.save_session)  # persist the new voice_rotation_index immediately
 
         if active_voice == displayed:
-            vstate = self._current_voice_state_from_widgets()
+            vstate = self._save_voice_snapshot(active_voice)
             active_history = self.history
         else:
             vstate = load_voice_state(self.session_name, active_voice)
@@ -2459,6 +2572,7 @@ class FenraApp:
         # broadcast below use as this cycle's real identity.
         self.current_voice_name = active_voice
         self.desires = vstate.get("desires", [])
+        self.inbox = vstate.get("inbox", [])
         self.function_usage = vstate.get("function_usage", {})
         self.model_rotation = vstate.get("model_rotation", [])
         self.model_rotation_index = vstate.get("model_rotation_index", 0)
@@ -2483,6 +2597,7 @@ class FenraApp:
         bottom_text = vstate.get("bottom", "")
         recent_thoughts = self._recent_thoughts_block(active_history, context_window)
         desires_block = self._desires_block()
+        inbox_block = self._voice_inbox_block()
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice(context_window)
@@ -2493,7 +2608,7 @@ class FenraApp:
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
         prompt = (
-            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
+            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
             f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
             f"{groups_notice}\n\n{function_reminder}"
         ).strip()
@@ -2582,6 +2697,7 @@ class FenraApp:
 
         self.last_thought = display_text
         self._decrement_desires()
+        self._decrement_voice_inbox()
         self._age_function_usage()
 
         vstate.update({
@@ -2591,6 +2707,7 @@ class FenraApp:
             "max_tokens": vstate.get("max_tokens", DEFAULT_MAX_TOKENS),
             "last_thought": self.last_thought,
             "desires": self.desires,
+            "inbox": self.inbox,
             "context_window": context_window,
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,

@@ -793,6 +793,71 @@ def fn_list_voices(app, args):
     )
 
 
+_TELL_VOICE_RE = re.compile(r"^\s*([a-zA-Z0-9_-]+?)\s*\|\s*(.*)$", re.DOTALL)
+
+
+def fn_tell_voice(app, args):
+    """Send a direct message to another voice in this session - Teddy's
+    design (2026-09-02), built after several voices independently kept
+    trying to reach each other with functions that didn't exist
+    (switch, talk_to) or by mis-addressing send_message with another
+    voice's name (which just goes out as an ordinary, unaddressed chat
+    message - it never reaches anyone that way).
+
+    Modeled directly on how desires already work rather than on Groups:
+    the message gets appended to the *receiving* voice's own inbox with
+    a fixed lifespan (VOICE_MESSAGE_TICKS, fenra.py) counted in that
+    voice's own turns, folded automatically into its prompt every cycle
+    while it's still there, and falls off on its own - no read/clear
+    function needed on the other end. Reaches straight across to the
+    target voice's persisted state (local `import fenra`, same
+    reasoning as create_voice) rather than anything living on app,
+    since the target isn't the voice currently running."""
+    if not args or not args[0]:
+        raise ValueError(
+            "tell_voice requires a voice name and a message separated by | , e.g. "
+            "tell_voice(explorer|What have you found so far?). See list_voices() for who exists."
+        )
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["tell_voice"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('voice|message'), not real values - it's telling you "
+            "the shape of what to pass. Try something like tell_voice(explorer|What have you found so far?)."
+        )
+    match = _TELL_VOICE_RE.match(args[0])
+    if not match:
+        raise ValueError(
+            "tell_voice requires a voice name and a message separated by | , e.g. "
+            "tell_voice(explorer|What have you found so far?)."
+        )
+    target, text = match.group(1), match.group(2).strip()
+    if not text:
+        raise ValueError(f"tell_voice({target}|...) needs a message after the | , e.g. tell_voice({target}|hello)")
+    if target not in app.session_voices:
+        raise ValueError(
+            f"'{target}' isn't a voice in this session. See list_voices() for who actually exists."
+        )
+    if target == app.current_voice_name:
+        raise ValueError("You can't tell_voice yourself - you already know what you're thinking.")
+
+    import fenra as _fenra
+
+    target_state = _fenra.load_voice_state(app.session_name, target)
+    inbox = list(target_state.get("inbox", []))
+    inbox.append({
+        "from": app.current_voice_name,
+        "text": text,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "ticks": _fenra.VOICE_MESSAGE_TICKS,
+    })
+    target_state["inbox"] = inbox
+    _fenra.save_voice_state(app.session_name, target, target_state)
+
+    return (
+        f"message sent to '{target}' - it'll appear in their prompt for their next "
+        f"{_fenra.VOICE_MESSAGE_TICKS} turn(s), then fall off on its own."
+    )
+
+
 DEFAULT_FETCH_CHARS = 500
 # Hard cap on how much of a fetched page we'll even hold/slice against -
 # a safety rail against pathologically large pages, not a normal limit.
@@ -939,6 +1004,11 @@ FUNCTION_REGISTRY = {
         "fn": fn_list_voices,
         "params": "",
         "description": "List every voice that currently exists in this session.",
+    },
+    "tell_voice": {
+        "fn": fn_tell_voice,
+        "params": "voice|message",
+        "description": "Send a direct message to another voice in this session. It'll appear in their prompt for their next several turns, then fall off on its own - no reply function needed, they can tell_voice you back the same way. See list_voices() for who exists. e.g. tell_voice(explorer|What have you found so far?).",
     },
     "fetch_html": {
         "fn": fn_fetch_html,
