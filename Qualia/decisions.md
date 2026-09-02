@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (v0.16.6: same name-with-spaces bug in tell_voice, plus a full regex audit)
+
+- Teddy asked directly whether `tell_voice` had the same bug as the just-fixed `create_voice` - it did, same root cause: `_TELL_VOICE_RE`'s target-name group only allowed `[a-zA-Z0-9_-]`, extracted before sanitization ever ran, so `tell_voice(Creative Spark|...)` would have failed the same way `create_voice` did. Fixed identically (permissive extraction, sanitize after matching) and verified against a real multi-word target.
+- Audited every regex in both files at Teddy's suggestion, before waiting to hit another one by accident. The bug was isolated to exactly these two - both had copied their character class straight from a *different* regex's role (post-sanitization validation: `_GROUP_NAME_RE`/`_VOICE_NAME_RE`/`_WIKI_PAGE_NAME_RE`, which correctly run only on an already-sanitized name) without noticing raw-text extraction needed the opposite tolerance. Everything else checked clean: `_WIKI_WRITE_RE` was already permissive at extraction (write_wiki never had this problem), `_RECIPIENT_RE` correctly restricts to two fixed keywords rather than a freeform name, and neither `_DESIRE_TICKS_RE` nor either `FUNCTION_CALL_RE` pattern extracts a user-chosen name at all.
+
 ## 2026-09-02 (v0.16.5: real create_voice bug caught during a fallback check-in, fixed live)
 
 - Fallback check-in surfaced something that would've been easy to misread as her struggling: 7 consecutive `create_voice` failures in `ifs-voices-2`, all attempting the exact same "Creative Spark" voice from the very first cycle. Read all 7 raw responses before concluding anything - she was genuinely trying to fix it each time ("Ah, I see the error of my ways," "paying extra attention to the spacing"), and her *last* attempt was actually a correctly-formed `name|top|bottom` call with real, distinct content in every field.

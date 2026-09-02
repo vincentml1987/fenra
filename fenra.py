@@ -395,7 +395,25 @@ import fenra_functions
 #            same tolerance join_group/tell_voice's target names already
 #            have. Verified directly against her exact real failing
 #            input before shipping.
-FENRA_VERSION = "0.16.5"
+#   0.16.6 - Same bug as v0.16.5, same fix, in tell_voice this time
+#            (fenra_functions.py) - Teddy asked directly whether other
+#            spots had it too, before he'd even seen it happen again.
+#            Audited every regex in both files: the pattern was isolated
+#            to exactly these two (_CREATE_VOICE_RE, now also
+#            _TELL_VOICE_RE) - both extracted a raw name with the same
+#            over-strict [a-zA-Z0-9_-] character class *before*
+#            sanitization ever ran, copied straight from the
+#            post-sanitization validation regexes (_GROUP_NAME_RE,
+#            _VOICE_NAME_RE, _WIKI_PAGE_NAME_RE) without noticing those
+#            play a different role - validating an already-sanitized
+#            name, not extracting a raw one. Everything else checked
+#            clean: _WIKI_WRITE_RE was already permissive at extraction,
+#            _RECIPIENT_RE correctly restricts to two fixed keywords
+#            (not a freeform name), _DESIRE_TICKS_RE and both
+#            FUNCTION_CALL_RE patterns don't extract user-chosen names at
+#            all. Fixed and verified against a real multi-word target
+#            ("Creative Spark") before shipping.
+FENRA_VERSION = "0.16.6"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")

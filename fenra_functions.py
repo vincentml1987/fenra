@@ -846,7 +846,12 @@ def fn_list_voices(app, args):
     )
 
 
-_TELL_VOICE_RE = re.compile(r"^\s*([a-zA-Z0-9_-]+?)\s*\|\s*(.*)$", re.DOTALL)
+# Name group deliberately permissive, same fix and same reasoning as
+# _CREATE_VOICE_RE (2026-09-02) - has to tolerate a target written as
+# she actually named it ("Creative Spark") before sanitization
+# (lowercased, spaces -> underscores) runs, below, to compare against
+# the sanitized names session_voices actually holds.
+_TELL_VOICE_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*)$", re.DOTALL)
 
 
 def fn_tell_voice(app, args):
@@ -882,7 +887,7 @@ def fn_tell_voice(app, args):
             "tell_voice requires a voice name and a message separated by | , e.g. "
             "tell_voice(explorer|What have you found so far?)."
         )
-    target, text = match.group(1), match.group(2).strip()
+    target, text = match.group(1).strip().lower().replace(" ", "_"), match.group(2).strip()
     if not text:
         raise ValueError(f"tell_voice({target}|...) needs a message after the | , e.g. tell_voice({target}|hello)")
     if target not in app.session_voices:
