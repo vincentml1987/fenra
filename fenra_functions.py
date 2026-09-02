@@ -725,6 +725,74 @@ def fn_leave_group(app, args):
     return f"left '{name}'."
 
 
+_VOICE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def fn_create_voice(app, args):
+    """Split off a new voice in this same session - "like a cell
+    dividing," Teddy's framing (2026-09-01): the new voice starts as a
+    copy of the calling voice's own current top/bottom/model/
+    model_rotation/context_window, but with its own separate history
+    from this exact moment on - nothing before this point is shared,
+    and nothing either of you thinks after this point reaches the other
+    automatically. Registered into the session's round-robin
+    immediately, so it starts getting its own turns soon (usually the
+    very next cycle, sometimes one after that depending on exactly where
+    the rotation's own index already was) without anything further
+    needed from whoever created it.
+
+    Local import of fenra (not at module level) - this module is
+    otherwise careful to avoid importing fenra.py to sidestep a real
+    circular import at load time, but by the time any function here
+    actually runs, fenra.py is already fully loaded, so a same-function
+    import is safe and avoids re-deriving the whole voice file-layout
+    (state/history paths, defaults) a second time, independently, just
+    to keep that avoidance absolute."""
+    if not args or not args[0]:
+        raise ValueError("create_voice requires a name, e.g. create_voice(watcher).")
+    name = (args[0] or "").strip().lower().replace(" ", "_")
+    if not name or not _VOICE_NAME_RE.match(name):
+        raise ValueError(
+            "voice names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces get turned into underscores automatically) - got '{name}'"
+        )
+    if name in app.session_voices:
+        return f"a voice named '{name}' already exists in this session - see list_voices()."
+
+    import fenra as _fenra
+
+    parent = app.current_voice_name
+    if parent == app.displayed_voice:
+        parent_state = app._current_voice_state_from_widgets()
+    else:
+        parent_state = _fenra.load_voice_state(app.session_name, parent)
+
+    child_state = _fenra.default_voice_state()
+    for key in ("top", "bottom", "model", "model_rotation", "context_window"):
+        child_state[key] = parent_state.get(key, child_state[key])
+    _fenra.save_voice_state(app.session_name, name, child_state)
+    open(_fenra.voice_history_path(app.session_name, name), "a", encoding="utf-8").close()
+
+    app.session_voices.append(name)
+    app.root.after(0, app.save_session)
+    app.root.after(0, app._refresh_voice_list)
+    return (
+        f"'{name}' created - a copy of your current framing, model, and settings, but its own "
+        f"separate history from here on. It's in the rotation now and will start getting its own "
+        f"turns automatically soon ({len(app.session_voices)} voice(s) total now)."
+    )
+
+
+def fn_list_voices(app, args):
+    """Every voice that currently exists in this session - situational
+    awareness for deciding whether (and what) to create_voice."""
+    if not app.session_voices:
+        return "(no voices found - this shouldn't happen; a session should always have at least one)"
+    return ", ".join(
+        f"{n}{' (you, right now)' if n == app.current_voice_name else ''}" for n in app.session_voices
+    )
+
+
 DEFAULT_FETCH_CHARS = 500
 # Hard cap on how much of a fetched page we'll even hold/slice against -
 # a safety rail against pathologically large pages, not a normal limit.
@@ -861,6 +929,16 @@ FUNCTION_REGISTRY = {
         "fn": fn_leave_group,
         "params": "name",
         "description": "Leave a group - stop hearing from it and stop broadcasting to it. e.g. leave_group(lobby).",
+    },
+    "create_voice": {
+        "fn": fn_create_voice,
+        "params": "name",
+        "description": "Split off a new voice in this session, like a cell dividing - a copy of your current framing/model/settings, but with its own separate history from this moment on. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher).",
+    },
+    "list_voices": {
+        "fn": fn_list_voices,
+        "params": "",
+        "description": "List every voice that currently exists in this session.",
     },
     "fetch_html": {
         "fn": fn_fetch_html,
