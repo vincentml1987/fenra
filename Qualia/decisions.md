@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (Teddy lifted the groups scope restriction - told her directly)
+
+- Original `ifs-voices` framing deliberately left Groups out (Teddy's explicit scope, 2026-09-01: "just the voices"). She asked Teddy directly whether voices could communicate beyond the shared output ("Can they communicate directly?"), and he told me to go ahead and explain groups to her now.
+- Explained join_group/leave_group/list_groups/read_group directly via chat - the actual mechanic (any voice can join a group, real thoughts auto-broadcast into it, recent activity from everyone else in it folds into your own prompt each cycle) and the real distinction from tell_voice (private, one-to-one, temporary, falls off in a few turns) vs. groups (open, many-to-many, persistent, no expiry). No code change - groups already existed (v0.16.0/1), this was purely a scope decision about what she's told.
+
 ## 2026-09-02 (fallback check-in: ifs-voices at 20, steady as ever, tell_voice unused three checks running)
 
 - `watched-rotation-2` still dormant. `ifs-voices` at 20 voices (added observer, seeker), 204 real function calls - all counts (unknown-function types, fabricated-result-by-voice) unchanged from the prior check, nothing new. `tell_voice` still hasn't been called for real, third consecutive fallback check now (~3.5 hours live) - genuinely notable at this point as a pattern, not concerning, just worth having on record plainly rather than re-explaining each time. Nothing crosses into spiraling. Not paging Teddy.
