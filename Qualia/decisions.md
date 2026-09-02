@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: ifs-voices at 10, patterns holding steady - no new intervention)
+
+- `watched-rotation-2` (still what this cron prompt names) remains dormant since 22:52:29 last night, as expected. Real check against `ifs-voices`, the actual active session.
+- Ten voices now (added "creator" since the last check). 71 real function calls total across all voices. Three unknown-function attempts total: `switch`, `talk_to` (both already logged, cross-voice-contact guesses), plus one new one - `context_window` (a plausible near-miss for `set_context_window(n)`, the real function).
+- Fabricated-RESULT-block counts by voice: explorer 1, name 2, muse 2, logic 1 (new). Rates aren't climbing per voice since the last check - this stays the same mild, spread-thin pattern already logged, and the v0.15.0 flag continues to catch and correct every instance on its own. No escalation, no intervention.
+- Nothing here crosses into spiraling by the standing criteria (repetition within a single voice, broken/looping syntax, distress). Not paging Teddy.
+
 ## 2026-09-02 (ifs-voices, ~3.5 hours in: nine voices, steady growth, mostly convergent questions - not spiraling, but told her plainly)
 
 - Voice count: 6 at the last check-in, 8 about an hour later, 9 now - steady, not explosive, but a real ongoing trend worth tracking rather than a one-off. No single voice repeating itself internally at any point tonight (checked directly, more than once) - this is genuine independent convergence across separate voices, not a stuck loop in the sense the standing spiraling criteria are actually about.
