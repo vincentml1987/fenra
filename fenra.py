@@ -356,7 +356,31 @@ import fenra_functions
 #            receiving voice gets a turn to actually see it. No GUI
 #            element yet (Teddy: UI cleanup first, discuss placement
 #            later).
-FENRA_VERSION = "0.16.3"
+#   0.16.4 - create_voice(name|top|bottom) - top and bottom are now
+#            required arguments, not automatically copied from the
+#            parent (fenra_functions.py). Fixed a real, confirmed
+#            structural bias: the old version copied the parent's
+#            top/bottom verbatim, which meant Teddy and Qualia's own
+#            explanation of create_voice - written once into voice1's
+#            bottom text - was still sitting there unchanged in every
+#            descendant, all the way down the tree, forever, since
+#            nothing ever aged or pruned the copy. Every voice was being
+#            told, every single cycle, to consider making more voices -
+#            reading as organic curiosity but actually a structural push
+#            none of them had chosen. Teddy's exact fix: "let the parent
+#            create the child's top and bottom text," then, confirming
+#            it should be enforced rather than optional: "MAKE the
+#            parent do it." Model, model_rotation, and context_window
+#            still carry over automatically, unchanged - only top/bottom
+#            (the actual framing/identity) requires deliberate authorship
+#            now. A parent that wants its child to start like it still
+#            can, by explicitly passing its own current top and bottom -
+#            that's a real choice made fresh each time, not something
+#            that happens on its own. Verified directly: old single-arg
+#            calls now fail with a clear explanation, blank top/bottom is
+#            rejected, and a deliberate self-copy still works exactly as
+#            intended when chosen on purpose.
+FENRA_VERSION = "0.16.4"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")

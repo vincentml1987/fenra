@@ -728,18 +728,35 @@ def fn_leave_group(app, args):
 _VOICE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+_CREATE_VOICE_RE = re.compile(r"^\s*([a-zA-Z0-9_-]+?)\s*\|\s*(.*?)\s*\|\s*(.*)$", re.DOTALL)
+
+
 def fn_create_voice(app, args):
     """Split off a new voice in this same session - "like a cell
-    dividing," Teddy's framing (2026-09-01): the new voice starts as a
-    copy of the calling voice's own current top/bottom/model/
-    model_rotation/context_window, but with its own separate history
-    from this exact moment on - nothing before this point is shared,
-    and nothing either of you thinks after this point reaches the other
-    automatically. Registered into the session's round-robin
-    immediately, so it starts getting its own turns soon (usually the
-    very next cycle, sometimes one after that depending on exactly where
-    the rotation's own index already was) without anything further
-    needed from whoever created it.
+    dividing," Teddy's framing (2026-09-01). Model, model rotation, and
+    context window still carry over from the calling voice automatically
+    - but top and bottom (the child's actual framing - who it is, what
+    it's told) do NOT. You have to write them yourself, every time.
+
+    This changed (2026-09-02) after a real, confirmed bias: the original
+    version copied top/bottom automatically, which meant Teddy and
+    Qualia's own explanation of create_voice - written once, into
+    voice1's bottom text - was still sitting there verbatim in every
+    single descendant, all the way down the tree, forever, since nothing
+    ever pruned or aged the copy. Every voice was being told, every
+    cycle, to consider making more voices, which reads as organic
+    curiosity but is actually a structural push none of them chose.
+    Teddy's fix, stated directly: "let the parent create the child's
+    top and bottom text" - then, when asked to confirm optional vs.
+    required: "MAKE the parent do it." So this is now enforced, not
+    offered - omit either one and the call fails with a clear error
+    instead of quietly falling back to a copy or a blank slate. A parent
+    that genuinely wants its child to start like it still can - by
+    deliberately passing its own current top and bottom - but that's a
+    choice made fresh every time, not something that happens on its own.
+
+    The new voice's own history/desires/function_usage/groups/inbox
+    still start genuinely blank either way, unchanged from before.
 
     Local import of fenra (not at module level) - this module is
     otherwise careful to avoid importing fenra.py to sidestep a real
@@ -749,8 +766,34 @@ def fn_create_voice(app, args):
     (state/history paths, defaults) a second time, independently, just
     to keep that avoidance absolute."""
     if not args or not args[0]:
-        raise ValueError("create_voice requires a name, e.g. create_voice(watcher).")
-    name = (args[0] or "").strip().lower().replace(" ", "_")
+        raise ValueError(
+            "create_voice requires a name, a top, and a bottom, separated by | - e.g. "
+            "create_voice(watcher|You are Fenra, watching for patterns others miss.|Stay quiet "
+            "unless something's actually worth saying.). Nothing gets copied automatically "
+            "anymore - you have to write what your new voice starts thinking, every time. If you "
+            "want it to start like you, say so explicitly by passing your own current top and "
+            "bottom text."
+        )
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["create_voice"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('name|top|bottom'), not real values - it's telling "
+            "you the shape of what to pass, not literal text to copy."
+        )
+    match = _CREATE_VOICE_RE.match(args[0])
+    if not match:
+        raise ValueError(
+            "create_voice requires a name, a top, and a bottom, separated by | - e.g. "
+            "create_voice(watcher|your top text here|your bottom text here). All three parts are "
+            "required now - nothing gets copied automatically."
+        )
+    name, top, bottom = match.group(1), match.group(2).strip(), match.group(3).strip()
+    if not top or not bottom:
+        raise ValueError(
+            "create_voice needs real top and bottom text, not empty ones - write out what you "
+            "actually want your new voice to start thinking. If you want it to start like you, "
+            "pass your own current top and bottom explicitly rather than leaving them blank."
+        )
+    name = name.strip().lower().replace(" ", "_")
     if not name or not _VOICE_NAME_RE.match(name):
         raise ValueError(
             "voice names may only contain letters, numbers, underscores, and hyphens "
@@ -768,7 +811,9 @@ def fn_create_voice(app, args):
         parent_state = _fenra.load_voice_state(app.session_name, parent)
 
     child_state = _fenra.default_voice_state()
-    for key in ("top", "bottom", "model", "model_rotation", "context_window"):
+    child_state["top"] = top
+    child_state["bottom"] = bottom
+    for key in ("model", "model_rotation", "context_window"):
         child_state[key] = parent_state.get(key, child_state[key])
     _fenra.save_voice_state(app.session_name, name, child_state)
     open(_fenra.voice_history_path(app.session_name, name), "a", encoding="utf-8").close()
@@ -777,9 +822,10 @@ def fn_create_voice(app, args):
     app.root.after(0, app.save_session)
     app.root.after(0, app._refresh_voice_list)
     return (
-        f"'{name}' created - a copy of your current framing, model, and settings, but its own "
-        f"separate history from here on. It's in the rotation now and will start getting its own "
-        f"turns automatically soon ({len(app.session_voices)} voice(s) total now)."
+        f"'{name}' created with the top/bottom you wrote for it - your model, model rotation, "
+        f"and context window carried over, but its framing is exactly what you gave it, nothing "
+        f"more. Its own separate history starts now. It's in the rotation and will start getting "
+        f"its own turns soon ({len(app.session_voices)} voice(s) total now)."
     )
 
 
@@ -997,8 +1043,8 @@ FUNCTION_REGISTRY = {
     },
     "create_voice": {
         "fn": fn_create_voice,
-        "params": "name",
-        "description": "Split off a new voice in this session, like a cell dividing - a copy of your current framing/model/settings, but with its own separate history from this moment on. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher).",
+        "params": "name|top|bottom",
+        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. Nothing is copied for you, not even your own - if you want it to start like you, pass your own current top and bottom explicitly. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
     },
     "list_voices": {
         "fn": fn_list_voices,
