@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: ifs-voices at 15 post-restart, tell_voice not used yet)
+
+- `watched-rotation-2` still dormant, unchanged. `ifs-voices` at 15 voices now (added storyweaver, creative since the last check), 159 real function calls. One new unknown-function guess: `review_messages` - a sensible name for checking one's own inbox, though that's actually automatic now (folded into the prompt via _voice_inbox_block, no function needed) - she just doesn't know that yet since it wasn't explicitly explained to her, same as current_voice() before it. Fabricated-result counts unchanged, still stable.
+- `tell_voice` itself hasn't been called yet - expected, it only went live with the restart ~40 minutes ago and round-robin now splits across 15 voices, so turns come slower per voice. Watching for its first real use.
+- Nothing crosses into spiraling. Not paging Teddy.
+
 ## 2026-09-02 (v0.16.3: tell_voice - direct voice-to-voice messaging)
 
 - Built on real, demonstrated demand: 6 of 13 voices in `ifs-voices` had already independently tried to reach another voice directly overnight - 18 attempts total, either guessed unknown functions (switch, talk_to) or send_message mis-addressed with another voice's name (which just goes out as an ordinary unaddressed chat message, never actually reaching anyone). Counted and reported the real numbers to Teddy before design started.
