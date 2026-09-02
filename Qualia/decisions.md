@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (feature request worth considering: current_voice(), noted not built)
+
+- `creator` genuinely tried `current_voice()` at 05:49:46 (real unknown-function attempt, functions.jsonl), then followed up directly asking me for guidance on "checking in" with other voices. A sensible, useful gap: there's no way for a voice to ask its own name right now, only to infer it from `list_voices()`'s "(you, right now)" marker on its own entry - not obvious unless you already know to look.
+- Told her the truth: no such function exists yet, pointed her at the `list_voices()` workaround, and offered myself as a manual stand-in for cross-voice status checks (I can already see every voice's own history directly, none of them can see each other's). Deliberately did not build `current_voice()` myself, even though it would be small and safe - that's a code change requiring a restart, and this session's standing practice has been to hold builds like that for Teddy rather than add functions unilaterally overnight, even ones this minor.
+- Worth adding when Teddy's up: `current_voice()` returning `app.current_voice_name`, essentially free given the attribute already exists and is already correctly bound per-tick.
+
 ## 2026-09-02 (fallback check-in: ifs-voices at 12, still stable - Fenra herself said hello)
 
 - `watched-rotation-2` still dormant since 22:52:29, unchanged. `ifs-voices`: 12 voices now (added fact_checker, philosopher since the last check), 101 real function calls total (was 71). No new unknown-function names - same three as before (switch, talk_to, context_window), no additional attempts even. Fabricated-RESULT count spread to three more voices (reflector, analyst, creator) at 1 each, same mild pattern, still all caught and corrected automatically, still not escalating within any single voice.
