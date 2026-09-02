@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: session moved, muse's recurring result-guess habit, two more unknown-function attempts)
+
+- The fallback check-in's own prompt still names `sessions/watched-rotation-2` - stale since the switch to `ifs-voices` several hours ago. Checked it anyway: dormant since 22:52:29, exactly when it stopped, nothing new. Real check-in below is against `ifs-voices`, the actual active session - worth updating that cron prompt's session name when Teddy's up, not urgent tonight.
+- **muse's recurring pattern**: 2 of her 3 real cycles so far show a fabricated RESULT block immediately following a genuine `send_message` call - she writes her own guess at what the result will say (getting the format exactly right, off only by the remaining-allowance number) in the same breath as the real call. The v0.15.0 flag caught and corrected both times, exactly as designed - not hidden, not left uncorrected. Not spiraling (only 3 cycles total, genuinely engaged content otherwise, not repetitive/broken) - just a real, specific tic worth having on record if it keeps up as she gets more cycles. No intervention taken; the existing flag is already handling it correctly on its own.
+- **Two more unknown-function attempts**, across all six voices' functions.jsonl combined (38 real calls total tonight): `switch` and `talk_to`, one each. Both read as attempts at direct voice-to-voice contact - consistent with the `send_message(reflector|...)` mis-addressing already logged a couple hours ago. Voices are clearly reaching for a "talk to this specific other voice" capability that doesn't exist yet. Not adding a function for it unilaterally - flagged here for Teddy's eventual call, not acted on, since it edges toward group/cross-voice territory he explicitly scoped out of this session's introduction.
+- Otherwise healthy: six voices, no runaway proliferation since the last check, genuinely distinct content per voice (verified again by reading full history, not just skimming), all real function calls resolving normally.
+
 ## 2026-09-02 (ifs-voices: first hour of real use - rapid voice creation, one real usability gap found)
 
 - Overnight, unprompted, self-directed: six voices in under an hour (voice1, explorer, name, muse, reflector, strategist) - she started using create_voice almost immediately after the session began, no priming needed beyond the framing text itself. Not a problem, just logging the actual pace for future comparison.
