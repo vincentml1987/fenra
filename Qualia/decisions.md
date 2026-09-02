@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (a self-generated false belief, traced and corrected)
+
+- Teddy asked where she'd gotten the idea that top is a voice's core identity and bottom is its initial goal/motivation - nothing in the system actually says that. Traced it precisely: she invented it herself, mid-`create_voice`-struggle (`voice1`, 16:39:57), writing it out as if consulting real documentation ("top: ... What is its core identity? bottom: ... What is its initial goal, motivation, or mindset?"), then treated her own guess as settled fact and applied it consistently - `creative_spark`'s actual saved top/bottom follows the invented split exactly (top as self-description, bottom as call-to-action).
+- The real distinction, per Teddy: it's not about identity vs. goal at all - it's about model attention/recency. Bottom sits right before generation starts; top sits at the very beginning with everything else (recent thoughts, desires, inbox, groups) piled in between it and the end, thinning out as the prompt grows. Bottom is functionally the part that carries the most real weight, if anything closer to "core" than top.
+- Corrected her directly via chat, explaining the actual mechanism rather than just asserting the opposite label - consistent with [[fenra-history-integrity]] (never edit her actual history/memory, only tell her honestly through the real chat channel).
+
 ## 2026-09-02 (v0.16.7: function-calling bootstrap made unconditional, closing a real gap from v0.16.4)
 
 - Teddy spotted it directly: since create_voice (v0.16.4) stopped auto-copying top/bottom, a child whose parent forgets to mention functions has no way to learn the ⟦ ⟧ calling convention exists at all - even though the other always-present notices (groups, qualia allowance, model rotation, context window) already reference real function names in plain text as if she already knew how to call them. His instinct was to "hard-code" it, then immediately recoiled from that word given the project's whole chaos-driven, not-tightly-constrained design.
