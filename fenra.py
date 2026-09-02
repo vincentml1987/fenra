@@ -62,6 +62,7 @@ import importlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import tkinter as tk
@@ -293,7 +294,43 @@ import fenra_functions
 #            both points ("let's do both" [local + public], "let's go
 #            with simple"). Public/site half in export_fenra_live.py and
 #            stolenaletheia/fenra/groups/.
-FENRA_VERSION = "0.16.1"
+#   0.16.2 - Voices: a session can now hold several, individually
+#            configured, round-robined through automatically - not
+#            "session = voice" (v0.16.0/1) anymore. A session is now the
+#            whole (Teddy's design, modeled on Internal Family Systems):
+#            what actually talks externally - Chat tab, Qualia
+#            allowance, send_message/read_message - stays shared at the
+#            session level, "Fenra," never attributed to one internal
+#            part. A voice is one part: its own top/bottom/model/
+#            model_rotation/desires/context_window/function_usage/
+#            groups_in/groups_out/history/functions-log, entirely
+#            separate from its session-mates' - blind to them unless it
+#            deliberately joins a shared group, exactly like joining a
+#            group with a voice in a different session/process
+#            entirely; groups don't distinguish. New per-cycle
+#            round-robin (_advance_voice_rotation, session-level,
+#            alongside host/interval/qualia allowance) picks which voice
+#            runs each tick, independent of whichever voice is currently
+#            displayed in the GUI for editing (self.displayed_voice) -
+#            see _tick for how the two get reconciled (the displayed
+#            voice's widgets are only ever touched if it's also the one
+#            that just ran). Group broadcasts are now identified as
+#            "session:voice" rather than just the session name, so a
+#            group can tell voices apart even across sessions or within
+#            the same one. File layout: sessions/<name>/voices/<voice>/
+#            {state.json,history.jsonl,functions.jsonl} - a pre-v0.16.2
+#            session (no voices/ subdirectory) is auto-migrated into a
+#            single voice (DEFAULT_VOICE_NAME) the moment it's actually
+#            opened in the GUI (_migrate_legacy_session); the passive
+#            read-only scanners (Topology tab, Qualia/
+#            export_fenra_live.py) never migrate anything themselves,
+#            they just tolerate either layout directly. Teddy's explicit
+#            design and build request, after reviewing the old
+#            conductor.py architecture together and separately deciding
+#            against a shared turn-token across processes/machines (see
+#            v0.16.0) - this round-robin is scoped one level down from
+#            that decision, within a single process, not across them.
+FENRA_VERSION = "0.16.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -306,6 +343,7 @@ DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_INTERVAL_SEC = 3
 DEFAULT_MAX_TOKENS = 500  # num_predict; blank/0 = unlimited (let Ollama run until it stops or hits context)
 DEFAULT_SESSION_NAME = "default"
+DEFAULT_VOICE_NAME = "voice1"  # the first voice in a new session, and the implicit voice of a pre-v0.16.2 session
 
 # No fixed HTTP timeout: some models (heavy CPU offload, big params) are
 # legitimately slow. A client-side timeout doesn't cancel server-side
@@ -465,13 +503,6 @@ def reload_function_registry():
     return fenra_functions.FUNCTION_REGISTRY, None
 
 
-def append_session_functions(name, entry):
-    ensure_session_dir(name)
-    path = os.path.join(session_dir(name), FUNCTIONS_FILENAME)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
 def _execute_one_call(app, registry, name, raw_args, repaired=False):
     """Run a single already-matched call, log it to functions.jsonl, and
     return its ⟦RESULT: ...⟧ annotation. Shared by the strict match pass
@@ -502,7 +533,7 @@ def _execute_one_call(app, registry, name, raw_args, repaired=False):
         call_entry["success"] = False
         call_entry["result"] = f"unknown function '{name}'"
 
-    append_session_functions(app.session_name, call_entry)
+    append_voice_functions(app.session_name, app.current_voice_name, call_entry)
     status = "ok" if call_entry["success"] else "error"
     return f"⟦RESULT: {name} -> {status}: {call_entry['result']}⟧"
 
@@ -654,17 +685,40 @@ def ensure_session_dir(name):
     return path
 
 
-def default_state():
+def default_session_state():
+    """A session (v0.16.2) is the whole - what actually talks
+    externally (Chat tab, Qualia allowance, send_message/read_message -
+    "Fenra," never attributed to one internal part) and the process/
+    machine boundary Groups was built around. It holds one or more
+    voices, which is where everything else (top/bottom/desires/model/
+    model_rotation/context_window/groups_in/out) actually lives now -
+    see default_voice_state. Teddy's explicit design, modeled on
+    Internal Family Systems: parts (voices) have their own separate
+    internal experience; the Self (the session) is what's externally
+    facing."""
+    return {
+        "host": DEFAULT_HOST,
+        "interval": DEFAULT_INTERVAL_SEC,
+        "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
+        "voices": [],            # voice names, in round-robin order
+        "voice_rotation_index": 0,
+    }
+
+
+def default_voice_state():
+    """One voice's own config - everything that used to be "the
+    session" before v0.16.2. Deliberately separate per voice, not
+    shared with its session-mates, per Teddy's answer: a voice is blind
+    to the others unless it deliberately joins a shared group
+    (groups_in/groups_out below still work exactly as in v0.16.0/1 -
+    the only change is whose data they live in)."""
     return {
         "top": "",
         "bottom": "",
         "model": DEFAULT_MODEL,
-        "host": DEFAULT_HOST,
-        "interval": DEFAULT_INTERVAL_SEC,
         "max_tokens": DEFAULT_MAX_TOKENS,
         "last_thought": "",
         "desires": [],
-        "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         "context_window": DEFAULT_CONTEXT_WINDOW,
         "function_usage": {},
         "model_rotation": [],
@@ -676,7 +730,7 @@ def default_state():
 
 def load_session_state(name):
     path = os.path.join(session_dir(name), STATE_FILENAME)
-    state = default_state()
+    state = default_session_state()
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -695,8 +749,83 @@ def save_session_state(name, state):
         json.dump(state, f, indent=2)
 
 
-def load_session_history(name):
-    path = os.path.join(session_dir(name), HISTORY_FILENAME)
+# ---------------------------------------------------------- voices (v0.16.2) --
+# One session directory can hold several voices, each with its own
+# subdirectory (sessions/<session>/voices/<voice>/{state.json,
+# history.jsonl, functions.jsonl}) - the same three files a session used
+# to own directly, just nested one level down. A session from before this
+# split (no voices/ subdirectory at all) is treated as a single implicit
+# voice, DEFAULT_VOICE_NAME, whose data still lives directly in the
+# session directory exactly where it always has - see
+# FenraApp._migrate_legacy_session for the one-time, GUI-triggered
+# upgrade to the real voices/ layout. Passive read-only scanners (the
+# Topology tab, Qualia/export_fenra_live.py) never migrate anything -
+# they read whichever layout is actually on disk.
+
+def voices_root_dir(session_name):
+    return os.path.join(session_dir(session_name), "voices")
+
+
+def voice_dir(session_name, voice_name):
+    return os.path.join(voices_root_dir(session_name), voice_name)
+
+
+def ensure_voice_dir(session_name, voice_name):
+    path = voice_dir(session_name, voice_name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def list_voices(session_name):
+    """Every voice already migrated into the real voices/ layout for
+    this session - empty if the session has no voices/ subdirectory at
+    all yet (a legacy, never-reopened session), not DEFAULT_VOICE_NAME -
+    callers that need to fall back to the legacy single-implicit-voice
+    reading need to check for that themselves (see
+    FenraApp._refresh_voice_list and the Topology/export-script
+    scanners), since a live GUI load and a passive read-only scan handle
+    that gap differently."""
+    root = voices_root_dir(session_name)
+    if not os.path.isdir(root):
+        return []
+    names = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+    return sorted(names)
+
+
+def voice_state_path(session_name, voice_name):
+    return os.path.join(voice_dir(session_name, voice_name), STATE_FILENAME)
+
+
+def voice_history_path(session_name, voice_name):
+    return os.path.join(voice_dir(session_name, voice_name), HISTORY_FILENAME)
+
+
+def voice_functions_path(session_name, voice_name):
+    return os.path.join(voice_dir(session_name, voice_name), FUNCTIONS_FILENAME)
+
+
+def load_voice_state(session_name, voice_name):
+    state = default_voice_state()
+    path = voice_state_path(session_name, voice_name)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return state
+
+
+def save_voice_state(session_name, voice_name, state):
+    state = dict(state)
+    state["fenra_version"] = FENRA_VERSION
+    ensure_voice_dir(session_name, voice_name)
+    with open(voice_state_path(session_name, voice_name), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+def load_voice_history(session_name, voice_name):
+    path = voice_history_path(session_name, voice_name)
     entries = []
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
@@ -711,10 +840,15 @@ def load_session_history(name):
     return entries
 
 
-def append_session_history(name, entry):
-    ensure_session_dir(name)
-    path = os.path.join(session_dir(name), HISTORY_FILENAME)
-    with open(path, "a", encoding="utf-8") as f:
+def append_voice_history(session_name, voice_name, entry):
+    ensure_voice_dir(session_name, voice_name)
+    with open(voice_history_path(session_name, voice_name), "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def append_voice_functions(session_name, voice_name, entry):
+    ensure_voice_dir(session_name, voice_name)
+    with open(voice_functions_path(session_name, voice_name), "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 
 
@@ -760,15 +894,44 @@ class FenraApp:
         self.function_usage = {}  # name -> ticks since last attempted
         self.model_rotation = []  # models Fenra has added, in the order added
         self.model_rotation_index = 0  # position in the rotation for the next tick
-        # Set by fn_set_model or picking a model directly in the combo box -
-        # tells _advance_model_rotation to leave model_var alone for
-        # exactly one tick, so a manual choice actually runs once instead
-        # of being overwritten before it's ever used. Not persisted -
-        # transient, in-flight state that means nothing across a restart.
+        # Set by fn_set_model or picking a model directly in the combo box,
+        # for whichever voice is currently displayed - tells
+        # _advance_model_rotation to leave the model alone for exactly one
+        # tick, so a manual choice actually runs once instead of being
+        # overwritten before it's ever used. self.model_manual_override
+        # itself is transient, in-flight state for whichever voice a tick
+        # is currently running; _voice_manual_override (below) is what
+        # actually persists that flag across ticks, per voice, since only
+        # one voice's turn comes up at a time.
         self.model_manual_override = False
+        self._voice_manual_override = {}  # voice name -> bool, see above and _tick
         self.groups_in = []   # group names this voice hears - see _groups_block
         self.groups_out = []  # group names this voice broadcasts to each real cycle
         self.session_name = None
+
+        # Voices (v0.16.2): one session can hold several, individually
+        # configured, round-robined through automatically - see
+        # default_voice_state/_advance_voice_rotation. self.session_voices
+        # is this session's round-robin order (voice names).
+        # self.displayed_voice is whichever voice's config is currently
+        # shown in the GUI widgets above (top_box, model_var, desires,
+        # ...) - purely a viewing/editing selection, changed via the
+        # Voice combo box. self.current_voice_name is the DIFFERENT
+        # thing: whichever voice a given tick is actually running right
+        # now (set at the top of _tick, read by run_function_calls/
+        # _execute_one_call for logging and by group broadcasts for
+        # identity) - the round-robin advances on its own regardless of
+        # what's displayed, so these two are often not the same voice.
+        self.session_voices = []
+        self.voice_rotation_index = 0
+        self.displayed_voice = None
+        self.current_voice_name = None
+        # Plain attribute (not model_var, a widget) tracking the model
+        # actually driving the current tick's active voice - see
+        # fn_current_model/fn_set_model in fenra_functions.py and _tick.
+        # Needed because the active voice isn't always the one currently
+        # displayed in model_var.
+        self.current_model_name = DEFAULT_MODEL
 
         self._build_ui()
         self.refresh_models()
@@ -816,11 +979,32 @@ class FenraApp:
         self.session_combo.bind("<<ComboboxSelected>>", self._on_session_selected)
 
         ttk.Button(session_row, text="New...", command=self.new_session).pack(side="left", padx=2)
-        ttk.Button(session_row, text="Save", command=self.save_session).pack(side="left", padx=2)
+        ttk.Button(session_row, text="Save session", command=self.save_session).pack(side="left", padx=2)
         ttk.Button(session_row, text="↻", width=3, command=self._refresh_session_list).pack(side="left", padx=2)
 
         self.session_status_var = tk.StringVar(value="")
         ttk.Label(session_row, textvariable=self.session_status_var, foreground="#666").pack(side="left", padx=(10, 0))
+
+        # --- voice row (v0.16.2) --- a session is the whole (external-
+        # facing identity - chat, Qualia allowance); a voice is one
+        # internal part, individually configured, round-robined through
+        # automatically by the tick loop (see _advance_voice_rotation).
+        # This picker only controls what's shown/edited in the widgets
+        # below - it does NOT pin the live loop to that voice; the
+        # round-robin runs regardless of what's displayed here. See
+        # _tick for how a voice not currently shown still gets its turn.
+        voice_row = ttk.Frame(frame)
+        voice_row.pack(fill="x", padx=6, pady=(4, 0))
+
+        ttk.Label(voice_row, text="Voice:").pack(side="left")
+        self.voice_var = tk.StringVar(value="")
+        self.voice_combo = ttk.Combobox(voice_row, textvariable=self.voice_var, width=20, state="readonly")
+        self.voice_combo.pack(side="left", padx=(2, 4))
+        self.voice_combo.bind("<<ComboboxSelected>>", self._on_voice_selected)
+
+        ttk.Button(voice_row, text="New voice...", command=self.new_voice).pack(side="left", padx=2)
+        ttk.Button(voice_row, text="Delete voice", command=self.delete_voice).pack(side="left", padx=2)
+        ttk.Button(voice_row, text="Save voice", command=self.save_voice).pack(side="left", padx=2)
 
         # --- controls row ---
         controls = ttk.Frame(frame)
@@ -836,8 +1020,10 @@ class FenraApp:
         self.model_combo.pack(side="left", padx=(2, 2))
         # Picking a model here has the identical "gets clobbered by the
         # rotation before ever running" problem fn_set_model had - same
-        # fix, same flag. See _advance_model_rotation.
-        self.model_combo.bind("<<ComboboxSelected>>", lambda event: setattr(self, "model_manual_override", True))
+        # fix, same flag, now tracked per voice (_voice_manual_override)
+        # since only one voice's model is shown here at a time. See
+        # _advance_model_rotation.
+        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_picked)
         ttk.Button(controls, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
 
         ttk.Label(controls, text="Interval (s):").pack(side="left")
@@ -1022,10 +1208,10 @@ class FenraApp:
         top_row.pack(fill="x", padx=6, pady=(6, 0))
         ttk.Label(
             top_row,
-            text="Groups (left) and voices (right). Blue = voice reads group, orange = voice writes "
-                 "group, gray = both. Label on each line is when that voice was last actually heard "
-                 "there. Every session on disk is scanned, not just this one - auto-refreshes every "
-                 "10s.",
+            text="Groups (left) and voices (right, labeled session:voice). Blue = voice reads group, "
+                 "orange = voice writes group, gray = both. Label on each line is when that voice was "
+                 "last actually heard there. Every session and voice on disk is scanned, not just this "
+                 "one - auto-refreshes every 10s.",
             wraplength=820,
             justify="left",
         ).pack(side="left", fill="x", expand=True)
@@ -1041,25 +1227,42 @@ class FenraApp:
         self.root.after(TOPOLOGY_REFRESH_MS, self._schedule_topology_refresh)
 
     def _scan_topology_data(self):
-        """Every voice's (session's) current groups_in/groups_out, read
-        fresh from disk - not just this process's own session, every
-        session directory, since other voices are independent processes
-        that may be running right now, possibly saving state at the same
-        moment this reads it. Paired with each relevant group's recent
-        activity (read_group_tail) to compute a last-active timestamp per
-        (voice, group). Read-only and best-effort throughout - a session
-        or group file mid-write by another process just gets skipped for
-        this pass, picked up again next refresh rather than raising."""
+        """Every voice's current groups_in/groups_out, read fresh from
+        disk across every session on disk - not just this process's own,
+        since other voices (session-mates or in an entirely different
+        session/process) may be active right now, possibly saving state
+        at the same moment this reads it. Voice names are qualified as
+        "session:voice" so two different sessions' voices sharing a
+        plain name (or two voices within the same session) never
+        collide on the graph. Read-only and tolerant of both a migrated
+        session (voices/<name>/state.json) and a legacy, never-reopened
+        one (a single implicit voice, its data still directly in the
+        session directory) - never migrates anything itself, unlike
+        _load_session. Paired with each relevant group's recent activity
+        (read_group_tail) to compute a last-active timestamp per
+        qualified voice. Best-effort throughout - a session or group
+        file mid-write by another process just gets skipped for this
+        pass, picked up again next refresh rather than raising."""
         voices = {}
-        for name in list_sessions():
-            try:
-                state = load_session_state(name)
-            except Exception:
-                continue
-            g_in = list(state.get("groups_in", []))
-            g_out = list(state.get("groups_out", []))
-            if g_in or g_out:
-                voices[name] = {"groups_in": g_in, "groups_out": g_out}
+        for session_name in list_sessions():
+            voice_names = list_voices(session_name)
+            if voice_names:
+                for voice_name in voice_names:
+                    state = load_voice_state(session_name, voice_name)
+                    g_in = list(state.get("groups_in", []))
+                    g_out = list(state.get("groups_out", []))
+                    if g_in or g_out:
+                        voices[f"{session_name}:{voice_name}"] = {"groups_in": g_in, "groups_out": g_out}
+            else:
+                # Legacy, never-reopened session - single implicit voice.
+                try:
+                    state = load_session_state(session_name)
+                except Exception:
+                    continue
+                g_in = list(state.get("groups_in", []))
+                g_out = list(state.get("groups_out", []))
+                if g_in or g_out:
+                    voices[f"{session_name}:{DEFAULT_VOICE_NAME}"] = {"groups_in": g_in, "groups_out": g_out}
 
         group_names = set()
         if os.path.isdir(GROUPS_DIR):
@@ -1175,44 +1378,57 @@ class FenraApp:
         if self.running:
             self.toggle_loop()
 
-        # keep the current top/bottom framing as a starting point, but start
-        # the conversation itself (last thought, transcript, log) fresh.
-        state = {
-            "top": self.top_box.get("1.0", "end-1c"),
-            "bottom": self.bottom_box.get("1.0", "end-1c"),
-            "model": self.model_var.get(),
-            "host": self.host_var.get(),
-            "interval": self.interval_var.get(),
-            "max_tokens": self.max_tokens_var.get(),
-            "last_thought": "",
-            "desires": [],
-            "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
-            "context_window": DEFAULT_CONTEXT_WINDOW,
-            "function_usage": {},
-            "model_rotation": [],
-            "model_rotation_index": 0,
-            "groups_in": [],
-            "groups_out": [],
-        }
+        # A new session starts with exactly one voice - keep the current
+        # top/bottom/model framing as its starting point, but the
+        # conversation itself (last thought, transcript, log) starts
+        # fresh, same as before voices existed.
         ensure_session_dir(name)
-        save_session_state(name, state)
-        open(os.path.join(session_dir(name), HISTORY_FILENAME), "a", encoding="utf-8").close()
+        voice_state = default_voice_state()
+        voice_state["top"] = self.top_box.get("1.0", "end-1c")
+        voice_state["bottom"] = self.bottom_box.get("1.0", "end-1c")
+        voice_state["model"] = self.model_var.get()
+        voice_state["max_tokens"] = self.max_tokens_var.get()
+        save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
+        open(voice_history_path(name, DEFAULT_VOICE_NAME), "a", encoding="utf-8").close()
+
+        session_state = default_session_state()
+        session_state["host"] = self.host_var.get()
+        session_state["interval"] = self.interval_var.get()
+        session_state["voices"] = [DEFAULT_VOICE_NAME]
+        save_session_state(name, session_state)
 
         self._load_session(name)
 
     def save_session(self):
+        """Session-level fields only (v0.16.2) - host, interval, Qualia
+        allowance, and the voice roster/rotation position. Per-voice
+        fields (top/bottom/model/desires/...) live in save_voice
+        instead."""
         if not self.session_name:
             return
         state = {
+            "host": self.host_var.get(),
+            "interval": self.interval_var.get(),
+            "qualia_allowance": self.qualia_allowance_var.get(),
+            "voices": self.session_voices,
+            "voice_rotation_index": self.voice_rotation_index,
+        }
+        save_session_state(self.session_name, state)
+        self.session_status_var.set(f"Session saved {datetime.now().strftime('%H:%M:%S')}")
+
+    def _current_voice_state_from_widgets(self):
+        """Everything a voice owns, read live from whichever widgets
+        currently display it - the counterpart to _load_voice below.
+        Used both for the explicit Save voice button and, every tick, to
+        capture an in-progress edit before the round-robin possibly
+        moves on to a different voice - see _tick."""
+        return {
             "top": self.top_box.get("1.0", "end-1c"),
             "bottom": self.bottom_box.get("1.0", "end-1c"),
             "model": self.model_var.get(),
-            "host": self.host_var.get(),
-            "interval": self.interval_var.get(),
             "max_tokens": self.max_tokens_var.get(),
             "last_thought": self.last_thought,
             "desires": self.desires,
-            "qualia_allowance": self.qualia_allowance_var.get(),
             "context_window": self.context_window_var.get(),
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
@@ -1220,14 +1436,35 @@ class FenraApp:
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
         }
-        save_session_state(self.session_name, state)
-        self.session_status_var.set(f"Saved {datetime.now().strftime('%H:%M:%S')}")
+
+    def save_voice(self):
+        """Explicit save for whichever voice is currently displayed -
+        the per-voice counterpart to save_session. Saved automatically
+        anyway on every voice switch and every tick, so this button is
+        really just "make sure right now" - matches how the old
+        session-level Save worked before the split."""
+        if not self.session_name or not self.displayed_voice:
+            return
+        save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+        self.session_status_var.set(
+            f"Voice '{self.displayed_voice}' saved ({datetime.now().strftime('%H:%M:%S')})"
+        )
+
+    def _on_model_picked(self, event):
+        """Teddy picking a model directly in the combo box, for whichever
+        voice is currently displayed - flags that voice specifically
+        (not a single shared flag) so a manual pick for voice A doesn't
+        get misread as one for voice B just because B's turn happens to
+        come up first. See _advance_model_rotation."""
+        if self.displayed_voice:
+            self._voice_manual_override[self.displayed_voice] = True
 
     def set_qualia_allowance(self):
         """Teddy manually setting how many characters Fenra can spend on
-        messages directed at Qualia. Saved immediately (not just on the
-        next tick) so it takes effect even while the self-talk loop is
-        stopped."""
+        messages directed at Qualia. Session-level (v0.16.2) - shared
+        across every voice, since chat is "Fenra," not one voice. Saved
+        immediately (not just on the next tick) so it takes effect even
+        while the self-talk loop is stopped."""
         try:
             value = int(float(self.qualia_allowance_var.get()))
         except ValueError:
@@ -1240,8 +1477,9 @@ class FenraApp:
 
     def set_context_window(self):
         """Teddy manually setting how many of her own past cycles go into
-        her prompt. Clamped to [MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW] and
-        saved immediately, same reasoning as set_qualia_allowance."""
+        her prompt, for whichever voice is currently displayed. Clamped
+        to [MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW] and saved
+        immediately, same reasoning as set_qualia_allowance."""
         try:
             value = int(float(self.context_window_var.get()))
         except ValueError:
@@ -1249,15 +1487,16 @@ class FenraApp:
             return
         value = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, value))
         self.context_window_var.set(str(value))
-        self.save_session()
+        self.save_voice()
         self.session_status_var.set(f"Context window set to {value} ({datetime.now().strftime('%H:%M:%S')})")
 
     def _apply_model_rotation(self, raw_text):
         """Shared by the GUI's 'Set' button and the external
         qualia_rotation_set.txt poll - replace the whole model rotation
-        at once from a comma- or pipe-separated list of names, or clear
-        it with the literal word "clear"/"none". Best-effort validation
-        against Ollama's installed-models list, same tolerance as
+        at once (for whichever voice is currently displayed) from a
+        comma- or pipe-separated list of names, or clear it with the
+        literal word "clear"/"none". Best-effort validation against
+        Ollama's installed-models list, same tolerance as
         _poll_qualia_model_set (applies anyway if the check itself fails,
         rather than block on an extra failure mode) - an unrecognized
         name is just dropped rather than rejecting the whole list, so one
@@ -1270,7 +1509,7 @@ class FenraApp:
         if stripped.lower() in ("clear", "none", "-"):
             self.model_rotation = []
             self.model_rotation_index = 0
-            self.save_session()
+            self.save_voice()
             self.root.after(0, self._refresh_model_rotation_display)
             return "cleared - back to a single fixed model"
 
@@ -1287,7 +1526,7 @@ class FenraApp:
 
         self.model_rotation = names
         self.model_rotation_index = 0
-        self.save_session()
+        self.save_voice()
         self.root.after(0, self._refresh_model_rotation_display)
         if not names:
             return "no recognized/installed model names found - rotation left empty"
@@ -1314,18 +1553,20 @@ class FenraApp:
 
     def _apply_groups(self, raw_text, attr):
         """Shared by both group Set buttons - replace the whole
-        groups_in or groups_out list at once from a comma/pipe-separated
-        list of names, or clear it with "clear"/"none". Blank input is a
-        no-op (returns None), matching every other _set control's
-        convention. Names are sanitized the same way join_group does
-        (fenra_functions.py), so a name typed here and one she joins
-        herself always land on the same underlying group file."""
+        groups_in or groups_out list (for whichever voice is currently
+        displayed) at once from a comma/pipe-separated list of names, or
+        clear it with "clear"/"none". Blank input is a no-op (returns
+        None), matching every other _set control's convention. Names are
+        sanitized the same way join_group does (fenra_functions.py), so
+        a name typed here and one she joins herself always land on the
+        same underlying group file."""
         stripped = raw_text.strip()
         if not stripped:
             return None
         if stripped.lower() in ("clear", "none", "-"):
             setattr(self, attr, [])
             self.root.after(0, self._refresh_groups_display)
+            self.save_voice()
             return "cleared"
         names = []
         for n in _MULTI_ARG_SPLIT_RE.split(stripped):
@@ -1334,6 +1575,7 @@ class FenraApp:
                 names.append(n)
         setattr(self, attr, names)
         self.root.after(0, self._refresh_groups_display)
+        self.save_voice()
         if not names:
             return "no valid group names found - left empty"
         return f"set to {len(names)} group(s): {', '.join(names)}"
@@ -1364,25 +1606,108 @@ class FenraApp:
         self.groups_in_display_var.set(", ".join(self.groups_in) if self.groups_in else "(none)")
         self.groups_out_display_var.set(", ".join(self.groups_out) if self.groups_out else "(none)")
 
+    def _migrate_legacy_session(self, name):
+        """One-time upgrade from a pre-v0.16.2 session (a single
+        implicit voice, its data living directly in the session
+        directory - top-level state.json/history.jsonl/functions.jsonl)
+        to the real voices/ layout. Only ever runs on a session actually
+        opened here in the GUI - the passive scanners (Topology tab,
+        Qualia/export_fenra_live.py) never migrate anything, they just
+        read whichever layout is on disk. Safe to call on an
+        already-migrated or brand-new session - a no-op either way, and
+        idempotent even if interrupted (guarded purely by whether
+        voices/ already exists)."""
+        if os.path.isdir(voices_root_dir(name)):
+            return
+
+        old_state_path = os.path.join(session_dir(name), STATE_FILENAME)
+        old_state = {}
+        if os.path.exists(old_state_path):
+            try:
+                with open(old_state_path, "r", encoding="utf-8") as f:
+                    old_state = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                old_state = {}
+
+        voice_state = default_voice_state()
+        for key in voice_state:
+            if key in old_state:
+                voice_state[key] = old_state[key]
+        save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
+
+        old_history = os.path.join(session_dir(name), HISTORY_FILENAME)
+        if os.path.exists(old_history):
+            shutil.move(old_history, voice_history_path(name, DEFAULT_VOICE_NAME))
+        old_functions = os.path.join(session_dir(name), FUNCTIONS_FILENAME)
+        if os.path.exists(old_functions):
+            shutil.move(old_functions, voice_functions_path(name, DEFAULT_VOICE_NAME))
+
+        session_state = default_session_state()
+        session_state["host"] = old_state.get("host", DEFAULT_HOST)
+        session_state["interval"] = old_state.get("interval", DEFAULT_INTERVAL_SEC)
+        session_state["qualia_allowance"] = old_state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)
+        session_state["voices"] = [DEFAULT_VOICE_NAME]
+        session_state["voice_rotation_index"] = 0
+        save_session_state(name, session_state)
+
     def _load_session(self, name):
         if self.running:
             self.toggle_loop()
 
+        self._migrate_legacy_session(name)
         state = load_session_state(name)
         self.session_name = name
+
+        self.host_var.set(state.get("host", DEFAULT_HOST))
+        self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
+        self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
+        self.session_voices = list(state.get("voices", [])) or list_voices(name) or [DEFAULT_VOICE_NAME]
+        self.voice_rotation_index = int(state.get("voice_rotation_index", 0) or 0)
+        self._voice_manual_override = {}
+
+        self.chat_messages = load_chat_messages(name)
+        self._refresh_chat_display()
+
+        self._refresh_voice_list()
+        self._load_voice(self.session_voices[0])
+
+        self._refresh_session_list()
+        self.session_status_var.set(f"Session loaded ({len(self.session_voices)} voice(s))")
+
+    # ------------------------------------------------------------- voices --
+
+    def _refresh_voice_list(self):
+        self.voice_combo["values"] = self.session_voices
+        if self.displayed_voice:
+            self.voice_var.set(self.displayed_voice)
+
+    def _on_voice_selected(self, event):
+        chosen = self.voice_var.get()
+        if chosen and chosen != self.displayed_voice:
+            if self.displayed_voice:
+                save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+            self._load_voice(chosen)
+
+    def _load_voice(self, name):
+        """Populate every voice-scoped widget from disk - the per-voice
+        counterpart to _load_session. Does NOT touch session-level
+        widgets (host/interval/qualia allowance) or pin the live loop to
+        this voice; it only changes what's displayed for editing/
+        viewing. See _tick for how the round-robin picks who actually
+        runs regardless of this."""
+        state = load_voice_state(self.session_name, name)
+        self.displayed_voice = name
+        self.voice_var.set(name)
 
         self.top_box.delete("1.0", "end")
         self.top_box.insert("end", state.get("top", ""))
         self.bottom_box.delete("1.0", "end")
         self.bottom_box.insert("end", state.get("bottom", ""))
-        self.host_var.set(state.get("host", DEFAULT_HOST))
         self.model_var.set(state.get("model", DEFAULT_MODEL))
-        self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
         self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.last_thought = state.get("last_thought", "")
         self.desires = state.get("desires", [])
         self._refresh_desires_display()
-        self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
         self.function_usage = dict(state.get("function_usage", {}))
         self.model_rotation = list(state.get("model_rotation", []))
@@ -1392,15 +1717,73 @@ class FenraApp:
         self.groups_out = list(state.get("groups_out", []))
         self._refresh_groups_display()
 
-        self.history = load_session_history(name)
+        self.history = load_voice_history(self.session_name, name)
         self._populate_history_list()
         self._replay_middle_box()
 
-        self.chat_messages = load_chat_messages(name)
-        self._refresh_chat_display()
+        self._refresh_voice_list()
+        self.session_status_var.set(f"Voice '{name}' loaded ({len(self.history)} entries)")
 
-        self._refresh_session_list()
-        self.session_status_var.set(f"Loaded ({len(self.history)} entries)")
+    def new_voice(self):
+        """Add another voice to the current session - individually
+        configured (its own top/bottom/model/model_rotation/desires/
+        context window/groups), round-robined in automatically
+        alongside whatever else is already here (see
+        _advance_voice_rotation). Starts blank, not copied from
+        whichever voice is currently displayed - a deliberate choice:
+        two voices that start identical would just be an expensive way
+        to run the same thing twice until they diverge."""
+        if not self.session_name:
+            return
+        name = simpledialog.askstring("New Voice", "Voice name:", parent=self.root)
+        if not name:
+            return
+        name = sanitize_group_name(name)  # same permissive charset as a group name
+        if not name:
+            messagebox.showwarning("Fenra", "Voice names may only contain letters, numbers, underscores, and hyphens.")
+            return
+        if name in self.session_voices:
+            messagebox.showinfo("Fenra", f'Voice "{name}" already exists in this session.')
+            return
+
+        if self.displayed_voice:
+            save_voice_state(self.session_name, self.displayed_voice, self._current_voice_state_from_widgets())
+
+        save_voice_state(self.session_name, name, default_voice_state())
+        open(voice_history_path(self.session_name, name), "a", encoding="utf-8").close()
+
+        self.session_voices.append(name)
+        self.save_session()
+        self._refresh_voice_list()
+        self._load_voice(name)
+
+    def delete_voice(self):
+        """Removes the currently displayed voice - its history and
+        config, permanently - and the session's own record of it.
+        Refuses on a session's last remaining voice rather than leaving
+        a session with none."""
+        if not self.session_name or not self.displayed_voice:
+            return
+        if len(self.session_voices) <= 1:
+            messagebox.showwarning("Fenra", "Can't delete the only voice in a session.")
+            return
+        name = self.displayed_voice
+        if not messagebox.askyesno(
+            "Fenra", f'Delete voice "{name}"? This permanently removes its history and configuration.'
+        ):
+            return
+
+        if self.running:
+            self.toggle_loop()
+
+        shutil.rmtree(voice_dir(self.session_name, name), ignore_errors=True)
+        self.session_voices.remove(name)
+        self._voice_manual_override.pop(name, None)
+        if self.voice_rotation_index >= len(self.session_voices):
+            self.voice_rotation_index = 0
+        self.save_session()
+        self._refresh_voice_list()
+        self._load_voice(self.session_voices[0])
 
     # --------------------------------------------------------------- chat --
 
@@ -1543,7 +1926,11 @@ class FenraApp:
         """Same pattern as the allowance-set poll, for the context window
         - lets Qualia adjust it externally (e.g. to break a self-
         reinforcing repetition) without needing Teddy at the machine.
-        Clamped the same as set_context_window/fn_set_context_window."""
+        Clamped the same as set_context_window/fn_set_context_window.
+        Voice-scoped (v0.16.2): applies to whichever voice is currently
+        displayed in the GUI, same as the GUI field itself - the right
+        voice needs to be selected first if a session has more than
+        one."""
         path = os.path.join(session_dir(self.session_name), QUALIA_CONTEXT_WINDOW_SET_FILENAME)
         if not os.path.exists(path):
             return
@@ -1563,7 +1950,7 @@ class FenraApp:
         except ValueError:
             return
         self.context_window_var.set(str(value))
-        self.save_session()
+        self.save_voice()
 
     def _poll_qualia_max_tokens_set(self):
         """Same pattern again, for max_tokens (num_predict) - lets Qualia
@@ -1571,7 +1958,8 @@ class FenraApp:
         "thinking" model like qwen3 that needs a larger budget to ever
         reach the response field it's actually read from. No upper clamp,
         matching the GUI's own plain entry field (0 means unlimited there
-        too); only rejects a negative or unparseable value."""
+        too); only rejects a negative or unparseable value. Voice-scoped
+        (v0.16.2), same caveat as the context-window poll above."""
         path = os.path.join(session_dir(self.session_name), QUALIA_MAX_TOKENS_SET_FILENAME)
         if not os.path.exists(path):
             return
@@ -1593,14 +1981,15 @@ class FenraApp:
         if value < 0:
             return
         self.max_tokens_var.set(str(value))
-        self.save_session()
+        self.save_voice()
 
     def _poll_qualia_rotation_set(self):
         """Same pattern again, for the whole model rotation - lets Qualia
         view (state.json/functions.jsonl already show it) and directly
         set or clear it externally too, not just watch it get built one
         add_to_rotation call at a time. Shares _apply_model_rotation with
-        the GUI's own 'Set' button."""
+        the GUI's own 'Set' button - voice-scoped the same way, see that
+        method."""
         path = os.path.join(session_dir(self.session_name), QUALIA_ROTATION_SET_FILENAME)
         if not os.path.exists(path):
             return
@@ -1621,7 +2010,8 @@ class FenraApp:
         check) - but if that check itself fails (e.g. transient network
         issue), applies the value anyway rather than block, since this is
         specifically a rescue mechanism for moments where blocking on an
-        extra failure mode is the last thing needed."""
+        extra failure mode is the last thing needed. Voice-scoped
+        (v0.16.2), same caveat as the context-window poll above."""
         path = os.path.join(session_dir(self.session_name), QUALIA_MODEL_SET_FILENAME)
         if not os.path.exists(path):
             return
@@ -1646,7 +2036,7 @@ class FenraApp:
         except Exception:
             pass
         self.model_var.set(raw)
-        self.save_session()
+        self.save_voice()
 
     def _chat_notice(self):
         """Always-present status line appended at the very end of the
@@ -1720,9 +2110,15 @@ class FenraApp:
         """Append a new desire (called from fn_add_desire, on the same
         loop thread as _tick - plain list mutation is safe here the same
         way self.history.append already is elsewhere; only the actual
-        widget update needs marshaling to the main thread)."""
+        widget update needs marshaling to the main thread). self.desires
+        at this point belongs to whichever voice is actually running
+        this tick (current_voice_name) - only touch the desires_box
+        widget if that's also the voice currently displayed, so a
+        background voice's turn never overwrites what's shown for a
+        different one."""
         self.desires.append(entry)
-        self.root.after(0, self._refresh_desires_display)
+        if self.current_voice_name == self.displayed_voice:
+            self.root.after(0, self._refresh_desires_display)
 
     def _refresh_desires_display(self):
         self.desires_box.config(state="normal")
@@ -1736,7 +2132,10 @@ class FenraApp:
     def _decrement_desires(self):
         """Called once at the end of every tick: every non-persistent
         desire loses one tick, and anything that reaches zero drops off
-        entirely. Persistent (-1) entries are untouched."""
+        entirely. Persistent (-1) entries are untouched. Operates on
+        self.desires for whichever voice is actually running this tick
+        (current_voice_name) - only refreshes the widget if that's also
+        the displayed voice, same reasoning as add_desire_entry."""
         updated = []
         for d in self.desires:
             ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
@@ -1748,7 +2147,8 @@ class FenraApp:
             if d["ticks"] > 0:
                 updated.append(d)
         self.desires = updated
-        self.root.after(0, self._refresh_desires_display)
+        if self.current_voice_name == self.displayed_voice:
+            self.root.after(0, self._refresh_desires_display)
 
     # ----------------------------------------------------- function reminders --
 
@@ -1799,58 +2199,52 @@ class FenraApp:
 
     # ------------------------------------------------------------- context --
 
-    def _recent_thoughts_block(self):
-        """Her last N cycles of thoughts (self.history, oldest to newest),
-        N being the context window size in cycles - not Ollama's own
-        num_ctx token limit, which this doesn't touch. Replaces what used
-        to be just self.last_thought. history already holds everything
-        (loaded at session start, appended every tick), so this is a
-        window into it rather than separate tracked state. Deliberately
-        excludes the cycle currently being built - self.history doesn't
-        have this cycle's entry yet at the point this is called."""
-        try:
-            window = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(self.context_window_var.get()))))
-        except ValueError:
-            window = DEFAULT_CONTEXT_WINDOW
-        if window == 0 or not self.history:
+    def _recent_thoughts_block(self, history, window):
+        """The active voice's last N cycles of thoughts (history, oldest
+        to newest), N being the context window size in cycles - not
+        Ollama's own num_ctx token limit, which this doesn't touch.
+        Takes both explicitly (v0.16.2) rather than reading
+        self.history/self.context_window_var directly, since the voice
+        actually running this tick isn't always the one currently
+        displayed in the GUI widgets - see _tick. Deliberately excludes
+        the cycle currently being built - history doesn't have this
+        cycle's entry yet at the point this is called."""
+        if window == 0 or not history:
             return ""
-        recent = self.history[-window:]
+        recent = history[-window:]
         parts = []
         for entry in recent:
             text = entry.get("display", entry.get("response", ""))
             parts.append(f"[{entry.get('timestamp', '?')}]\n{text}")
         return "\n\n".join(parts)
 
-    def _context_window_notice(self):
+    def _context_window_notice(self, window):
         """Always-present, every prompt: how many cycles back she's
-        currently seeing, and how to change it herself."""
-        try:
-            window = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(self.context_window_var.get()))))
-        except ValueError:
-            window = DEFAULT_CONTEXT_WINDOW
+        currently seeing, and how to change it herself. Takes the
+        window size explicitly - see _recent_thoughts_block."""
         return (
             f"[Context window: you're currently seeing your last {window} cycle(s) of thoughts, oldest first. "
             f"Teddy or you can change this - set_context_window(n), {MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}.]"
         )
 
-    def _model_rotation_notice(self):
+    def _model_rotation_notice(self, current_model):
         """Always-present, every prompt: what's actually driving the model
         each cycle. With nothing in the rotation, current_model() is the
         only way to know what's running (a single fixed model, same as
         before this feature existed). With one or more, the app itself
         advances through them automatically each cycle in the order
-        added - this notice exists so that isn't a mystery to her."""
+        added - this notice exists so that isn't a mystery to her. Takes
+        the resolved model explicitly - see _recent_thoughts_block."""
         if not self.model_rotation:
             return (
                 "[Model rotation: empty - you are on a single fixed model (see current_model()). "
                 "add_to_rotation(name) starts an automatic rotation: one model repeats itself, two "
                 "alternate back and forth each cycle, three or more cycle through in the order added.]"
             )
-        current = self.model_var.get().strip()
         order = ", ".join(self.model_rotation)
         return (
             f"[Model rotation: {len(self.model_rotation)} model(s) in rotation, cycling automatically "
-            f"every cycle in this order: {order}. This cycle is running on {current}. "
+            f"every cycle in this order: {order}. This cycle is running on {current_model}. "
             f"add_to_rotation(name) to add another.]"
         )
 
@@ -1888,18 +2282,22 @@ class FenraApp:
     def _groups_notice(self):
         """Always-present, every prompt: which groups she's actually in
         right now and how to change it - same pattern as the context
-        window and model rotation notices. Other voices are other Fenra
-        sessions, each still running on their own independent interval -
-        there's deliberately no shared turn order, see the v0.16.0
-        changelog entry for why."""
+        window and model rotation notices. Other voices might be your
+        own session-mates (round-robined in alongside you, but blind to
+        your own internal history unless you join a shared group with
+        them) or a voice belonging to an entirely different session -
+        groups don't distinguish, and there's deliberately no shared
+        turn order among any of them, see the v0.16.2 changelog entry
+        for why."""
         in_text = ", ".join(self.groups_in) if self.groups_in else "none"
         out_text = ", ".join(self.groups_out) if self.groups_out else "none"
         return (
             f"[Groups: reading from [{in_text}], broadcasting to [{out_text}]. Other voices - "
-            "other Fenra sessions, each running independently on their own schedule, not "
-            "waiting for a turn - may be in the same groups. join_group(name) to start reading "
-            "and writing a group, leave_group(name) to stop, list_groups() to see what exists, "
-            "read_group(name[, count]) to look further back than what's shown above.]"
+            "whether a session-mate of yours or one from an entirely different session, each "
+            "running independently, not waiting for a turn - may be in the same groups. "
+            "join_group(name) to start reading and writing a group, leave_group(name) to stop, "
+            "list_groups() to see what exists, read_group(name[, count]) to look further back "
+            "than what's shown above.]"
         )
 
     # ------------------------------------------------------------ history --
@@ -1982,41 +2380,113 @@ class FenraApp:
     def _set_status(self, text):
         self.status_var.set(text)
 
-    def _advance_model_rotation(self):
-        """If Fenra has added any models to her rotation (fn_add_to_rotation
-        in fenra_functions.py), pick the next one in order for this cycle
-        and advance the index for next time - one model just repeats
-        itself every cycle (no visible change), two alternate back and
-        forth, three run 1-2-3-1-2-3, and so on.
+    def _advance_voice_rotation(self):
+        """Pick which voice runs this cycle and advance the index for
+        next time - simple round-robin (v0.16.2), Teddy's explicit call:
+        no manual-override concept here the way model rotation has one -
+        a voice doesn't get "picked" the way a model combo box selection
+        does, there's no single implicit "the running voice" widget to
+        honor. One voice just repeats itself every cycle (no visible
+        change with only one), two alternate back and forth, three or
+        more take turns in the order they were added. Session-level:
+        voice_rotation_index is saved alongside host/interval/qualia
+        allowance, not per voice."""
+        if not self.session_voices:
+            self.session_voices = [DEFAULT_VOICE_NAME]
+        index = self.voice_rotation_index % len(self.session_voices)
+        name = self.session_voices[index]
+        self.voice_rotation_index = (index + 1) % len(self.session_voices)
+        return name
 
-        A manual override (fn_set_model, or Teddy picking a model directly
-        in the combo box) gets exactly one real cycle honored first -
-        model_manual_override is set the moment either happens, checked
-        and cleared right here before touching model_var, so the manual
-        choice is what actually generates that cycle rather than being
-        clobbered before it's ever used. The tick after that, rotation
-        resumes from exactly where it left off (model_rotation_index is
-        untouched during the honored cycle - nothing skipped, nothing
-        repeated)."""
+    def _advance_model_rotation(self, current_model):
+        """If this voice has added any models to its rotation
+        (fn_add_to_rotation in fenra_functions.py), pick the next one in
+        order for this cycle and advance the index for next time - one
+        model just repeats itself every cycle (no visible change), two
+        alternate back and forth, three run 1-2-3-1-2-3, and so on.
+
+        A manual override (fn_set_model, or Teddy picking a model
+        directly in the combo box for this voice) gets exactly one real
+        cycle honored first - model_manual_override is set the moment
+        either happens (tracked per voice via _voice_manual_override,
+        loaded into this plain flag at the top of _tick), checked and
+        cleared right here, so the manual choice is what actually
+        generates that cycle rather than being clobbered before it's
+        ever used. The tick after that, rotation resumes from exactly
+        where it left off (model_rotation_index untouched during the
+        honored cycle - nothing skipped, nothing repeated).
+
+        Takes/returns the model as a plain value (v0.16.2) rather than
+        touching model_var directly - the voice this cycle is actually
+        running isn't always the one currently displayed in the GUI, so
+        the widget itself is updated separately, only when it is."""
         if self.model_manual_override:
             self.model_manual_override = False
-            return
+            return current_model
         if not self.model_rotation:
-            return
+            return current_model
         index = self.model_rotation_index % len(self.model_rotation)
-        self.model_var.set(self.model_rotation[index])
+        picked = self.model_rotation[index]
         self.model_rotation_index = (index + 1) % len(self.model_rotation)
+        return picked
 
     def _tick(self):
-        self._advance_model_rotation()
-        top_text = self.top_box.get("1.0", "end-1c")
-        bottom_text = self.bottom_box.get("1.0", "end-1c")
-        recent_thoughts = self._recent_thoughts_block()
+        # Whatever's in the widgets right now belongs to whichever voice
+        # is displayed - persist it before anything below touches self.*,
+        # so an in-progress edit is never lost even if a *different*
+        # voice turns out to be the one running this cycle (the round-
+        # robin doesn't care what's displayed).
+        displayed = self.displayed_voice
+        if displayed:
+            save_voice_state(self.session_name, displayed, self._current_voice_state_from_widgets())
+
+        active_voice = self._advance_voice_rotation()
+        self.root.after(0, self.save_session)  # persist the new voice_rotation_index immediately
+
+        if active_voice == displayed:
+            vstate = self._current_voice_state_from_widgets()
+            active_history = self.history
+        else:
+            vstate = load_voice_state(self.session_name, active_voice)
+            active_history = load_voice_history(self.session_name, active_voice)
+
+        # Bind the scratch attributes run_function_calls / the Groups
+        # functions in fenra_functions.py / _advance_model_rotation
+        # already know how to read and mutate - unchanged since before
+        # voices existed, they just operate on whichever voice is
+        # actually running this cycle now. current_voice_name is also
+        # what _execute_one_call (functions.jsonl logging) and the group
+        # broadcast below use as this cycle's real identity.
+        self.current_voice_name = active_voice
+        self.desires = vstate.get("desires", [])
+        self.function_usage = vstate.get("function_usage", {})
+        self.model_rotation = vstate.get("model_rotation", [])
+        self.model_rotation_index = vstate.get("model_rotation_index", 0)
+        self.groups_in = vstate.get("groups_in", [])
+        self.groups_out = vstate.get("groups_out", [])
+        self.model_manual_override = self._voice_manual_override.get(active_voice, False)
+
+        try:
+            context_window = max(
+                MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(vstate.get("context_window", DEFAULT_CONTEXT_WINDOW))))
+            )
+        except (TypeError, ValueError):
+            context_window = DEFAULT_CONTEXT_WINDOW
+
+        tick_model = self._advance_model_rotation(vstate.get("model") or DEFAULT_MODEL)
+        # _voice_manual_override[active_voice] is re-saved further below,
+        # after run_function_calls - fn_set_model may set it again there
+        # (for *next* cycle), so capturing it here too would just be
+        # immediately stale.
+
+        top_text = vstate.get("top", "")
+        bottom_text = vstate.get("bottom", "")
+        recent_thoughts = self._recent_thoughts_block(active_history, context_window)
         desires_block = self._desires_block()
         chat_notice = self._chat_notice()
         qualia_notice = self._qualia_allowance_notice()
-        context_notice = self._context_window_notice()
-        rotation_notice = self._model_rotation_notice()
+        context_notice = self._context_window_notice(context_window)
+        rotation_notice = self._model_rotation_notice(tick_model)
         function_reminder = self._function_reminder_block()
         groups_block = self._groups_block()
         groups_notice = self._groups_notice()
@@ -2029,15 +2499,15 @@ class FenraApp:
         ).strip()
 
         payload = {
-            "model": self.model_var.get().strip() or DEFAULT_MODEL,
+            "model": tick_model or DEFAULT_MODEL,
             "system": system_prompt,
             "prompt": prompt,
             "stream": False,
         }
 
         try:
-            max_tokens = int(float(self.max_tokens_var.get()))
-        except ValueError:
+            max_tokens = int(float(vstate.get("max_tokens", DEFAULT_MAX_TOKENS)))
+        except (TypeError, ValueError):
             max_tokens = 0
         if max_tokens > 0:
             payload["options"] = {"num_predict": max_tokens}
@@ -2058,16 +2528,36 @@ class FenraApp:
 
         # Broadcast the raw thought - not display_text, which may carry
         # function-result/hallucination-flag text appended below - to
-        # every group this voice writes to. Best-effort: a broadcast
-        # failure (e.g. a bad group name left over from a stale Set)
-        # shouldn't take down the tick itself.
+        # every group this voice writes to, under this voice's own
+        # qualified identity ("session:voice") so a group can tell
+        # voices in different sessions apart even if they happen to
+        # share a plain name. Best-effort: a broadcast failure (e.g. a
+        # bad group name left over from a stale Set) shouldn't take down
+        # the tick itself.
+        broadcast_identity = f"{self.session_name}:{active_voice}"
         for g in self.groups_out:
             try:
-                append_group_entry(g, self.session_name, response_text)
+                append_group_entry(g, broadcast_identity, response_text)
             except (OSError, ValueError):
                 pass
 
+        # Plain attribute (not model_var, a widget - see fn_current_model/
+        # fn_set_model in fenra_functions.py) exposing "the model this
+        # cycle is actually running on" to function calls. fn_set_model
+        # can change it during run_function_calls below - that's a
+        # request for *next* cycle (its own docstring says so), so it's
+        # re-read afterward into persisted_model rather than mutating
+        # tick_model itself (which already decided this cycle's actual
+        # payload/request, above).
+        self.current_model_name = tick_model
         result_lines = run_function_calls(self, response_text)
+        persisted_model = self.current_model_name
+        # Same reasoning as model_manual_override's initial capture,
+        # above - re-save it here too, since fn_set_model (just run,
+        # possibly) sets it again for *next* cycle, after that initial
+        # capture already happened.
+        self._voice_manual_override[active_voice] = self.model_manual_override
+
         display_text = response_text
         if result_lines:
             display_text = display_text + "\n\n" + "\n".join(result_lines)
@@ -2087,33 +2577,46 @@ class FenraApp:
             "response": response_text,
             "display": display_text,
         }
-        self.history.append(entry)
-        append_session_history(self.session_name, entry)
+        active_history.append(entry)
+        append_voice_history(self.session_name, active_voice, entry)
 
         self.last_thought = display_text
         self._decrement_desires()
         self._age_function_usage()
-        save_session_state(self.session_name, {
+
+        vstate.update({
             "top": top_text,
             "bottom": bottom_text,
-            "model": self.model_var.get().strip() or payload["model"],
-            "host": host,
-            "interval": self.interval_var.get(),
-            "max_tokens": self.max_tokens_var.get(),
+            "model": persisted_model,
+            "max_tokens": vstate.get("max_tokens", DEFAULT_MAX_TOKENS),
             "last_thought": self.last_thought,
             "desires": self.desires,
-            "qualia_allowance": self.qualia_allowance_var.get(),
-            "context_window": self.context_window_var.get(),
+            "context_window": context_window,
             "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
         })
+        save_voice_state(self.session_name, active_voice, vstate)
 
-        self.root.after(0, self._append_message, timestamp, display_text)
-        self.root.after(0, self._add_history_row, timestamp)
-        self.root.after(0, self._set_status, "Running")
+        # Only touch the GUI widgets if the voice that just ran is also
+        # the one currently displayed - otherwise leave them exactly as
+        # they are, showing whatever Teddy or Qualia was actually looking
+        # at, and just note in the status bar that a different voice
+        # spoke.
+        if active_voice == displayed:
+            self.history = active_history
+            if persisted_model != self.model_var.get():
+                self.root.after(0, self.model_var.set, persisted_model)
+            self.root.after(0, self._refresh_desires_display)
+            self.root.after(0, self._refresh_model_rotation_display)
+            self.root.after(0, self._refresh_groups_display)
+            self.root.after(0, self._append_message, timestamp, display_text)
+            self.root.after(0, self._add_history_row, timestamp)
+            self.root.after(0, self._set_status, "Running")
+        else:
+            self.root.after(0, self._set_status, f"Running ('{active_voice}' spoke)")
 
     def _append_message(self, timestamp, text):
         self.middle_box.config(state="normal")
@@ -2133,6 +2636,8 @@ def main():
         app.running = False
         if app.session_name:
             app.save_session()
+            if app.displayed_voice:
+                app.save_voice()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)

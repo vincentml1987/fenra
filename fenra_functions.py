@@ -7,9 +7,18 @@ and mid-session - the very next cycle sees the change, no restart needed.
 
 Each function has the signature fn(app, args) -> str (or raises an
 exception, which gets logged as a failed call). `app` is the running
-FenraApp instance - use it to read/change GUI state (app.model_var,
-app.host_var, ...), always marshaling writes back to the main thread via
+FenraApp instance - use it to read/change state (app.desires,
+app.model_rotation, app.groups_in/out, app.current_model_name, ...),
+always marshaling actual widget writes back to the main thread via
 app.root.after(0, ...) since these run on the background loop thread.
+
+Voices (v0.16.2): a session can hold several, individually configured,
+round-robined through automatically - most of the attributes above
+belong to whichever voice is actually running the current tick
+(app.current_voice_name), not necessarily whichever one is shown in the
+GUI (app.displayed_voice) - fenra.py's _tick handles binding them
+correctly each cycle, so a function here doesn't need to think about
+this distinction at all, just read/write app.* as always.
 
 FUNCTION_REGISTRY maps name -> {"fn": callable, "params": str, "description": str}.
 """
@@ -137,7 +146,7 @@ def fn_current_model(app, args):
     model: X", the model actually running is whatever comes next in the
     rotation, not X. Teddy's direct request (2026-08-31), after noticing
     this was misleading her about what she was actually running on."""
-    current = app.model_var.get()
+    current = app.current_model_name
     if not app.model_manual_override and app.model_rotation:
         next_model = app.model_rotation[app.model_rotation_index % len(app.model_rotation)]
     else:
@@ -574,7 +583,11 @@ def fn_set_model(app, args):
     names = [m["name"] for m in resp.json().get("models", [])]
     if target not in names:
         raise ValueError(f"'{target}' is not an installed model. Installed: {', '.join(names)}")
-    app.root.after(0, app.model_var.set, target)
+    # A plain attribute, not the model_var widget directly (v0.16.2) -
+    # the voice actually running this cycle isn't always the one shown
+    # in the GUI, so _tick reads this back at the end of the cycle and
+    # only touches the widget itself if it does happen to be displayed.
+    app.current_model_name = target
     app.model_manual_override = True
     if app.model_rotation:
         return (

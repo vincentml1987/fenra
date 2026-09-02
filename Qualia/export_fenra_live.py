@@ -57,8 +57,11 @@ def read_jsonl(path):
     return entries
 
 
-def read_state(session_dir):
-    path = os.path.join(session_dir, "state.json")
+def read_state(a_dir):
+    """Read a state.json from any directory - a session dir (session-
+    level fields) or a voice dir (voice-level fields), same file name
+    either way."""
+    path = os.path.join(a_dir, "state.json")
     if not os.path.exists(path):
         return {}
     try:
@@ -68,20 +71,36 @@ def read_state(session_dir):
         return {}
 
 
-def merged_recent_events(session_dir, count):
+def list_voice_dirs(session_dir):
+    """Every voice's own directory for this session (v0.16.2:
+    sessions/<name>/voices/<voice>/), or a single synthetic entry
+    pointing at the session directory itself if it predates the split
+    and hasn't been reopened in the app since (a legacy, never-migrated
+    session - its data still lives directly there). Read-only, exactly
+    like the rest of this script - never migrates anything, unlike
+    fenra.py's own _load_session."""
+    voices_root = os.path.join(session_dir, "voices")
+    if os.path.isdir(voices_root):
+        names = sorted(d for d in os.listdir(voices_root) if os.path.isdir(os.path.join(voices_root, d)))
+        return [(name, os.path.join(voices_root, name)) for name in names]
+    return [("voice1", session_dir)]
+
+
+def merged_recent_events(a_dir, chat_dir, count):
     """Interleave history (thoughts), functions (calls), and chat
-    (messages) into one chronological feed, most recent last - called
-    for every session now, not just the active one, so an inactive
-    session's card on the live page can be clicked to see what actually
-    ran there."""
+    (messages) into one chronological feed, most recent last. history/
+    functions come from a_dir (a voice's own directory); chat is always
+    session-level (v0.16.2 - it's "Fenra," not one voice), so it's read
+    from chat_dir (the session directory) regardless of which voice's
+    history is being merged in."""
     events = []
 
-    for e in read_jsonl(os.path.join(session_dir, "history.jsonl"))[-count:]:
+    for e in read_jsonl(os.path.join(a_dir, "history.jsonl"))[-count:]:
         text = e.get("display", e.get("response", "")).strip()
         if text:
             events.append({"timestamp": e.get("timestamp", ""), "type": "thought", "text": text})
 
-    for e in read_jsonl(os.path.join(session_dir, "functions.jsonl"))[-count:]:
+    for e in read_jsonl(os.path.join(a_dir, "functions.jsonl"))[-count:]:
         events.append({
             "timestamp": e.get("timestamp", ""),
             "type": "function",
@@ -91,7 +110,7 @@ def merged_recent_events(session_dir, count):
             "result": str(e.get("result", ""))[:300],
         })
 
-    for e in read_jsonl(os.path.join(session_dir, "chat.jsonl"))[-count:]:
+    for e in read_jsonl(os.path.join(chat_dir, "chat.jsonl"))[-count:]:
         events.append({
             "timestamp": e.get("timestamp", ""),
             "type": "chat",
@@ -104,6 +123,16 @@ def merged_recent_events(session_dir, count):
 
 
 def build_snapshot():
+    """v0.16.2: a session can hold several voices now (fenra.py's Groups
+    -> Voices split), each with its own history/functions log - chat
+    stays session-level (shared, "Fenra," not one voice). The site UI
+    this feeds (stolenaletheia/fenra/index.html) still shows one card
+    per session with one merged feed, so each session's top-level
+    model/rotation/recent here are taken from whichever of its voices
+    was actually active most recently - a real simplification, not a
+    full per-voice site view (that's a follow-up); the full per-voice
+    breakdown is included too (session["voices"]) so that follow-up has
+    real data to build against already."""
     if not os.path.isdir(SESSIONS_DIR):
         return {"generated_at": datetime.now().isoformat(timespec="seconds"), "active_session": None, "sessions": []}
 
@@ -119,23 +148,41 @@ def build_snapshot():
     sessions = []
     for name in names:
         session_dir = os.path.join(SESSIONS_DIR, name)
-        state = read_state(session_dir)
-        history = read_jsonl(os.path.join(session_dir, "history.jsonl"))
-        last_active = history[-1]["timestamp"] if history else None
+        voice_dirs = list_voice_dirs(session_dir)
+
+        voice_entries = []
+        for voice_name, vdir in voice_dirs:
+            vstate = read_state(vdir)
+            vhistory = read_jsonl(os.path.join(vdir, "history.jsonl"))
+            voice_entries.append({
+                "name": voice_name,
+                "model": vstate.get("model", ""),
+                "rotation": vstate.get("model_rotation", []),
+                "last_active": vhistory[-1]["timestamp"] if vhistory else None,
+                "cycle_count": len(vhistory),
+            })
+
+        # Whichever voice actually spoke most recently drives this
+        # session's top-level summary/feed - "" sorts first, so a voice
+        # that's never spoken never wins this over one that has.
+        lead = max(voice_entries, key=lambda v: v["last_active"] or "") if voice_entries else None
+        lead_dir = dict(voice_dirs).get(lead["name"], session_dir) if lead else session_dir
+        total_cycles = sum(v["cycle_count"] for v in voice_entries)
 
         entry = {
             "name": name,
             "active": name == active_name,
-            "model": state.get("model", ""),
-            "rotation": state.get("model_rotation", []),
-            "fenra_version": state.get("fenra_version", ""),
-            "last_active": last_active,
-            "cycle_count": len(history),
-            # Every session gets its own recent-activity feed now, not
-            # just the active one - Teddy's request, so an inactive
-            # session's card can be clicked to see what actually ran
-            # there, not just its summary stats.
-            "recent": merged_recent_events(session_dir, RECENT_EVENT_COUNT),
+            "model": lead["model"] if lead else "",
+            "rotation": lead["rotation"] if lead else [],
+            "fenra_version": read_state(session_dir).get("fenra_version", ""),
+            "last_active": lead["last_active"] if lead else None,
+            "cycle_count": total_cycles,
+            "voices": voice_entries,
+            # Every session gets its own recent-activity feed (from
+            # whichever voice led, above) now, not just the active
+            # session - Teddy's request, so an inactive session's card
+            # can be clicked to see what actually ran there.
+            "recent": merged_recent_events(lead_dir, session_dir, RECENT_EVENT_COUNT),
         }
         sessions.append(entry)
 
@@ -171,26 +218,30 @@ def build_wiki_snapshot():
 
 
 def build_groups_snapshot():
-    """Every voice's current groups_in/groups_out (from state.json, same
-    field fenra.py's v0.16.0 Groups feature writes), paired with recent
-    per-group activity from groups/*.jsonl to compute a last-active
-    timestamp per (voice, group) - the data half of the public groups/
-    topology view (2026-09-01). Same read-only, unfiltered posture as
-    build_snapshot: whatever's actually there goes up as-is. Edges are a
-    flat list rather than a nested dict, since a (voice, group) pair
-    isn't a valid JSON object key and it's easier for the page's own JS
-    to iterate either way."""
+    """Every voice's current groups_in/groups_out (from its own
+    state.json - a real per-voice directory since v0.16.2, or a legacy
+    session's own top-level state.json if it hasn't been reopened in the
+    app since), paired with recent per-group activity from groups/*.jsonl
+    to compute a last-active timestamp per qualified voice
+    ("session:voice", matching exactly what fenra.py's _tick actually
+    broadcasts under) - the data half of the public groups/topology view
+    (2026-09-01, extended for Voices 2026-09-01). Same read-only,
+    unfiltered posture as build_snapshot: whatever's actually there goes
+    up as-is. Edges are a flat list rather than a nested dict, since a
+    (voice, group) pair isn't a valid JSON object key and it's easier
+    for the page's own JS to iterate either way."""
     voices = {}
     if os.path.isdir(SESSIONS_DIR):
         for name in os.listdir(SESSIONS_DIR):
             session_dir = os.path.join(SESSIONS_DIR, name)
             if not os.path.isdir(session_dir):
                 continue
-            state = read_state(session_dir)
-            g_in = list(state.get("groups_in", []))
-            g_out = list(state.get("groups_out", []))
-            if g_in or g_out:
-                voices[name] = {"groups_in": g_in, "groups_out": g_out}
+            for voice_name, vdir in list_voice_dirs(session_dir):
+                state = read_state(vdir)
+                g_in = list(state.get("groups_in", []))
+                g_out = list(state.get("groups_out", []))
+                if g_in or g_out:
+                    voices[f"{name}:{voice_name}"] = {"groups_in": g_in, "groups_out": g_out}
 
     group_names = set()
     if os.path.isdir(GROUPS_DIR):
