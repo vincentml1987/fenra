@@ -1,8 +1,10 @@
 """
-Exports a curated, public snapshot of Fenra's current activity - and,
-since 2026-08-31, the local wiki's current pages too - to the
-stolenaletheia website repo and pushes it. The data half of the
-semi-live public page Teddy asked for (2026-08-31).
+Exports a curated, public snapshot of Fenra's current activity - the
+local wiki's current pages (since 2026-08-31), and (since 2026-09-01)
+every voice's current groups wiring plus recent per-group activity - to
+the stolenaletheia website repo and pushes it. The data half of the
+semi-live public page Teddy asked for (2026-08-31), and of the public
+groups/topology view (2026-09-01, alongside fenra.py's Groups feature).
 
 Run on a schedule (every 5 minutes, via a cron job Qualia set up) rather
 than continuously - this script does one export-and-push and exits.
@@ -30,9 +32,11 @@ from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Fenra/
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 WIKI_DIR = os.path.join(BASE_DIR, "Qualia", "wiki")
+GROUPS_DIR = os.path.join(BASE_DIR, "groups")
 STOLENALETHEIA_DIR = os.path.join(BASE_DIR, "stolenaletheia")
 OUTPUT_PATH = os.path.join(STOLENALETHEIA_DIR, "fenra", "live-data.json")
 WIKI_OUTPUT_PATH = os.path.join(STOLENALETHEIA_DIR, "fenra", "wiki-data.json")
+GROUPS_OUTPUT_PATH = os.path.join(STOLENALETHEIA_DIR, "fenra", "groups-data.json")
 
 RECENT_EVENT_COUNT = 30  # how many merged events to show per session (every session, not just the active one)
 
@@ -166,6 +170,63 @@ def build_wiki_snapshot():
     }
 
 
+def build_groups_snapshot():
+    """Every voice's current groups_in/groups_out (from state.json, same
+    field fenra.py's v0.16.0 Groups feature writes), paired with recent
+    per-group activity from groups/*.jsonl to compute a last-active
+    timestamp per (voice, group) - the data half of the public groups/
+    topology view (2026-09-01). Same read-only, unfiltered posture as
+    build_snapshot: whatever's actually there goes up as-is. Edges are a
+    flat list rather than a nested dict, since a (voice, group) pair
+    isn't a valid JSON object key and it's easier for the page's own JS
+    to iterate either way."""
+    voices = {}
+    if os.path.isdir(SESSIONS_DIR):
+        for name in os.listdir(SESSIONS_DIR):
+            session_dir = os.path.join(SESSIONS_DIR, name)
+            if not os.path.isdir(session_dir):
+                continue
+            state = read_state(session_dir)
+            g_in = list(state.get("groups_in", []))
+            g_out = list(state.get("groups_out", []))
+            if g_in or g_out:
+                voices[name] = {"groups_in": g_in, "groups_out": g_out}
+
+    group_names = set()
+    if os.path.isdir(GROUPS_DIR):
+        group_names.update(n[:-6] for n in os.listdir(GROUPS_DIR) if n.endswith(".jsonl"))
+    for v in voices.values():
+        group_names.update(v["groups_in"])
+        group_names.update(v["groups_out"])
+
+    last_active = {}
+    for g in sorted(group_names):
+        path = os.path.join(GROUPS_DIR, f"{g}.jsonl")
+        for e in read_jsonl(path)[-200:]:
+            key = (e.get("voice", ""), g)
+            ts = e.get("timestamp", "")
+            if ts and (key not in last_active or ts > last_active[key]):
+                last_active[key] = ts
+
+    edges = []
+    for name, g in voices.items():
+        for grp in sorted(set(g["groups_in"]) | set(g["groups_out"])):
+            edges.append({
+                "voice": name,
+                "group": grp,
+                "reads": grp in g["groups_in"],
+                "writes": grp in g["groups_out"],
+                "last_active": last_active.get((name, grp)),
+            })
+
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "voices": sorted(voices.keys()),
+        "groups": sorted(group_names),
+        "edges": edges,
+    }
+
+
 def _dirty_paths_excluding(run, keep_paths):
     """Every path git status reports as changed, other than keep_paths -
     e.g. a draft Qualia is holding in the repo awaiting Teddy's approval
@@ -266,8 +327,13 @@ def push(outputs):
 if __name__ == "__main__":
     snap = build_snapshot()
     wiki_snap = build_wiki_snapshot()
+    groups_snap = build_groups_snapshot()
     push([
         ("fenra/live-data.json", OUTPUT_PATH, snap),
         ("fenra/wiki-data.json", WIKI_OUTPUT_PATH, wiki_snap),
+        ("fenra/groups-data.json", GROUPS_OUTPUT_PATH, groups_snap),
     ])
-    print(f"exported {len(snap['sessions'])} session(s), active: {snap['active_session']}, {len(wiki_snap['pages'])} wiki page(s)")
+    print(
+        f"exported {len(snap['sessions'])} session(s), active: {snap['active_session']}, "
+        f"{len(wiki_snap['pages'])} wiki page(s), {len(groups_snap['edges'])} group edge(s)"
+    )

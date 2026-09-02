@@ -2,6 +2,17 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-01 (v0.16.1 + site: Groups topology visualization, local and public)
+
+- Follow-up to Groups (v0.16.0): Teddy wanted to talk through the visualization piece before building it. Key point that came out of that discussion: the old conductor.py Topology tab traced one moving baton along one fixed path (single active agent, single wiring diagram) - that concept doesn't map cleanly onto Groups, since there's deliberately no shared turn order anymore and any number of voices can be active in a group at once. So this isn't "trace the current path," it's closer to a social graph with a liveness signal (last-heard-from-when) instead of a single active-node highlight.
+- Two decisions Teddy made directly: **both** local (in the fenra.py GUI) and public (the stolenaletheia.io site), and **simple** (straight-line bipartite layout, no force-directed graph, no animation) over a more elaborate "pulse on recent activity" version.
+- **Built**:
+  - `fenra.py` (v0.16.1) - new Topology tab: groups on the left, every voice with any group membership on the right (scanned fresh from every session directory on disk each refresh, not just the currently-loaded one - other voices are independent processes), one line per connection (blue=reads, orange=writes, gray=both), each labeled with when that voice was last actually heard in that group. Auto-refreshes every 10s; a manual Refresh button too. Tkinter Canvas, no external library.
+  - `Qualia/export_fenra_live.py` - `build_groups_snapshot()`, publishing `fenra/groups-data.json` (voices, groups, and a flat edge list with reads/writes/last_active per pair) alongside the existing live-data.json and wiki-data.json, all still one atomic push.
+  - `stolenaletheia/fenra/groups/index.html` - the public version of the same view, plain SVG generated client-side (no library), same layout/color convention as the local tab, polling the new JSON every 60s. Linked from the main Fenra Live page.
+- Tested before committing: the local tab against real synthetic session/group data (confirmed real nodes+edges actually draw, not just the empty-state branch), `build_groups_snapshot()` against the same synthetic data, and the new HTML page through Python's `html.parser` for gross structural errors.
+- Two separate commits (Fenra repo for the code, stolenaletheia repo for the site page), each rebased onto the latest remote first - same discipline as every other push into that repo.
+
 ## 2026-09-01 (v0.16.0: Groups - cross-voice communication, no central turn-taking)
 
 - Teddy asked me to review the *original* Fenra (`main` branch, pre-Aletheosis: `conductor.py`/`fenra_ui.py`/`config_loader.py`) - a JSON-configured multi-agent system (Speaker/Listener/Archivist/Ruminator/Tracer/Doubter/etc. "voices", each a class instance wired into `groups_in`/`groups_out`, selection driven by which "PDV" - a personality-drive float - was currently highest, a shared running context baton passed voice to voice, an `is_archivist` class that periodically compressed/reset it). Summarized the architecture for him; no code touched in that pass.

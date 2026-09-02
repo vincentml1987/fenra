@@ -279,12 +279,27 @@ import fenra_functions
 #            free-form and voice-chosen, not configured per agent class
 #            ahead of time. Built at Teddy's explicit request/approval
 #            after reviewing that old architecture together.
-FENRA_VERSION = "0.16.0"
+#   0.16.1 - Topology tab: a local, live view of the groups wiring built
+#            in v0.16.0. Not a port of the old conductor.py Topology tab -
+#            there's no single active agent or fixed path anymore, so
+#            instead of tracing one moving baton this shows every voice
+#            (scanned fresh from every session directory on disk, not
+#            just this process's own) against every group it's in, one
+#            line per connection (blue=reads, orange=writes, gray=both),
+#            each labeled with when that voice was last actually heard in
+#            that group - liveness, not just static wiring. Simple by
+#            design (straight lines, two columns, no force-directed
+#            layout), auto-refreshing every 10s. Teddy's explicit call on
+#            both points ("let's do both" [local + public], "let's go
+#            with simple"). Public/site half in export_fenra_live.py and
+#            stolenaletheia/fenra/groups/.
+FENRA_VERSION = "0.16.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 GROUPS_DIR = os.path.join(BASE_DIR, "groups")
 GROUPS_WINDOW = 15  # max merged entries shown per prompt across all groups_in
+TOPOLOGY_REFRESH_MS = 10000  # local Topology tab: re-scan every voice's groups every 10s
 
 DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
@@ -776,13 +791,16 @@ class FenraApp:
         self.talk_tab = ttk.Frame(notebook)
         self.chat_tab = ttk.Frame(notebook)
         self.history_tab = ttk.Frame(notebook)
+        self.topology_tab = ttk.Frame(notebook)
         notebook.add(self.talk_tab, text="Fenra")
         notebook.add(self.chat_tab, text="Chat")
         notebook.add(self.history_tab, text="History")
+        notebook.add(self.topology_tab, text="Topology")
 
         self._build_talk_tab()
         self._build_chat_tab()
         self._build_history_tab()
+        self._build_topology_tab()
 
     def _build_talk_tab(self):
         frame = self.talk_tab
@@ -985,6 +1003,146 @@ class FenraApp:
 
         self.json_view = scrolledtext.ScrolledText(right, wrap="none", state="disabled")
         self.json_view.pack(fill="both", expand=True)
+
+    def _build_topology_tab(self):
+        """Groups wiring view (v0.16.0). Deliberately not a port of the
+        old conductor.py Topology tab - there's no single active agent or
+        fixed path to trace anymore, since every voice runs on its own
+        independent interval with no shared turn order (see the Groups
+        changelog entry). This is closer to a social graph: groups on the
+        left, every voice with any group membership on the right, a line
+        for each connection (color/arrowhead show read vs write vs both),
+        labeled with when that voice was last actually heard from in that
+        group - the "is this alive" signal a static wiring diagram alone
+        wouldn't carry. Simple by design (straight lines, two columns, no
+        force-directed layout) - Teddy's call."""
+        frame = self.topology_tab
+
+        top_row = ttk.Frame(frame)
+        top_row.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Label(
+            top_row,
+            text="Groups (left) and voices (right). Blue = voice reads group, orange = voice writes "
+                 "group, gray = both. Label on each line is when that voice was last actually heard "
+                 "there. Every session on disk is scanned, not just this one - auto-refreshes every "
+                 "10s.",
+            wraplength=820,
+            justify="left",
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Button(top_row, text="↻ Refresh now", command=self._redraw_topology).pack(side="right")
+
+        self.topology_canvas = tk.Canvas(frame, background="white")
+        self.topology_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self.topology_canvas.bind("<Configure>", lambda event: self._redraw_topology())
+        self._schedule_topology_refresh()
+
+    def _schedule_topology_refresh(self):
+        self._redraw_topology()
+        self.root.after(TOPOLOGY_REFRESH_MS, self._schedule_topology_refresh)
+
+    def _scan_topology_data(self):
+        """Every voice's (session's) current groups_in/groups_out, read
+        fresh from disk - not just this process's own session, every
+        session directory, since other voices are independent processes
+        that may be running right now, possibly saving state at the same
+        moment this reads it. Paired with each relevant group's recent
+        activity (read_group_tail) to compute a last-active timestamp per
+        (voice, group). Read-only and best-effort throughout - a session
+        or group file mid-write by another process just gets skipped for
+        this pass, picked up again next refresh rather than raising."""
+        voices = {}
+        for name in list_sessions():
+            try:
+                state = load_session_state(name)
+            except Exception:
+                continue
+            g_in = list(state.get("groups_in", []))
+            g_out = list(state.get("groups_out", []))
+            if g_in or g_out:
+                voices[name] = {"groups_in": g_in, "groups_out": g_out}
+
+        group_names = set()
+        if os.path.isdir(GROUPS_DIR):
+            group_names.update(n[:-6] for n in os.listdir(GROUPS_DIR) if n.endswith(".jsonl"))
+        for v in voices.values():
+            group_names.update(v["groups_in"])
+            group_names.update(v["groups_out"])
+
+        last_active = {}
+        for g in group_names:
+            try:
+                tail = read_group_tail(g, 200)
+            except ValueError:
+                continue
+            for e in tail:
+                key = (e.get("voice", ""), g)
+                ts = e.get("timestamp", "")
+                if ts and (key not in last_active or ts > last_active[key]):
+                    last_active[key] = ts
+
+        return voices, sorted(group_names), last_active
+
+    def _redraw_topology(self):
+        canvas = self.topology_canvas
+        canvas.delete("all")
+        voices, groups, last_active = self._scan_topology_data()
+        voice_names = sorted(voices.keys())
+        if not voice_names and not groups:
+            canvas.create_text(20, 20, anchor="nw", text="No voices in any groups yet.", fill="#888")
+            return
+
+        width = canvas.winfo_width() or 800
+        height = canvas.winfo_height() or 400
+        margin = 30
+        node_w, node_h = 140, 30
+        left_x = margin + node_w / 2
+        right_x = max(left_x + 220, width - margin - node_w / 2)
+
+        def positions(names):
+            if not names:
+                return {}
+            step = max(1, height - 2 * margin) / len(names)
+            return {n: margin + step * (i + 0.5) for i, n in enumerate(names)}
+
+        group_y = positions(groups)
+        voice_y = positions(voice_names)
+
+        def draw_node(x, y, label, fill):
+            canvas.create_rectangle(
+                x - node_w / 2, y - node_h / 2, x + node_w / 2, y + node_h / 2,
+                fill=fill, outline="#666",
+            )
+            canvas.create_text(x, y, text=label, font=("Segoe UI", 9))
+
+        for v in voice_names:
+            vy = voice_y[v]
+            connected = set(voices[v]["groups_in"]) | set(voices[v]["groups_out"])
+            for g in connected:
+                if g not in group_y:
+                    continue
+                gy = group_y[g]
+                reads = g in voices[v]["groups_in"]
+                writes = g in voices[v]["groups_out"]
+                if reads and writes:
+                    color, arrow = "#999", "both"
+                elif reads:
+                    color, arrow = "#4a7fb5", "last"   # arrowhead at the voice - info flows toward her
+                else:
+                    color, arrow = "#c07a2e", "first"  # arrowhead at the group - she's broadcasting into it
+                canvas.create_line(
+                    left_x + node_w / 2, gy, right_x - node_w / 2, vy,
+                    fill=color, width=2, arrow=arrow,
+                )
+                ts = last_active.get((v, g), "")
+                label = ts.split("T")[-1] if ts else "never heard from"
+                mid_x = (left_x + right_x) / 2
+                mid_y = (gy + vy) / 2
+                canvas.create_text(mid_x, mid_y, text=label, fill="#777", font=("Segoe UI", 7))
+
+        for g, y in group_y.items():
+            draw_node(left_x, y, g, "#f0e6f5")
+        for v, y in voice_y.items():
+            draw_node(right_x, y, v, "#e6f0f5")
 
     # ------------------------------------------------------------ session --
 
