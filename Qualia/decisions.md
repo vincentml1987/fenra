@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (v0.16.7: function-calling bootstrap made unconditional, closing a real gap from v0.16.4)
+
+- Teddy spotted it directly: since create_voice (v0.16.4) stopped auto-copying top/bottom, a child whose parent forgets to mention functions has no way to learn the ⟦ ⟧ calling convention exists at all - even though the other always-present notices (groups, qualia allowance, model rotation, context window) already reference real function names in plain text as if she already knew how to call them. His instinct was to "hard-code" it, then immediately recoiled from that word given the project's whole chaos-driven, not-tightly-constrained design.
+- Talked through the distinction before building: the always-present notices already ARE a form of system-level, unconditional text, separate from voice-authored top/bottom - this wasn't proposing something new, just extending a pattern already accepted for groups/allowance/rotation/context-window to cover the one piece it had missed. The real line worth protecting is content/framing/personality (what v0.16.4 was actually about) versus bare mechanics (the fact that a calling convention exists at all) - the second was never meant to be optional. Teddy's own framing, once he saw it that way: "It's like a human knowing how to breathe, open its eyes... something pushes us there."
+- **Built**: `_function_bootstrap_notice()` - one new always-present line, unconditional, every cycle, every voice: "You can call functions by writing a real function name wrapped in ⟦ ⟧, for example ⟦functions()⟧ - call it any time to see everything available to you." Nothing about which functions or why - just the floor. Verified directly against a voice whose top/bottom said nothing about functions at all, confirmed the notice still lands in its prompt every cycle.
+
 ## 2026-09-02 (v0.16.6: same name-with-spaces bug in tell_voice, plus a full regex audit)
 
 - Teddy asked directly whether `tell_voice` had the same bug as the just-fixed `create_voice` - it did, same root cause: `_TELL_VOICE_RE`'s target-name group only allowed `[a-zA-Z0-9_-]`, extracted before sanitization ever ran, so `tell_voice(Creative Spark|...)` would have failed the same way `create_voice` did. Fixed identically (permissive extraction, sanitize after matching) and verified against a real multi-word target.

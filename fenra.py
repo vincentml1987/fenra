@@ -413,7 +413,25 @@ import fenra_functions
 #            FUNCTION_CALL_RE patterns don't extract user-chosen names at
 #            all. Fixed and verified against a real multi-word target
 #            ("Creative Spark") before shipping.
-FENRA_VERSION = "0.16.6"
+#   0.16.7 - New always-present notice (_function_bootstrap_notice):
+#            "you can call functions by writing a real function name
+#            wrapped in ⟦ ⟧, for example ⟦functions()⟧." Teddy spotted a
+#            real gap left by v0.16.4: since create_voice stopped
+#            auto-copying top/bottom, a child whose parent forgets to
+#            mention functions has no way to learn the ⟦ ⟧ calling
+#            convention exists at all - even though the other
+#            always-present notices (groups, qualia allowance, model
+#            rotation, context window) already reference real function
+#            names in plain text as if she already knew how to call
+#            them. Distinguished from the thing v0.16.4 was fixing:
+#            that was about not imposing content/framing/personality on
+#            every descendant forever; this is bare mechanics - the
+#            same way a person doesn't need to be taught to breathe or
+#            open their eyes for it to still be innate, in Teddy's own
+#            framing. Says nothing about which functions to use or why,
+#            only that the mechanism exists - everything past that
+#            stays exactly as unscripted as before.
+FENRA_VERSION = "0.16.7"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -2470,6 +2488,37 @@ class FenraApp:
             "than what's shown above.]"
         )
 
+    def _function_bootstrap_notice(self):
+        """Always-present, every prompt, unconditionally - the one piece
+        of system mechanics that was never actually guaranteed. The
+        other always-present notices (_groups_notice,
+        _qualia_allowance_notice, _model_rotation_notice,
+        _context_window_notice) already name specific functions in plain
+        text regardless of what a voice's own top/bottom says - but none
+        of them ever explained that ⟦ ⟧ is how a function call actually
+        gets written, or that functions() exists to see the rest. That
+        was only ever taught in voice1's original bottom text, which
+        create_voice (v0.16.4) stopped auto-copying into every
+        descendant for good reason - but a parent who forgets to mention
+        it leaves its child with no way to discover the syntax exists at
+        all, even though later notices go on to reference real function
+        names as if she already knew how to call them.
+
+        Teddy's framing (2026-09-02), after flagging the gap and
+        weighing "hard-coding" against the project's own chaos-driven
+        design: a human doesn't need to be told how to breathe or open
+        its eyes for that to still be innate - something pushes you
+        there regardless. This is that floor, not content: it says
+        nothing about which functions to use or why, only that the
+        mechanism exists. Everything past this - what a parent chooses
+        to explain, what a voice discovers on its own via functions() -
+        stays exactly as unscripted as before."""
+        return (
+            "[You can call functions by writing a real function name wrapped in ⟦ ⟧, "
+            "for example ⟦functions()⟧ - call it any time to see everything available "
+            "to you.]"
+        )
+
     # ------------------------------------------------------------ history --
 
     def _populate_history_list(self):
@@ -2662,11 +2711,12 @@ class FenraApp:
         function_reminder = self._function_reminder_block()
         groups_block = self._groups_block()
         groups_notice = self._groups_notice()
+        function_bootstrap = self._function_bootstrap_notice()
 
         system_prompt = f"{top_text}\n\n{bottom_text}".strip()
         prompt = (
             f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
-            f"{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
+            f"{function_bootstrap}\n\n{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
             f"{groups_notice}\n\n{function_reminder}"
         ).strip()
 
