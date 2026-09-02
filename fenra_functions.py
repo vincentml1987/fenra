@@ -728,7 +728,14 @@ def fn_leave_group(app, args):
 _VOICE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-_CREATE_VOICE_RE = re.compile(r"^\s*([a-zA-Z0-9_-]+?)\s*\|\s*(.*?)\s*\|\s*(.*)$", re.DOTALL)
+# Name group deliberately permissive (not restricted to the final
+# charset) - a real, observed bug (2026-09-02): a multi-word name like
+# "Creative Spark" made the whole match fail outright when this group
+# only allowed [a-zA-Z0-9_-], since sanitization (spaces -> underscores,
+# lowercased) only runs *after* a successful match, below - the regex
+# itself has to tolerate whatever raw text she writes first, the same
+# way join_group/tell_voice's targets already do.
+_CREATE_VOICE_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*?)\s*\|\s*(.*)$", re.DOTALL)
 
 
 def fn_create_voice(app, args):

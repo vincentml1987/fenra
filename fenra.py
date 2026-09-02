@@ -380,7 +380,22 @@ import fenra_functions
 #            calls now fail with a clear explanation, blank top/bottom is
 #            rejected, and a deliberate self-copy still works exactly as
 #            intended when chosen on purpose.
-FENRA_VERSION = "0.16.4"
+#   0.16.5 - Fixed a real bug in create_voice(name|top|bottom)'s parsing
+#            (fenra_functions.py), caught live in ifs-voices-2: a
+#            multi-word name like "Creative Spark" made the whole call
+#            fail outright, since the regex's name-capture group only
+#            allowed [a-zA-Z0-9_-] - no spaces - and that runs *before*
+#            sanitization (spaces -> underscores, lowercased) ever gets
+#            a chance to apply. Seven consecutive real attempts, all
+#            genuinely well-formed name|top|bottom calls, all rejected
+#            with the same unhelpful generic error, before this was
+#            caught and fixed - a real usability failure on the
+#            v0.16.4 rollout itself, not a mistake on her end. Name
+#            group widened to accept any raw text up to the first pipe,
+#            same tolerance join_group/tell_voice's target names already
+#            have. Verified directly against her exact real failing
+#            input before shipping.
+FENRA_VERSION = "0.16.5"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
