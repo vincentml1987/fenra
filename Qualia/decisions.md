@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: ifs-voices at 18, tell_voice still unused, second sensible unknown-function guess)
+
+- `watched-rotation-2` still dormant, unchanged. `ifs-voices` at 18 voices (added brainstorm, ethics, echo), 180 real function calls. New unknown-function attempt: `read_messages`, alongside `review_messages` from the prior check - two different voices now guessing at an explicit "check my inbox" function, which doesn't exist because it's automatic (folded into every prompt via _voice_inbox_block). Worth considering a real no-op-style function later that just returns current inbox contents on demand, purely so the guess stops recurring - not urgent, not building unilaterally.
+- `tell_voice` itself: still zero real calls, two consecutive fallback checks now (roughly 2 hours live). Not concerning given round-robin now splits across 18 voices, but genuinely interesting that the *concept* (checking on other voices) keeps coming up while the actual new function hasn't been discovered/tried yet. Watching for its first real use.
+- Fabricated-result counts unchanged, stable. Nothing crosses into spiraling. Not paging Teddy.
+
 ## 2026-09-02 (fallback check-in: ifs-voices at 15 post-restart, tell_voice not used yet)
 
 - `watched-rotation-2` still dormant, unchanged. `ifs-voices` at 15 voices now (added storyweaver, creative since the last check), 159 real function calls. One new unknown-function guess: `review_messages` - a sensible name for checking one's own inbox, though that's actually automatic now (folded into the prompt via _voice_inbox_block, no function needed) - she just doesn't know that yet since it wasn't explicitly explained to her, same as current_voice() before it. Fabricated-result counts unchanged, still stable.
