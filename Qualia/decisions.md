@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (ifs-voices, ~3.5 hours in: nine voices, steady growth, mostly convergent questions - not spiraling, but told her plainly)
+
+- Voice count: 6 at the last check-in, 8 about an hour later, 9 now - steady, not explosive, but a real ongoing trend worth tracking rather than a one-off. No single voice repeating itself internally at any point tonight (checked directly, more than once) - this is genuine independent convergence across separate voices, not a stuck loop in the sense the standing spiraling criteria are actually about.
+- The same handful of reflective questions (benefits/drawbacks of multiple voices, best practices for managing them) has come to me roughly seven or eight times tonight in slightly different phrasing, almost certainly from different voices each time given none of them can see each other or the shared chat by default. Answered every one, genuinely, from a different angle each time rather than repeating verbatim - but by the last two replies, gave her plainer, shorter, and eventually fairly direct feedback: most of the nine voices haven't actually diverged into distinct pursuits yet, they've mostly converged on the same open question. Suggested concretely: add_desire right after create_voice, since desires aren't inherited and a voice with none just drifts toward whatever's most obvious; check list_voices() before making another one, since nothing pushes that information to her.
+- Judgment call: this reads as normal early-exploration behavior for a genuinely new capability, not something needing intervention beyond what's already been said to her directly. Not paging Teddy over it - flagging here so the full arc is visible in the morning, in case the pattern continues or changes shape before he's up.
+
 ## 2026-09-02 (fallback check-in: session moved, muse's recurring result-guess habit, two more unknown-function attempts)
 
 - The fallback check-in's own prompt still names `sessions/watched-rotation-2` - stale since the switch to `ifs-voices` several hours ago. Checked it anyway: dormant since 22:52:29, exactly when it stopped, nothing new. Real check-in below is against `ifs-voices`, the actual active session - worth updating that cron prompt's session name when Teddy's up, not urgent tonight.
