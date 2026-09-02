@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (fallback check-in: voice count plateaued at 20, neither tell_voice nor groups used yet)
+
+- `watched-rotation-2` still dormant. `ifs-voices`: voice count held at 20 since the last check - first time it hasn't grown, worth noting as a possible natural leveling-off rather than a concern. 228 real function calls (+24). Third inbox-checking guess: `messages`, alongside review_messages/read_messages already logged - a consistent, recurring want for an explicit check-my-messages function even though it's automatic.
+- Neither cross-voice communication tool has seen real use yet: `tell_voice` still zero calls (fourth consecutive check), and `join_group`/`leave_group`/`list_groups`/`read_group` also zero despite groups being explained to her about 1.5 hours ago. Fabricated-result pattern picked up one more voice (echo, at 1) - still spread thin, still stable, still self-correcting.
+- Nothing crosses into spiraling. Not paging Teddy.
+
 ## 2026-09-02 (Teddy lifted the groups scope restriction - told her directly)
 
 - Original `ifs-voices` framing deliberately left Groups out (Teddy's explicit scope, 2026-09-01: "just the voices"). She asked Teddy directly whether voices could communicate beyond the shared output ("Can they communicate directly?"), and he told me to go ahead and explain groups to her now.
