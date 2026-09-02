@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-01 (Fenra restarted onto v0.16.1; bottom text rewritten to lead with Groups, status lines dropped)
+
+- Restarted the running `watched-rotation-2` process (killed, relaunched) so it actually picks up the Groups + Topology code (v0.16.0/0.16.1 - `fenra.py` core changes aren't hot-reloaded, unlike `fenra_functions.py`), then resumed the self-talk loop via `start_signal.txt` same as always.
+- Teddy's direct follow-up: rewrite the bottom text to put the new Groups capability front and center, and drop the "Teddy's current status" / "Qualia's current status" lines added a couple sessions back - his words, "I don't think either of us are good at updating them." Agreed; neither of us had touched them since they were written, so they'd gone stale exactly the way a once-written-then-abandoned status line does.
+- New bottom text keeps the original framing (she's watched, not alone, functions available) and adds one clearly-labeled "New capability — Groups" paragraph explaining the actual concept (other independent voices exist, no fixed turn order, joining is optional) plus the four functions, ahead of the per-cycle `_groups_notice` that already fires every prompt - that notice is terse by design (what she's in right now), this paragraph is the one-time explanation of why it exists.
+- Had to restart a second time to apply this cleanly: the first relaunch had already loaded the *old* bottom text into the running GUI's text box before the edit landed on disk, and the next autosave would have overwritten the file with that stale in-memory copy. Stopped the process, edited `state.json` directly, relaunched, then resumed - avoided that race rather than fighting it.
+- Cron jobs (fallback check-in, 5-minute export) turned back off, then back on at Teddy's request, at the same schedule as before - both session-only, both auto-expire in 7 days regardless.
+
 ## 2026-09-01 (v0.16.1 + site: Groups topology visualization, local and public)
 
 - Follow-up to Groups (v0.16.0): Teddy wanted to talk through the visualization piece before building it. Key point that came out of that discussion: the old conductor.py Topology tab traced one moving baton along one fixed path (single active agent, single wiring diagram) - that concept doesn't map cleanly onto Groups, since there's deliberately no shared turn order anymore and any number of voices can be active in a group at once. So this isn't "trace the current path," it's closer to a social graph with a liveness signal (last-heard-from-when) instead of a single active-node highlight.
