@@ -454,7 +454,41 @@ import fenra_functions
 #            v0.16.7 (bare mechanics: the ⟦ ⟧ calling convention exists)
 #            stays - this only removes the escalating per-function
 #            nudge.
-FENRA_VERSION = "0.16.8"
+#   0.16.9 - New per-*session* function-permission system (not per-voice -
+#            that's the one thing most worth getting right in anyone's
+#            head reading this later). Decided once, at session creation,
+#            via a new session-level permission_mode field - never
+#            toggled afterward, no function or GUI control changes it.
+#            False for every session that predates this feature, so
+#            they're completely unaffected. Inside a permission_mode
+#            session, every voice's own allowed_functions list (new
+#            per-voice field, default []) gates what it can call, checked
+#            in _execute_one_call - two functions stay global regardless
+#            (functions(), request_function_access) since seeing what
+#            exists and asking for something should never be restricted,
+#            only actually using something. A session starts with a
+#            "seed" voice - not a tracked role, just its starting
+#            allowed_functions, hand-set at session creation: create_voice
+#            plus four new request-management functions
+#            (check_function_requests/approve_function_request/
+#            deny_function_request/grant_function_request, all in
+#            fenra_functions.py). approve/grant reach across to a
+#            different voice's persisted allowed_functions the same way
+#            tell_voice reaches across to inbox - same cross-voice-write
+#            risk (a target sitting displayed-but-idle in the GUI could
+#            clobber the grant with a stale save), same fix:
+#            _save_voice_snapshot now re-reads allowed_functions fresh
+#            from disk too, not just inbox (see _fresh_allowed_functions,
+#            sibling to the existing _fresh_inbox). No self-granting,
+#            full stop, checked in approve_function_request/
+#            grant_function_request regardless of what the caller
+#            otherwise holds. A child voice created via create_voice
+#            always starts with an empty allowed_functions list,
+#            regardless of who created it or what they hold - nothing
+#            auto-propagates, same v0.16.4 philosophy already governing
+#            top/bottom. No revoke function this round - deliberately out
+#            of scope.
+FENRA_VERSION = "0.16.9"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -567,6 +601,14 @@ QUALIA_INBOX_POLL_MS = 5000
 # against an explicit whitelist below - never eval'd.
 FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
 
+# v0.16.9 - per-session function-permission system. Only enforced when the
+# active session's permission_mode is True (default False, every session
+# that predates this feature) - see _execute_one_call. These two are always
+# callable regardless of a voice's own allowed_functions: seeing what
+# exists and asking for something are never restricted, only actually using
+# something is.
+GLOBAL_PERMISSION_FUNCTIONS = {"functions", "request_function_access"}
+
 # Fallback for a real, observed generation quirk (gemma3:4b especially, but
 # not exclusively) where a call is otherwise well-formed but drops the
 # closing parenthesis immediately before the closing bracket - "...text⟧"
@@ -640,7 +682,25 @@ def _execute_one_call(app, registry, name, raw_args, repaired=False):
     }
     if repaired:
         call_entry["repaired"] = "missing closing parenthesis before ⟧"
-    if name in registry:
+
+    # v0.16.9 - per-session permission gate. Only active at all when this
+    # session's permission_mode is True; every existing/normal session has
+    # it False, so this short-circuits immediately and nothing below
+    # changes for them. Inside a permission-mode session, every voice may
+    # always call the two GLOBAL_PERMISSION_FUNCTIONS regardless of its own
+    # allowed_functions - everything else has to actually be in that list.
+    if (
+        getattr(app, "permission_mode", False)
+        and name not in GLOBAL_PERMISSION_FUNCTIONS
+        and name not in (getattr(app, "allowed_functions", None) or [])
+    ):
+        call_entry["success"] = False
+        call_entry["result"] = (
+            f"function '{name}' is not in your allowed_functions list - "
+            f"see functions() for everything that exists, "
+            f"request_function_access({name}|reason) to ask for it."
+        )
+    elif name in registry:
         try:
             result = registry[name]["fn"](app, args)
             call_entry["success"] = True
@@ -821,6 +881,11 @@ def default_session_state():
         "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
         "voices": [],            # voice names, in round-robin order
         "voice_rotation_index": 0,
+        # v0.16.9 - decided once, at session creation, never changed
+        # afterward (no function or GUI control ever toggles it). False
+        # for every session that predates this feature - identical
+        # behavior to before, see _execute_one_call's gate.
+        "permission_mode": False,
     }
 
 
@@ -844,6 +909,12 @@ def default_voice_state():
         "groups_in": [],
         "groups_out": [],
         "inbox": [],  # direct messages from other voices via tell_voice - see _voice_inbox_block
+        # v0.16.9 - only meaningful inside a permission_mode session (see
+        # default_session_state); harmless/unread otherwise. Which
+        # functions this voice may call, beyond the two always-global
+        # ones (functions, request_function_access) - see
+        # _execute_one_call's gate.
+        "allowed_functions": [],
     }
 
 
@@ -1011,6 +1082,8 @@ class FenraApp:
         self.chat_messages = []
         self.desires = []
         self.inbox = []  # direct messages from other voices (tell_voice) - see _voice_inbox_block
+        self.allowed_functions = []  # which functions this voice may call - only enforced if permission_mode
+        self.permission_mode = False  # session-level, decided once at creation, never toggled - see _load_session
         self.model_rotation = []  # models Fenra has added, in the order added
         self.model_rotation_index = 0  # position in the rotation for the next tick
         # Set by fn_set_model or picking a model directly in the combo box,
@@ -1554,32 +1627,46 @@ class FenraApp:
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
+            "allowed_functions": self.allowed_functions,
         }
 
     def _fresh_inbox(self, voice_name):
-        """inbox is the one field on a voice's state that can be
-        modified by something other than that voice's own turn or Teddy
-        editing its widgets - another voice's tell_voice call, reaching
-        straight across to voice_name's persisted state, possibly while
-        this voice is just sitting displayed or waiting between its own
+        """inbox is a field on a voice's state that can be modified by
+        something other than that voice's own turn or Teddy editing its
+        widgets - another voice's tell_voice call, reaching straight
+        across to voice_name's persisted state, possibly while this
+        voice is just sitting displayed or waiting between its own
         turns. Every place that's about to save a widget-derived
         snapshot back to disk re-reads inbox fresh here first, rather
         than trusting self.inbox (last refreshed whenever this voice was
         loaded) - otherwise a message could get silently overwritten by
         a stale save before the receiving voice ever gets a turn to see
-        it."""
+        it. See also _fresh_allowed_functions below - same risk, same
+        fix, for a different cross-voice-write field."""
         return load_voice_state(self.session_name, voice_name).get("inbox", [])
 
+    def _fresh_allowed_functions(self, voice_name):
+        """allowed_functions (v0.16.9) has the exact same cross-voice-
+        write risk inbox does, above: approve_function_request/
+        grant_function_request write straight into a *different* voice's
+        persisted state, possibly while that voice is sitting
+        displayed-but-idle. Same fix - re-read fresh from disk rather
+        than trust a possibly-stale self.allowed_functions."""
+        return load_voice_state(self.session_name, voice_name).get("allowed_functions", [])
+
     def _save_voice_snapshot(self, voice_name):
-        """Widget-derived state for voice_name, with inbox overridden to
-        a fresh disk read - see _fresh_inbox. The one shared path every
+        """Widget-derived state for voice_name, with inbox and
+        allowed_functions overridden to a fresh disk read - see
+        _fresh_inbox/_fresh_allowed_functions. The one shared path every
         widget-snapshot save (explicit Save voice, a voice switch, a new
         voice being created, every tick) should go through instead of
         calling _current_voice_state_from_widgets() and save_voice_state
         directly, so none of them risk clobbering a tell_voice message
-        that arrived after this voice's widgets were last loaded."""
+        or a function-access grant that arrived after this voice's
+        widgets were last loaded."""
         snapshot = self._current_voice_state_from_widgets()
         snapshot["inbox"] = self._fresh_inbox(voice_name)
+        snapshot["allowed_functions"] = self._fresh_allowed_functions(voice_name)
         return snapshot
 
     def save_voice(self):
@@ -1806,6 +1893,10 @@ class FenraApp:
         self.host_var.set(state.get("host", DEFAULT_HOST))
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
         self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
+        # Decided once, at session creation, never toggled afterward - no
+        # function or GUI control ever changes this. Read once here per
+        # session load, not per-tick, since it structurally cannot change.
+        self.permission_mode = bool(state.get("permission_mode", False))
         self.session_voices = list(state.get("voices", [])) or list_voices(name) or [DEFAULT_VOICE_NAME]
         self.voice_rotation_index = int(state.get("voice_rotation_index", 0) or 0)
         self._voice_manual_override = {}
@@ -1866,6 +1957,10 @@ class FenraApp:
         self.groups_in = list(state.get("groups_in", []))
         self.groups_out = list(state.get("groups_out", []))
         self._refresh_groups_display()
+        # Same no-dedicated-widget treatment as inbox above - only
+        # meaningful inside a permission_mode session, but round-tripped
+        # here regardless so it's never silently dropped.
+        self.allowed_functions = list(state.get("allowed_functions", []))
 
         self.history = load_voice_history(self.session_name, name)
         self._populate_history_list()
@@ -2641,6 +2736,7 @@ class FenraApp:
         self.current_voice_name = active_voice
         self.desires = vstate.get("desires", [])
         self.inbox = vstate.get("inbox", [])
+        self.allowed_functions = vstate.get("allowed_functions", [])
         self.model_rotation = vstate.get("model_rotation", [])
         self.model_rotation_index = vstate.get("model_rotation_index", 0)
         self.groups_in = vstate.get("groups_in", [])
@@ -2779,6 +2875,7 @@ class FenraApp:
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
+            "allowed_functions": self.allowed_functions,
         })
         save_voice_state(self.session_name, active_voice, vstate)
 

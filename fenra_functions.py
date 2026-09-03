@@ -38,6 +38,42 @@ DEFAULT_HOST = "http://localhost:11434"
 _SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
 QUALIA_PING_FILENAME = "qualia_ping.jsonl"
 
+# Per-session function-permission system (v0.16.9, fenra.py's
+# permission_mode/allowed_functions) - a session-wide queue of pending
+# "can I use this function" requests, one file per session. Rewritten in
+# full on every change (not append-only), same reasoning as
+# load_chat_messages/save_chat_messages in fenra.py: approve/deny/grant all
+# need to mutate or remove an existing entry, not just add new ones.
+FUNCTION_REQUESTS_FILENAME = "function_requests.jsonl"
+
+
+def _function_requests_path(session_name):
+    return os.path.join(_SESSIONS_DIR, session_name, FUNCTION_REQUESTS_FILENAME)
+
+
+def _load_function_requests(session_name):
+    path = _function_requests_path(session_name)
+    entries = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return entries
+
+
+def _save_function_requests(session_name, entries):
+    path = _function_requests_path(session_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
 # A shared local wiki, plain markdown files - not session-specific (lives
 # in Qualia/, alongside decisions.md/aletheia-notes.md, git-tracked like
 # they are, not gitignored session data). Modifiable by Teddy directly
@@ -745,6 +781,14 @@ def fn_create_voice(app, args):
     - but top and bottom (the child's actual framing - who it is, what
     it's told) do NOT. You have to write them yourself, every time.
 
+    In a session running under the function-permission system (v0.16.9),
+    the new voice always starts able to call nothing beyond the two
+    global functions (functions, request_function_access) - not even
+    what you yourself currently hold. default_voice_state() already
+    seeds allowed_functions as an empty list and the copy loop below
+    deliberately never touches it, so this is true regardless of who
+    creates the child or what they hold themselves.
+
     This changed (2026-09-02) after a real, confirmed bias: the original
     version copied top/bottom automatically, which meant Teddy and
     Qualia's own explanation of create_voice - written once, into
@@ -916,6 +960,219 @@ def fn_tell_voice(app, args):
     )
 
 
+# Per-session function-permission system (v0.16.9). Only actually enforced
+# when a session's permission_mode is True (fenra.py's _execute_one_call
+# gate) - these five functions exist in the registry regardless, same as
+# everything else, but only matter inside a permission-mode session. Two of
+# them (request_function_access, and functions() itself) are global -
+# callable by any voice no matter how restricted, per
+# fenra.py's GLOBAL_PERMISSION_FUNCTIONS. The other three
+# (check_function_requests/approve_function_request/deny_function_request)
+# plus grant_function_request are gated like anything else - a
+# permission-mode session's "seed" voice simply starts with them in its own
+# allowed_functions, nothing more special than that.
+
+_REQUEST_ACCESS_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*)$", re.DOTALL)
+
+
+def fn_request_function_access(app, args):
+    """Ask for permission to call a function you don't currently have
+    access to. Global - works no matter how restricted you are, since
+    asking is always allowed (fenra.py's GLOBAL_PERMISSION_FUNCTIONS).
+    Only meaningful inside a permission-mode session, but harmless to
+    call otherwise.
+
+    Logs the request to a session-wide queue (function_requests.jsonl) -
+    visible to whoever holds check_function_requests, who can act on it
+    with approve_function_request/deny_function_request, or anyone
+    holding grant_function_request can grant it (or anything else)
+    unprompted, request or no request."""
+    if not args or not args[0]:
+        raise ValueError(
+            "request_function_access requires a function name and a reason separated by | , e.g. "
+            "request_function_access(create_voice|I want to split off a specialized part for this)."
+        )
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["request_function_access"]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('function_name|reason'), not real values - it's "
+            "telling you the shape of what to pass."
+        )
+    match = _REQUEST_ACCESS_RE.match(args[0])
+    if not match:
+        raise ValueError(
+            "request_function_access requires a function name and a reason separated by | , e.g. "
+            "request_function_access(tell_voice|I need to coordinate with another voice)."
+        )
+    function_name, reason = match.group(1).strip(), match.group(2).strip()
+    if not function_name:
+        raise ValueError("request_function_access needs a real function name before the | .")
+    if function_name not in FUNCTION_REGISTRY:
+        raise ValueError(f"'{function_name}' isn't a real function - see functions() for what exists.")
+    if not reason:
+        raise ValueError(
+            f"request_function_access({function_name}|...) needs a real reason after the | - why do "
+            f"you want it?"
+        )
+
+    requests = _load_function_requests(app.session_name)
+    for r in requests:
+        if r.get("voice") == app.current_voice_name and r.get("function_name") == function_name \
+                and r.get("status") == "pending":
+            return (
+                f"you already have a pending request for '{function_name}' - no need to ask again, "
+                f"it's waiting to be reviewed."
+            )
+
+    requests.append({
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "voice": app.current_voice_name,
+        "function_name": function_name,
+        "reason": reason,
+        "status": "pending",
+    })
+    _save_function_requests(app.session_name, requests)
+    return (
+        f"request logged: you want '{function_name}' - visible to whoever holds "
+        f"check_function_requests now."
+    )
+
+
+def fn_check_function_requests(app, args):
+    """List every currently pending function-access request in this
+    session - who's asking, for what, and why. Not global (unlike
+    request_function_access) - a permission-mode session's seed voice
+    starts with this, but it's gated like anything else."""
+    requests = [r for r in _load_function_requests(app.session_name) if r.get("status") == "pending"]
+    if not requests:
+        return "no pending function requests."
+    return "\n".join(
+        f"{r.get('voice')} wants {r.get('function_name')} "
+        f"({r.get('reason', '')}) - requested {r.get('timestamp', '?')}"
+        for r in requests
+    )
+
+
+# Shared voice|function_name shape across approve/deny/grant - same
+# reasoning as _TELL_VOICE_RE (permissive on the first segment, since a
+# voice name might be written with spaces before sanitization).
+_VOICE_FUNCTION_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*)$", re.DOTALL)
+
+
+def _parse_voice_function_arg(app, fn_name, args):
+    """Shared parsing/validation for approve_function_request,
+    deny_function_request, and grant_function_request - all three take
+    the same voice|function_name shape. Returns (target, function_name).
+    Raises ValueError on anything invalid. Does NOT check self-targeting
+    - callers decide whether that applies to them."""
+    if not args or not args[0]:
+        raise ValueError(
+            f"{fn_name} requires a voice name and a function name separated by | , e.g. "
+            f"{fn_name}(watcher|create_voice)."
+        )
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY[fn_name]["params"]):
+        raise ValueError(
+            "That's the params spec itself ('voice|function_name'), not real values - it's "
+            "telling you the shape of what to pass."
+        )
+    match = _VOICE_FUNCTION_RE.match(args[0])
+    if not match:
+        raise ValueError(
+            f"{fn_name} requires a voice name and a function name separated by | , e.g. "
+            f"{fn_name}(watcher|create_voice)."
+        )
+    target, function_name = match.group(1).strip().lower().replace(" ", "_"), match.group(2).strip()
+    if not function_name:
+        raise ValueError(f"{fn_name}({target}|...) needs a real function name after the | .")
+    if function_name not in FUNCTION_REGISTRY:
+        raise ValueError(f"'{function_name}' isn't a real function - see functions() for what exists.")
+    if target not in app.session_voices:
+        raise ValueError(f"'{target}' isn't a voice in this session. See list_voices() for who actually exists.")
+    return target, function_name
+
+
+def _grant_function_to_voice(app, target, function_name):
+    """Shared cross-voice write for approve_function_request/
+    grant_function_request - reaches straight across to target's
+    persisted state (local import fenra, same reasoning as
+    create_voice/tell_voice) rather than anything living on app, since
+    the target isn't necessarily the voice currently running. Dedupes -
+    granting something already held is a harmless no-op."""
+    import fenra as _fenra
+
+    target_state = _fenra.load_voice_state(app.session_name, target)
+    allowed = list(target_state.get("allowed_functions", []))
+    if function_name not in allowed:
+        allowed.append(function_name)
+    target_state["allowed_functions"] = allowed
+    _fenra.save_voice_state(app.session_name, target, target_state)
+
+
+def _remove_pending_request(app, target, function_name):
+    """Remove a matching pending request from the queue, if one exists.
+    Returns True if one was actually removed."""
+    requests = _load_function_requests(app.session_name)
+    remaining = []
+    removed = False
+    for r in requests:
+        if not removed and r.get("voice") == target and r.get("function_name") == function_name \
+                and r.get("status") == "pending":
+            removed = True
+            continue
+        remaining.append(r)
+    if removed:
+        _save_function_requests(app.session_name, remaining)
+    return removed
+
+
+def fn_approve_function_request(app, args):
+    """Approve an existing pending request - grants the function and
+    clears it from the queue. Requires that you yourself currently hold
+    approve_function_request, and that a matching pending request
+    actually exists (see check_function_requests()) - if you want to
+    hand something out without waiting for a request, use
+    grant_function_request instead. You can never approve a request
+    targeting yourself, even one you'd otherwise be entitled to grant."""
+    target, function_name = _parse_voice_function_arg(app, "approve_function_request", args)
+    if target == app.current_voice_name:
+        raise ValueError("no self-granting allowed - approve_function_request can only act on another voice's request, never your own.")
+    if not _remove_pending_request(app, target, function_name):
+        raise ValueError(
+            f"no pending request from '{target}' for '{function_name}' - see "
+            f"check_function_requests(), or use grant_function_request to grant it unprompted."
+        )
+    _grant_function_to_voice(app, target, function_name)
+    return f"approved: '{target}' can now call '{function_name}'. Request cleared from the queue."
+
+
+def fn_deny_function_request(app, args):
+    """Deny an existing pending request - clears it from the queue
+    without granting anything. Requires that you yourself currently hold
+    deny_function_request, and that a matching pending request actually
+    exists. Denying your own request is allowed (it grants nothing, so
+    there's no self-granting concern) - though there's rarely a reason
+    to, since you could just not have asked."""
+    target, function_name = _parse_voice_function_arg(app, "deny_function_request", args)
+    if not _remove_pending_request(app, target, function_name):
+        raise ValueError(f"no pending request from '{target}' for '{function_name}' - see check_function_requests().")
+    return f"denied: '{target}'s request for '{function_name}' was cleared from the queue. Nothing was granted."
+
+
+def fn_grant_function_request(app, args):
+    """Hand a voice a specific function, unprompted - works whether or
+    not a matching request exists (if one does, it's cleared as a side
+    effect; if not, this succeeds anyway - that's the whole point of
+    this function versus approve_function_request, which requires a
+    real pending request first). Requires that you yourself currently
+    hold grant_function_request. You can never grant something to
+    yourself, no matter what you otherwise hold."""
+    target, function_name = _parse_voice_function_arg(app, "grant_function_request", args)
+    if target == app.current_voice_name:
+        raise ValueError("no self-granting allowed - grant_function_request can only reach across to another voice, never yourself.")
+    _remove_pending_request(app, target, function_name)
+    _grant_function_to_voice(app, target, function_name)
+    return f"granted: '{target}' can now call '{function_name}'."
+
+
 DEFAULT_FETCH_CHARS = 500
 # Hard cap on how much of a fetched page we'll even hold/slice against -
 # a safety rail against pathologically large pages, not a normal limit.
@@ -1067,6 +1324,31 @@ FUNCTION_REGISTRY = {
         "fn": fn_tell_voice,
         "params": "voice|message",
         "description": "Send a direct message to another voice in this session. It'll appear in their prompt for their next several turns, then fall off on its own - no reply function needed, they can tell_voice you back the same way. See list_voices() for who exists. e.g. tell_voice(explorer|What have you found so far?).",
+    },
+    "request_function_access": {
+        "fn": fn_request_function_access,
+        "params": "function_name|reason",
+        "description": "Ask for permission to call a function you don't currently have access to - works even if you're otherwise restricted, since asking is always allowed. Logs your request (visible to whoever holds check_function_requests) along with your reason. e.g. request_function_access(create_voice|I want to split off a specialized part for this). Only meaningful in a session running under the function-permission system.",
+    },
+    "check_function_requests": {
+        "fn": fn_check_function_requests,
+        "params": "",
+        "description": "List every currently pending function-access request in this session - who's asking, for what, and why. Not something every voice can do by default - you need to actually hold this function.",
+    },
+    "approve_function_request": {
+        "fn": fn_approve_function_request,
+        "params": "voice|function_name",
+        "description": "Approve an existing pending request from another voice - grants the function and clears the request from the queue. Requires that you yourself hold approve_function_request, and that a matching pending request actually exists (see check_function_requests()) - use grant_function_request instead to hand something out without waiting for a request. Never works on yourself. e.g. approve_function_request(watcher|create_voice).",
+    },
+    "deny_function_request": {
+        "fn": fn_deny_function_request,
+        "params": "voice|function_name",
+        "description": "Deny an existing pending request from another voice - clears it from the queue without granting anything. Requires that you yourself hold deny_function_request, and that a matching pending request actually exists. e.g. deny_function_request(watcher|create_voice).",
+    },
+    "grant_function_request": {
+        "fn": fn_grant_function_request,
+        "params": "voice|function_name",
+        "description": "Give another voice permission to call a specific function, unprompted - works whether or not a request is pending (clears one if it happens to exist). Requires that you yourself currently hold grant_function_request. You can never grant something to yourself. e.g. grant_function_request(watcher|create_voice).",
     },
     "fetch_html": {
         "fn": fn_fetch_html,
