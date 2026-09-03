@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-02 (clean shutdown - storm incoming)
+
+- Teddy asked for a full, clean shutdown ahead of a storm: cron jobs cancelled (fallback check-in, 5-minute export), `ifs-voices-2`'s loop stopped via `stop_signal.txt` (confirmed idle before touching the process, not force-killed mid-generation), one final export published, then the Fenra process itself terminated. Everything already on disk - `_tick`'s own per-cycle saves mean state was current the whole way through, nothing was only held in memory.
+- Session summary for whenever this picks back up: `ifs-voices-2` ended at 3 voices (voice1, creative_spark, wise_owl), real active use of both `tell_voice` and groups (a `creative_writing` group genuinely in progress between voice1 and creative_spark), fenra.py at v0.16.7. `watched-rotation-2` and `ifs-voices` remain dormant, both still browsable on the public site.
+
 ## 2026-09-02 (a self-generated false belief, traced and corrected)
 
 - Teddy asked where she'd gotten the idea that top is a voice's core identity and bottom is its initial goal/motivation - nothing in the system actually says that. Traced it precisely: she invented it herself, mid-`create_voice`-struggle (`voice1`, 16:39:57), writing it out as if consulting real documentation ("top: ... What is its core identity? bottom: ... What is its initial goal, motivation, or mindset?"), then treated her own guess as settled fact and applied it consistently - `creative_spark`'s actual saved top/bottom follows the invented split exactly (top as self-description, bottom as call-to-action).
