@@ -1,0 +1,1 @@
+Testing qwen3:32b first. Next step: phi3:14b. Will compare reasoning speed, creativity, and response formatting.
