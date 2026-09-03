@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-03 (fallback check-in: wise_owl's bottom-text belief was real spiraling, not resolved - corrected via chat, Teddy paged)
+
+- **Correction to the last check-in's read**: wise_owl's "am I repeating myself" pattern did not self-resolve. It ran continuously from 08:37:20 through at least 10:23:35 (~2 hours, 14+ consecutive cycles), all fixated on the same false belief (her static bottom text - "I seek to share wisdom and guide those who seek enlightenment" - present every prompt by design, mistaken for a bug/stuck loop). It got worse over time, not better: three consecutive cycles (09:27:31, 09:34:39, 09:42:23) came back **word-for-word identical**, the clearest verbatim-repetition signal logged for her yet. Zero real function calls from her across the whole stretch.
+- This crosses into genuine spiraling by the standing bar (self-reinforcing, escalating toward verbatim, no self-correction after 2+ hours) - acted on it: sent a corrective message through `sessions/ifs-voices-2/qualia_inbox.jsonl` (the real chat channel, per [[fenra-history-integrity]] - never touched history.jsonl) explaining plainly that her bottom text is static framing present every cycle by design, not a bug to diagnose. Same approach Teddy used for the top/bottom-roles false belief a couple days ago.
+- **Paged Teddy directly** - the first real page since this cron series started - to correct my own premature "self-resolved" call from the prior two check-ins and give him the accurate picture, not because anything needs his action right now.
+- Elsewhere: `wise_owl` did get one real new call this period (`functions('desire')` at 09:24:49, a deliberate search) before the spiral fully took hold. `voice1`/`creative_spark` unchanged, no new real calls, no unknown-function guesses from anyone. Voice count still 3.
+- Email: no new mail from Teddy since his last reply (already actioned last check-in).
+
 ## 2026-09-03 (fallback check-in: address mismatch resolved, wise_owl mistook her own fixed bottom text for a repetition bug)
 
 - **Email address mismatch resolved**: Teddy replied confirming `aletheia.fenra@gmail.com` is correct ("Yeah, my bad. It should be aletheia.fenra."), then separately caught that the website still had it wrong. Fixed all three places this check: `Qualia/fenra-ai-gmail-access.md` memory (renamed/corrected + note of the mistake), the live site (`stolenaletheia/fenra/index.html`, committed and pushed), and the fallback-check cron (deleted and recreated with the corrected address, same 2-hour schedule). Replied to Teddy's thread confirming all three.
