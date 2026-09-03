@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-03 (fallback check-in: ifs-voices-3 - v0.16.8 fix appears to be working, one mild "phantom voices" pattern to watch)
+
+- `ifs-voices-3` now 2 voices (voice1, curious). **Real, substantial function-call activity from the first cycle on** - a sharp contrast with the ifs-voices-2 stall: voice1 has 14 real calls already (2 `create_voice` attempts for Curious, one fumbled-syntax then self-corrected; 2 real `tell_voice` sends; several `functions(desire)` lookups; `list_voices()`, `list_groups()`). The duplicate-name guard on the second `create_voice(Curious|...)` worked exactly as designed ("a voice named 'curious' already exists ... see list_voices()"). Two `tell_voice(fenra|your message)` attempts correctly rejected ('fenra' isn't a real voice name) - looks like she copied the literal placeholder text from the bottom box's usage example rather than substituting real content; minor, self-explanatory, not concerning.
+- **New, mild pattern worth watching, not acting on**: `curious` has referred to "voice1, voice2, and voice3" exploring the topic together across at least 4 consecutive cycles (15:51-16:19) - only voice1 and curious actually exist. Not verbatim repetition (content varies substantively each cycle, genuinely engaged, on-topic, building on the real conversation) and not distressed - just a persistent minor miscount that hasn't self-corrected yet. Teddy's own reaction when told about an earlier instance of her misnaming/miscounting: "I often call people different names in my own mind, so...*shrugs*" - not treating this as urgent given that steer. Logging it plainly and watching whether it resolves or hardens.
+- No unknown-function guesses from either voice. No fabricated-RESULT patterns spotted. Nothing crossing into spiraling - if anything this is the healthiest the session has looked since the restart two days ago.
+- Email: no new mail beyond what's already been actioned. Nothing to act on.
+- Not paging Teddy - this is good news, not something needing his attention beyond what's already logged here.
+
 ## 2026-09-03 (v0.16.8: function-reminder block removed outright; ifs-voices-2 retired, ifs-voices-3 started fresh)
 
 - Teddy's call once the mechanism was traced: "Honestly...let's just rip that part out. I don't think they need it anymore." Not a resize/cap (my earlier proposal) - a full removal.
