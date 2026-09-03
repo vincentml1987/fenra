@@ -431,7 +431,30 @@ import fenra_functions
 #            framing. Says nothing about which functions to use or why,
 #            only that the mechanism exists - everything past that
 #            stays exactly as unscripted as before.
-FENRA_VERSION = "0.16.7"
+#   0.16.8 - Removed the function-reminder block entirely
+#            (_function_reminder_block, _age_function_usage, the
+#            per-voice function_usage tracking that fed it). It escalated
+#            the longer a function sat unused - name only past 10 ticks,
+#            name+description past 15, full signature+description past
+#            20 - and sat at the very end of every prompt, the highest-
+#            attention position. Root-caused live: after the storm
+#            restart, every voice in ifs-voices-2 spent most of a day
+#            (Teddy: "creative_spark is looping... wise_owl is also
+#            still looping. All three are. They are stuck.") reacting to
+#            "comprehensive guide"/"extensive documentation" text that
+#            turned out to be this block - 25 of creative_spark's 27
+#            functions were sitting at 143 ticks unused, so every single
+#            cycle ended with a full-signature dump of nearly the whole
+#            registry. Self-reinforcing by construction: not calling
+#            functions grew the reminder, a bigger reminder crowded out
+#            real engagement, which meant still not calling functions.
+#            Teddy's call once the mechanism was traced: "let's just rip
+#            that part out. I don't think they need it anymore" - not a
+#            resize/cap, a removal. The function_bootstrap_notice from
+#            v0.16.7 (bare mechanics: the ⟦ ⟧ calling convention exists)
+#            stays - this only removes the escalating per-function
+#            nudge.
+FENRA_VERSION = "0.16.8"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -521,13 +544,6 @@ DEFAULT_DESIRE_TICKS = 10
 # modeled directly on desires (see _voice_inbox_block/_decrement_voice_inbox).
 VOICE_MESSAGE_TICKS = 5
 
-# Function reminders: how many ticks since a function was last attempted
-# (called for real, success or failure - not just mentioned) before it
-# starts showing up in the reminder block, and at what point the detail
-# escalates. Below LEVEL1 ticks, a function isn't mentioned at all.
-FUNCTION_REMINDER_LEVEL1_TICKS = 10  # name only
-FUNCTION_REMINDER_LEVEL2_TICKS = 15  # name + description
-FUNCTION_REMINDER_LEVEL3_TICKS = 20  # full signature + description
 
 # How many of her own past cycles (from history, oldest to newest) go into
 # her prompt, instead of just the single most recent. Not the same thing as
@@ -625,9 +641,6 @@ def _execute_one_call(app, registry, name, raw_args, repaired=False):
     if repaired:
         call_entry["repaired"] = "missing closing parenthesis before ⟧"
     if name in registry:
-        # Any real attempt resets the function-reminder counter,
-        # success or failure - she reached for it, that's what counts.
-        app.function_usage[name] = 0
         try:
             result = registry[name]["fn"](app, args)
             call_entry["success"] = True
@@ -826,7 +839,6 @@ def default_voice_state():
         "last_thought": "",
         "desires": [],
         "context_window": DEFAULT_CONTEXT_WINDOW,
-        "function_usage": {},
         "model_rotation": [],
         "model_rotation_index": 0,
         "groups_in": [],
@@ -999,7 +1011,6 @@ class FenraApp:
         self.chat_messages = []
         self.desires = []
         self.inbox = []  # direct messages from other voices (tell_voice) - see _voice_inbox_block
-        self.function_usage = {}  # name -> ticks since last attempted
         self.model_rotation = []  # models Fenra has added, in the order added
         self.model_rotation_index = 0  # position in the rotation for the next tick
         # Set by fn_set_model or picking a model directly in the combo box,
@@ -1539,7 +1550,6 @@ class FenraApp:
             "desires": self.desires,
             "inbox": self.inbox,
             "context_window": self.context_window_var.get(),
-            "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,
@@ -1850,7 +1860,6 @@ class FenraApp:
         # tell_voice while a different voice was running.
         self.inbox = list(state.get("inbox", []))
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
-        self.function_usage = dict(state.get("function_usage", {}))
         self.model_rotation = list(state.get("model_rotation", []))
         self.model_rotation_index = int(state.get("model_rotation_index", 0) or 0)
         self._refresh_model_rotation_display()
@@ -2338,53 +2347,6 @@ class FenraApp:
                 updated.append(m)
         self.inbox = updated
 
-    # ----------------------------------------------------- function reminders --
-
-    def _age_function_usage(self):
-        """Called once at the end of every tick: every currently-known
-        function's 'ticks since last attempted' counter goes up by one.
-        Resetting a function to 0 (any real attempt, success or failure)
-        happens immediately in run_function_calls, not here - this only
-        ages what's already tracked."""
-        for name in list(self.function_usage.keys()):
-            self.function_usage[name] = self.function_usage.get(name, 0) + 1
-
-    def _function_reminder_block(self):
-        """Always-checked, only sometimes present: functions that haven't
-        been attempted in a while, with detail escalating the longer
-        they've gone unused - name only past LEVEL1 ticks, name+
-        description past LEVEL2, full signature+description past LEVEL3.
-        Nothing shown for functions used recently, and no block at all if
-        nothing currently qualifies. Newly-discovered functions (hot-
-        reloaded into the registry, never seen before) start at 0 ticks,
-        same as a function that was just called."""
-        registry, _ = reload_function_registry()
-        for name in registry:
-            if name not in self.function_usage:
-                self.function_usage[name] = 0
-
-        level3, level2, level1 = [], [], []
-        for name, meta in registry.items():
-            ticks = self.function_usage.get(name, 0)
-            if ticks >= FUNCTION_REMINDER_LEVEL3_TICKS:
-                level3.append((name, meta))
-            elif ticks >= FUNCTION_REMINDER_LEVEL2_TICKS:
-                level2.append((name, meta))
-            elif ticks >= FUNCTION_REMINDER_LEVEL1_TICKS:
-                level1.append((name, meta))
-
-        if not (level1 or level2 or level3):
-            return ""
-
-        lines = ["[Functions you haven't used in a while - a reminder they exist, not an instruction to use them:]"]
-        for name, meta in level1:
-            lines.append(f"- {name}")
-        for name, meta in level2:
-            lines.append(f"- {name}: {meta['description']}")
-        for name, meta in level3:
-            lines.append(f"- {name}({meta['params']}): {meta['description']}")
-        return "\n".join(lines)
-
     # ------------------------------------------------------------- context --
 
     def _recent_thoughts_block(self, history, window):
@@ -2679,7 +2641,6 @@ class FenraApp:
         self.current_voice_name = active_voice
         self.desires = vstate.get("desires", [])
         self.inbox = vstate.get("inbox", [])
-        self.function_usage = vstate.get("function_usage", {})
         self.model_rotation = vstate.get("model_rotation", [])
         self.model_rotation_index = vstate.get("model_rotation_index", 0)
         self.groups_in = vstate.get("groups_in", [])
@@ -2708,7 +2669,6 @@ class FenraApp:
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice(context_window)
         rotation_notice = self._model_rotation_notice(tick_model)
-        function_reminder = self._function_reminder_block()
         groups_block = self._groups_block()
         groups_notice = self._groups_notice()
         function_bootstrap = self._function_bootstrap_notice()
@@ -2717,7 +2677,7 @@ class FenraApp:
         prompt = (
             f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
             f"{function_bootstrap}\n\n{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
-            f"{groups_notice}\n\n{function_reminder}"
+            f"{groups_notice}"
         ).strip()
 
         payload = {
@@ -2805,7 +2765,6 @@ class FenraApp:
         self.last_thought = display_text
         self._decrement_desires()
         self._decrement_voice_inbox()
-        self._age_function_usage()
 
         vstate.update({
             "top": top_text,
@@ -2816,7 +2775,6 @@ class FenraApp:
             "desires": self.desires,
             "inbox": self.inbox,
             "context_window": context_window,
-            "function_usage": self.function_usage,
             "model_rotation": self.model_rotation,
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,

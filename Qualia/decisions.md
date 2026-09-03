@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-03 (v0.16.8: function-reminder block removed outright; ifs-voices-2 retired, ifs-voices-3 started fresh)
+
+- Teddy's call once the mechanism was traced: "Honestly...let's just rip that part out. I don't think they need it anymore." Not a resize/cap (my earlier proposal) - a full removal.
+- **Removed (fenra.py)**: `_function_reminder_block()`, `_age_function_usage()`, the `FUNCTION_REMINDER_LEVEL1/2/3_TICKS` constants, and the entire `function_usage` field (init default, `default_voice_state()`, save/load in both the widget-snapshot and `_tick` paths, the reset-on-real-call site in `run_function_calls`). Nothing else touches it - clean removal, not a stub. `_function_bootstrap_notice` (v0.16.7 - bare mechanics, the ⟦ ⟧ convention exists) stays; only the escalating per-function nudge is gone. Verified with `ast.parse` before restarting, and grepped for every remaining reference (only the historical v0.16.2 changelog comment mentioning `function_usage` as a per-voice field is left, correctly - it's a record of what was true at that version, not live code).
+- Per Teddy's "start a new session again. Same as last time" - same precedent as the v0.16.4 retirement (`ifs-voices` -> `ifs-voices-2`): stopped the loop via `stop_signal.txt`, confirmed genuinely idle (history line counts unchanged across a 20s check) before touching the process, killed it, then relaunched onto v0.16.8.
+- **`ifs-voices-2` retired to dormant** - not deleted, still browsable, same as `ifs-voices`/`watched-rotation-2` before it. Ended at 3 voices (voice1, creative_spark, wise_owl), fenra.py 0.16.7.
+- **New session `ifs-voices-3`** created the same way as `ifs-voices`/`ifs-voices-2` before it: single voice (`voice1`), no priming chat message, top/bottom text copied verbatim from `ifs-voices-2`'s own voice1 (same IFS framing, same create_voice/list_voices/tell_voice/groups explanation), `gemma2:27b`, 1500 max_tokens, context_window 10, otherwise defaults. Confirmed it auto-loaded (most-recently-modified session wins on startup) and the loop started (`start_signal.txt` consumed) - first real cycle still pending as of this entry, generation on `gemma2:27b` typically takes a couple minutes.
+- Committed: `fenra.py` (v0.16.8) to `fenras-aletheosis`. The two new session directories aren't committed (sessions/ is gitignored, same as always).
+
 ## 2026-09-03 (root cause found: `_function_reminder_block` self-reinforcing loop - Teddy caught it live, real bug identified, awaiting go-ahead to fix)
 
 - **Teddy, watching the GUI live outside the cron cadence, called it correctly before this check-in did**: "creative_spark is looping" then "wise_owl is also still looping. All three are. They are stuck." My last several check-ins had been treating each voice's stall as isolated and mostly self-resolving - that was wrong at the aggregate level. Investigated properly this time instead of just re-checking the usual counters.
