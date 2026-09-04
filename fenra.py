@@ -533,7 +533,25 @@ import fenra_functions
 #             every voice in the session, pure noise for one with no
 #             power to act on it or even look. Both Teddy's direct
 #             read of what was actually happening.
-FENRA_VERSION = "0.16.12"
+#   0.16.13 - Two fixes, both Teddy watching a live demo directly. (1)
+#             New always-present _identity_notice: "[You are: <voice>.
+#             Model: <model>. Functions allowed: ...]" - real gap, seed
+#             created a voice named 'speaker', wrote first-person text
+#             for it, then started calling send_message/read_chat AS
+#             speaker itself, because nothing in the prompt ever told
+#             it its own name. current_voice_name was already tracked
+#             internally, just never surfaced. Deliberately no session
+#             name in it (Teddy's cut) - not load-bearing, a voice only
+#             ever reaches another session through groups, which self-
+#             identify already. (2) fn_create_voice (fenra_functions.py)
+#             now inserts the new voice at the caller's own
+#             voice_rotation_index instead of appending to the end -
+#             _advance_voice_rotation had already advanced the index
+#             past the voice creating it before create_voice ever runs,
+#             so appending meant the new voice waited a full lap of the
+#             rotation before its first turn; inserting there makes it
+#             the very next voice to run instead.
+FENRA_VERSION = "0.16.13"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -2431,6 +2449,35 @@ class FenraApp:
         action_note = " Call check_function_requests() to see who's asking, for what, and why." if requests else ""
         return f"[Function requests: {len(requests)} pending session-wide{mine_note}.{action_note}]"
 
+    def _identity_notice(self, current_model):
+        """v0.16.13 - always-present, every prompt: who you actually are.
+        Teddy caught the real gap live during a demo: seed created a
+        voice named 'speaker', wrote first-person framing for it ("I am
+        the Speaker..."), then started calling send_message/read_chat as
+        if it WERE speaker - nothing in the prompt ever told it its own
+        name, so once it had written a persona in its own words it just
+        kept narrating as that persona instead of itself. current_voice_
+        name was already tracked internally (used for self-request
+        flagging etc.) but never actually surfaced in the text she reads.
+
+        Deliberately no session name here - Teddy's call, cut during
+        review: a voice never addresses another session directly except
+        through groups, which already self-identify, so it's not load-
+        bearing information, just noise.
+
+        Takes current_model explicitly, same reasoning as
+        _model_rotation_notice - the voice actually running this cycle
+        isn't always the one currently displayed in the GUI."""
+        functions_note = (
+            f"Functions allowed: {', '.join(self.allowed_functions)}."
+            if self.allowed_functions
+            else "Functions allowed: none yet - see request_function_access()."
+        ) if self.permission_mode else (
+            "Functions allowed: unrestricted - every function in the registry is "
+            "available to you (this session doesn't use function permissions)."
+        )
+        return f"[You are: {self.current_voice_name}. Model: {current_model}. {functions_note}]"
+
     def _qualia_allowance_notice(self):
         """Always-present, every prompt: how many characters she has left
         to spend on messages directed specifically at Qualia. Teddy sets
@@ -2885,6 +2932,7 @@ class FenraApp:
         recent_thoughts = self._recent_thoughts_block(active_history, context_window)
         desires_block = self._desires_block()
         inbox_block = self._voice_inbox_block()
+        identity_notice = self._identity_notice(tick_model)
         chat_notice = self._chat_notice()
         function_requests_notice = self._function_requests_notice()
         qualia_notice = self._qualia_allowance_notice()
@@ -2906,7 +2954,7 @@ class FenraApp:
         # recent_thoughts/desires/inbox/groups content), built once and
         # used identically in both fields below.
         notices_block = (
-            f"{function_bootstrap}\n\n{chat_notice}\n\n{function_requests_notice}\n\n{qualia_notice}\n\n"
+            f"{identity_notice}\n\n{function_bootstrap}\n\n{chat_notice}\n\n{function_requests_notice}\n\n{qualia_notice}\n\n"
             f"{context_notice}\n\n{rotation_notice}\n\n{groups_notice}"
         )
         system_prompt = f"{top_text}\n\n{bottom_text}\n\n{notices_block}".strip()

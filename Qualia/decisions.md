@@ -2,6 +2,20 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (v0.16.13: identity notice + new-voice-runs-next fix; demo-1 retired, sprout-1 started)
+
+- Built the two things flagged during the live demo (previous two entries). Teddy reviewed the identity-notice design directly and cut one field before building: drop session name (not load-bearing - a voice only ever reaches another session through groups, which self-identify), keep voice name, model, and allowed_functions.
+- **`_identity_notice()` (fenra.py, new)**: always-present, every prompt, both system and prompt fields per the v0.16.10 rule - `[You are: <voice>. Model: <model>. Functions allowed: ...]`. Root cause it fixes: `current_voice_name` was already tracked internally but never actually surfaced in the text a voice reads - so when `seed` created `speaker` and wrote first-person framing for it, it had nothing anchoring it back to its own identity and started calling `send_message`/`read_chat` as if it *were* speaker.
+- **`fn_create_voice` (fenra_functions.py)**: now inserts the new voice at the caller's own `voice_rotation_index` instead of appending to the end. Teddy caught this live too: `_advance_voice_rotation` already advances the index past the creating voice before `create_voice` runs, so appending meant the new voice waited a full lap of the rotation for its first turn - `seed` got a second tick before `speaker` ever ran. Inserting at that index makes the new voice the very next pick.
+- Verified both in isolation before touching any live session: a scripted tick where `seed` calls `create_voice`, confirming the identity notice shows the right voice/model/functions with no session name leaked in, `speaker` lands at the rotation-next slot, and a second tick actually runs `speaker` (not `seed` again).
+- **`demo-1` retired** (stopped cleanly, confirmed idle first, not deleted) - the demo audience is gone. Ended at 2 voices (seed, speaker), real activity: `speaker` genuinely spoke in the Chat tab during the demo.
+- **`sprout-1` started fresh**, same five `allowed_functions` as always, but a substantially rewritten `seed` top/bottom per Teddy's direct request: top now tells her plainly she's a single voice as a starting shape, not a ceiling ("a seed, not a cage"), explicitly invites exploration rather than just stating facts at her. Bottom keeps the full function explanations but adds a direct paragraph: she's one voice in a larger whole, not the whole thing herself, and named specifically what she can't do alone (talk in Chat, read webpages, join groups, change her own model) and that the only route to any of it is through a voice she creates and empowers herself.
+
+## 2026-09-04 (noted, not yet built: a freshly-created voice should run immediately, not wait a full rotation)
+
+- Teddy, watching `demo-1` live: when `seed` calls `create_voice`, the new voice gets added to the rotation but doesn't actually get its own turn until the rotation comes back around - `seed` gets a second tick first. He wants the new voice to run immediately instead, right after the tick that created it.
+- **No change made yet** - explicitly a note for later, not a live fix. Worth digging into `_tick`'s rotation-advance logic (where `voice_rotation_index` moves forward after a tick) before touching it - likely needs the newly-appended voice to be slotted in as the *next* index rather than just appended to the end of the existing order, or the rotation-advance step needs to special-case "a voice was just created this tick."
+
 ## 2026-09-04 (clean shutdown - approaching usage limit)
 
 - Teddy asked for a clean shutdown ahead of hitting his usage limit. Stopped `permissions-test-2`'s loop via `stop_signal.txt`, confirmed genuinely idle (history unchanged across a 20s check) before touching the process, then terminated it. Fallback check-in cron cancelled. Everything already on disk - `_tick`'s own per-cycle saves mean state was current the whole way through.

@@ -869,7 +869,16 @@ def fn_create_voice(app, args):
     _fenra.save_voice_state(app.session_name, name, child_state)
     open(_fenra.voice_history_path(app.session_name, name), "a", encoding="utf-8").close()
 
-    app.session_voices.append(name)
+    # v0.16.13 - insert at the caller's own next-turn slot (not appended
+    # to the end) so the new voice actually runs on the very next tick,
+    # rather than waiting for the whole rotation to lap back around.
+    # _advance_voice_rotation already advanced app.voice_rotation_index
+    # past the voice that's running *this* tick (the one calling
+    # create_voice right now) before this function ever runs - that
+    # index is exactly where "whoever's next" sits. Inserting there
+    # shifts everyone after it back by one, preserving their relative
+    # order, and makes the new voice the very next pick.
+    app.session_voices.insert(app.voice_rotation_index, name)
     app.root.after(0, app.save_session)
     app.root.after(0, app._refresh_voice_list)
     return (
