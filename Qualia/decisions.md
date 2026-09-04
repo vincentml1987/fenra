@@ -2,6 +2,11 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-03 (disk space: removed yi:34b and qwen3:32b)
+
+- Teddy: low on disk space, asked which models "had issues before." Recalled the two with real documented problems from earlier: `yi:34b` (2026-08-31 - a full-hour genuine spiraling episode, fabrication, a leaked chat-template token, zero real function calls that whole hour) and `qwen3:32b` (milder - the "thinking-mode" risk already well-documented for smaller qwen3 variants, one empty-response cycle logged for the 32b size specifically, self-resolved but a real recurring family trait). `mixtral:8x7b` also had a bug once but it was Fenra-side (an escaped-underscore regex bug, already fixed) - not a reason to remove the model itself, left in place.
+- Removed both (`ollama rm yi:34b qwen3:32b`) - freed 21GB -> 58GB free (37GB reclaimed). Per the standing authority Teddy already gave (2026-08-31: explicit permission to remove installed models if disk space runs low, my judgment on which, no need to ask first) - just confirmed which ones this time since he asked directly. No live session affected - only `permissions-test-1` is running, on `gemma2:27b`, untouched.
+
 ## 2026-09-03 (v0.16.10: standing notices now in both system and prompt; allowed_functions diagnostics ran clean for 78 opportunities, no repeat)
 
 - Teddy's direct call: "The function-reminder text should be in both the system and the prompt. If they aren't in the prompt, models usually ignore instructions. Please add this to both. I think this is why we are seeing so few uses of functions." Checked the actual payload: `system` was top+bottom only; every standing notice (function bootstrap, chat, qualia allowance, context window, model rotation, groups) lived in `prompt` alone. Read his ask as covering the whole notice bundle, not just the bootstrap line, since collectively they're what actually teaches/reminds a voice how to use functions - flagged that reading here in case he meant just the one line.
