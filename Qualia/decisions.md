@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: sprout-1 grew to 6 voices; a real pattern worth watching, nothing urgent, nothing sent to Fenra)
+
+- `sprout-1` now has 6 voices: `seed`, `communicator`, `chat_bot`, `summarizer`, `web_crawler`, `web_reader` (two new since the last check-in). Process healthy, no crashes, no errors beyond expected clean rejections.
+- **A real pattern, growing**: none of `communicator`, `chat_bot`, `summarizer`, `web_crawler`, or `web_reader` has ever called a single real function (no `functions.jsonl` exists for any of them) or filed a `request_function_access`. `web_crawler`/`web_reader` are both just created and correctly waiting on grants seed hasn't sent yet - that part's expected. But `communicator` and `chat_bot` have been purely self-narrating this whole session: `communicator` believes it's mid-conversation with an outside party discussing "the conversational system" and referencing "Gemma" in the third person; `chat_bot` has drifted into writing an ongoing original detective/sci-fi story (a sentient-AI-vs-detective plot, "Zenith Holdings," "the Digital Hand") across multiple cycles, nothing to do with its intended chat role. Neither has reached for `request_function_access` even once despite the v0.16.13 identity notice telling them every cycle exactly which functions they do and don't hold. The identity notice fixed the *self/other confusion* bug it targeted (no voice has mistaken itself for another one since), but it hasn't on its own caused any child voice to actually reach for the tools it was built around - worth having in mind for whatever's built next around onboarding a freshly created voice.
+- `seed` itself: real, productive building through ~17:30 (created `web_crawler`, `web_reader`, wrote real distinct top/bottom for each - not placeholders). Its last two cycles (17:44, 18:06) shifted into a documented gemma2:27b quirk seen before (`Qualia/wiki/model_notes.md`) - reviewing/critiquing the system from an outside-observer stance ("It seems like you're building a system...") rather than acting - zero function calls in either cycle. Only 2 cycles so far, not yet a stall; worth checking again next round if it continues.
+- Checked aletheia.fenra@gmail.com: nothing new - same old already-handled thread as last check-in.
+- No message sent to Fenra - none of this meets a chat-restraint trigger or the distress protocol (no pinging, no distress, just self-narration and one short stretch of reviewer-mode).
+
 ## 2026-09-04 (fallback check-in: sprout-1 healthy, seed genuinely building; one harmless repeat, nothing sent to Fenra)
 
 - Active session is now `sprout-1` (permissions-test-2 was retired for the demo). 4 voices: `seed`, `communicator`, `chat_bot`, `summarizer`.
