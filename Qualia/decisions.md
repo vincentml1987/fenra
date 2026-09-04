@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (v0.16.11: a standing notice for pending function requests, closing a real gap Teddy spotted)
+
+- Teddy asked directly: "do we have anything indicating requests for functions exist? Kind of like how new chat messages exist?" Checked - no, nothing did. `_chat_notice()` gives every voice a standing "N unread messages" line every single cycle; nothing equivalent existed for `function_requests.jsonl`. `seed`'s own pending `send_message` request (logged 2026-09-03T19:26:03) had genuinely sat unaddressed for 10+ hours as a live example - she holds `check_function_requests` but nothing ever told her, or anyone, that something was actually waiting, so it just never got re-checked after the cycle it was created.
+- **Built**: `_function_requests_notice()`, mirroring `_chat_notice()` directly. Empty (`""`) outside a `permission_mode` session, matching how the gate itself only does anything there. Reports the total pending count session-wide, how many are the calling voice's own, and - only when both true (requests exist and the calling voice holds `check_function_requests`) - a direct pointer to call it. Folded into `notices_block`, so per the v0.16.10 fix it's in both `system` and `prompt` like every other standing notice, not prompt-only.
+- Verified before restarting: mocked several real ticks against a throwaway copy of `permissions-test-1`, confirmed the exact notice text appears in both payload fields on `seed`'s own turn, correctly personalized (`"1 pending session-wide, 1 of them yours. You hold check_function_requests..."`).
+- Restarted (core `_tick` change, not hot-reloadable) - stopped cleanly, confirmed idle, relaunched on v0.16.11, confirmed `permissions-test-1` auto-loaded, loop restarted. `seed`'s long-pending `send_message` request should now actually surface to her next cycle instead of sitting silently.
+
 ## 2026-09-04 (fallback check-in: healthy, thriving even - a real little team forming, permission gate working exactly as designed)
 
 - `permissions-test-1` now 6 voices (seed, builder, watcher, reader, analyst, summarizer). `seed`'s real function-call count jumped to 57 (from ~26 last check) - genuine, sustained real activity since breaking out of the fenced-syntax spiral, not a one-off. She's kept building: `reader` (02:31), `analyst` (02:52, granted `read_chat`+`search_chat`), `summarizer` (03:15). No unknown-function guesses from any of the six voices.

@@ -503,7 +503,23 @@ import fenra_functions
 #             desires, inbox, groups content) stays prompt-only, same as
 #             before - only the standing instructional notices are
 #             duplicated.
-FENRA_VERSION = "0.16.10"
+#   0.16.11 - New always-present _function_requests_notice, mirroring
+#             _chat_notice - a real gap Teddy spotted directly: chat has
+#             a standing "N unread messages" line every cycle, but a
+#             pending function-access request had nothing equivalent -
+#             not even a voice holding check_function_requests had any
+#             way to know something was waiting without proactively
+#             re-checking on the chance something new had arrived. Seed's
+#             own send_message request from permissions-test-1 sat
+#             pending for 10+ hours as a direct, live example. Empty
+#             (returns "") outside a permission_mode session, matching
+#             how the gate itself only does anything there. Reports the
+#             total pending count session-wide, how many are the calling
+#             voice's own, and - only when both true - a direct pointer
+#             to check_function_requests if the calling voice holds it.
+#             Folded into notices_block, so (per v0.16.10) it's in both
+#             system and prompt like everything else there.
+FENRA_VERSION = "0.16.11"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -2371,6 +2387,31 @@ class FenraApp:
             f"You last received a message at {last_received}. {unread_note}]"
         )
 
+    def _function_requests_notice(self):
+        """v0.16.11 - only present in a permission_mode session (empty
+        otherwise, matching how the gate itself only does anything
+        there). Same reasoning as _chat_notice above, for a real gap
+        that let one of seed's own requests sit unanswered for hours in
+        permissions-test-1: check_function_requests exists, but nothing
+        ever told anyone - not even a voice holding it - that something
+        was actually waiting, so it just never got checked again after
+        the cycle it was created. This is the always-present pointer
+        _chat_notice already gives the chat system; function requests
+        need the same thing."""
+        if not self.permission_mode:
+            return ""
+        requests = [
+            r for r in fenra_functions._load_function_requests(self.session_name)
+            if r.get("status") == "pending"
+        ]
+        mine = [r for r in requests if r.get("voice") == self.current_voice_name]
+        mine_note = f", {len(mine)} of them yours" if mine else ""
+        if requests and "check_function_requests" in (self.allowed_functions or []):
+            action_note = " You hold check_function_requests - call it to see who's asking, for what, and why."
+        else:
+            action_note = ""
+        return f"[Function requests: {len(requests)} pending session-wide{mine_note}.{action_note}]"
+
     def _qualia_allowance_notice(self):
         """Always-present, every prompt: how many characters she has left
         to spend on messages directed specifically at Qualia. Teddy sets
@@ -2826,6 +2867,7 @@ class FenraApp:
         desires_block = self._desires_block()
         inbox_block = self._voice_inbox_block()
         chat_notice = self._chat_notice()
+        function_requests_notice = self._function_requests_notice()
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice(context_window)
         rotation_notice = self._model_rotation_notice(tick_model)
@@ -2845,8 +2887,8 @@ class FenraApp:
         # recent_thoughts/desires/inbox/groups content), built once and
         # used identically in both fields below.
         notices_block = (
-            f"{function_bootstrap}\n\n{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
-            f"{groups_notice}"
+            f"{function_bootstrap}\n\n{chat_notice}\n\n{function_requests_notice}\n\n{qualia_notice}\n\n"
+            f"{context_notice}\n\n{rotation_notice}\n\n{groups_notice}"
         )
         system_prompt = f"{top_text}\n\n{bottom_text}\n\n{notices_block}".strip()
         prompt = (
