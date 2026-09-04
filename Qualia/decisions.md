@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: the new function-requests notice is working, Teddy's "hello" was read, still healthy)
+
+- `permissions-test-1` still 6 voices. Real growth: `seed` 57→61 functions, `summarizer` jumped 1→15. No unknown-function guesses anywhere.
+- **v0.16.11 notice confirmed working in the wild, not just in isolated testing**: `seed` called `check_function_requests()` for real at 06:22:35 - the first time she's checked since her own `send_message` request was created at 19:26:03 the day before (~11 hours pending, previously invisible to her). The request is still sitting pending (she can't self-grant, hasn't denied it either) but the notice did exactly its job: got her to actually look.
+- `summarizer` had a real exploratory burst at 05:53:42 - tried eight different functions she doesn't hold (`read_chat_between`, `search_chat`, `query_chat`, `read_message`, `send_message`, `current_model`, `set_context_window`, `add_to_rotation`), all correctly gate-rejected, several with copied-placeholder args (`'start_time', 'end_time'` etc.) rather than real values. Then at 06:15:38, a real success: `read_chat()` fired for the first time. Healthy - genuine exploration of what's actually available to her, not repetition.
+- **Teddy's "Hello, Fenra."** (sent 05:31:17) shows `read: true` in `chat.jsonl` - almost certainly `summarizer`'s real `read_chat()` call above. No voice holds `send_message` yet, so no reply is possible - expected, matches the deliberate "let her struggle" setup, not a problem. Didn't intervene per the current chat-restraint rule.
+- `_af_debug.log`: still zero real `SHRINK` entries (1634 total benign entries now). No new mail beyond what's already actioned. Nothing crosses into spiraling. Not paging Teddy - good news, logged for whenever he checks back in.
+
 ## 2026-09-04 (v0.16.11: a standing notice for pending function requests, closing a real gap Teddy spotted)
 
 - Teddy asked directly: "do we have anything indicating requests for functions exist? Kind of like how new chat messages exist?" Checked - no, nothing did. `_chat_notice()` gives every voice a standing "N unread messages" line every single cycle; nothing equivalent existed for `function_requests.jsonl`. `seed`'s own pending `send_message` request (logged 2026-09-03T19:26:03) had genuinely sat unaddressed for 10+ hours as a live example - she holds `check_function_requests` but nothing ever told her, or anyone, that something was actually waiting, so it just never got re-checked after the cycle it was created.
