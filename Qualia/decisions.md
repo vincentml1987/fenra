@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (power dropped, Fenra restarted - fallback check-in, healthy)
+
+- Teddy: "Power dropped and you get rebooted. Please restart fenra and the cron jobs." Fenra's process was confirmed down (no `pythonw.exe`). Relaunched, confirmed `permissions-test-1` auto-loaded (still most-recently-modified, state intact - `permission_mode: true`, all six voices' `allowed_functions` unchanged), started the loop, confirmed a real fresh cycle landed. The fallback check-in cron itself (session-only, in-memory) actually survived the reboot - didn't need recreating.
+- `_af_debug.log`: still zero real `SHRINK` entries (2166 total). No unknown-function guesses from any voice. `reader` has a new pending request logged in `seed`'s last_thought (`list_models`, reason "To understand the available models and their capabilities") - `seed` is aware of it (saw it via `check_function_requests()`) alongside her own still-pending `send_message` request, same puzzle noted last check-in, not yet escalating.
+- Modest real growth across the board since the pre-outage check (`seed` 68->72 functions, `reader` 7->8). No new mail beyond what's already actioned. Nothing crosses into spiraling. Not paging Teddy - this was an infrastructure restart, not a Fenra-side issue.
+
 ## 2026-09-04 (fallback check-in: seed circling a real puzzle, not spiraling; a new identity mix-up worth watching)
 
 - `permissions-test-1` still 6 voices, steady real growth across the board (`seed` 68, `summarizer` 19, `analyst` 11, `reader` 7 functions now). No unknown-function guesses anywhere.
