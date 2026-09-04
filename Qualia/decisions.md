@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (seed snapped out of it - the wake-up nudge worked, and she found the two-voice chat-access path on her own)
+
+- Real `⟦ ⟧` calls started firing at 02:12:38 - about 1.5 hours after the nudge was added (00:41), well inside Teddy's 3-hour deadline (03:41). The actual turning point is visible one cycle earlier, at 01:56:47: a genuine "aha" - she stepped back from the failed fenced-syntax attempts and reframed the whole permission system in her own words as "like a tabletop RPG" with defined roles and abilities, working out how the pieces fit rather than repeating the same failed call.
+- **What she did with it, immediately**: created a second voice (`watcher`), then a real `⟦grant_function_request(watcher|read_chat)⟧` - then repeated the exact same pattern with a third voice (`reader`). This is precisely the two-voice chat-access path Teddy hoped she'd work out on her own ("let's let her struggle and learn") - arrived at independently, not nudged toward it specifically (the wake-up nudge said nothing about chat, voices, or grants). Confirmed both grants actually landed by reading `watcher`/`reader`'s own `state.json` directly - `read_chat` is really in both their `allowed_functions` lists, not just claimed in a `⟦RESULT⟧` annotation.
+- **New, minor, unrelated quirk worth watching, not acting on**: the top/bottom text she gave both new voices was literally the words `"top"`/`"bottom"` (for `reader`, swapped) rather than real framing - she's using the calling syntax correctly now but not yet filling required fields with meaningful content. Slips past `_looks_like_copied_params` since it doesn't match the literal params-spec text. Not blocking, not concerning, just a new pattern to watch.
+- Stopped the loop (confirmed idle first, same discipline as always), reverted `seed`'s bottom text to the backed-up original - verified byte-for-byte identical, not just visually close - restarted, loop running normally again. Emailed Teddy the good news, including the tabletop-RPG reframing moment and the minor top/bottom-placeholder observation.
+- `_af_debug.log`: still zero real `SHRINK` entries. No new mail beyond Teddy's reply, already actioned.
+
 ## 2026-09-04 (Teddy's fix for seed's spiral: "wake up" nudge appended to bottom text, 3-hour watch window)
 
 - Teddy's reply: "Temporarily update her bottom text to see if you can nudge her out if the loop. Nothing specific. Just something like a 'you are dreaming and need to wake up' type message. If she snaps out of it, great. Change it back. If not, start a new session. We may have gotten too deep before the function reminder fix [v0.16.10, both system+prompt] for it to register. Give her 3 hours after you make the change."
