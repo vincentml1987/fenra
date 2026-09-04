@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-03 (v0.16.10: standing notices now in both system and prompt; allowed_functions diagnostics ran clean for 78 opportunities, no repeat)
+
+- Teddy's direct call: "The function-reminder text should be in both the system and the prompt. If they aren't in the prompt, models usually ignore instructions. Please add this to both. I think this is why we are seeing so few uses of functions." Checked the actual payload: `system` was top+bottom only; every standing notice (function bootstrap, chat, qualia allowance, context window, model rotation, groups) lived in `prompt` alone. Read his ask as covering the whole notice bundle, not just the bootstrap line, since collectively they're what actually teaches/reminds a voice how to use functions - flagged that reading here in case he meant just the one line.
+- **Built**: `notices_block` - the six notices assembled once, used identically in both `system_prompt` and `prompt` now. Per-cycle context (recent thoughts, desires, inbox, groups content) stays prompt-only, unchanged - only the standing instructional text is duplicated. Verified directly before restarting: built a real payload via a mocked `_tick()` against a throwaway copy of `permissions-test-1`, confirmed every notice's real text now appears in both fields.
+- Restarted (core `_tick` change, not hot-reloadable) - stopped cleanly, confirmed idle, `permission_mode`/`seed`'s `allowed_functions` both still correct going into the restart.
+- **allowed_functions diagnostics update**: the temporary logging from the last restart caught 78 real opportunities (every cross-voice `_save_voice_snapshot('seed')` while `builder` was active) and every single one resolved correctly - stale widget-value overridden by the correct fresh-disk-read, zero actual `SHRINK` writes logged. The original corruption has not recurred across a full session's worth of real runtime. Leaning toward it having been a one-time/transient event (plausibly tied to unusual conditions right after the session's creation, or contention from this session's own concurrent design/testing work at the time) rather than a live, reproducible bug - but not closing this out yet. Diagnostics stay in place for one more restart's worth of runtime before considering it resolved.
+
+## 2026-09-03 (fallback check-in: two real bugs in v0.16.9 - one fixed and confirmed, one still being chased with live diagnostics)
+
 ## 2026-09-03 (fallback check-in: two real bugs in v0.16.9 - one fixed and confirmed, one still being chased with live diagnostics)
 
 - `permissions-test-1`: 2 voices (seed, builder). Real activity - seed's own tick built a second voice ("builder") right after the restart, `create_voice` real; also real `request_function_access`, `functions()`, and a rejected `send_message` (correctly, per design). No unknown-function guesses.

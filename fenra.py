@@ -488,7 +488,22 @@ import fenra_functions
 #            auto-propagates, same v0.16.4 philosophy already governing
 #            top/bottom. No revoke function this round - deliberately out
 #            of scope.
-FENRA_VERSION = "0.16.9"
+#   0.16.10 - The always-present notices (function bootstrap, chat,
+#             qualia allowance, context window, model rotation, groups)
+#             now go into *both* system and prompt, not prompt alone.
+#             Teddy's direct call: his experience is that a local model
+#             tends to ignore instructions that only live in the system
+#             field, and he suspects this is a real contributor to how
+#             rarely functions actually get called despite being
+#             explained every cycle. Built as a single notices_block
+#             string, assembled once and used identically in both fields
+#             - top/bottom already were in both; this closes the gap for
+#             everything else that teaches or reminds about function-
+#             calling mechanics. Per-cycle context (recent thoughts,
+#             desires, inbox, groups content) stays prompt-only, same as
+#             before - only the standing instructional notices are
+#             duplicated.
+FENRA_VERSION = "0.16.10"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -2818,11 +2833,25 @@ class FenraApp:
         groups_notice = self._groups_notice()
         function_bootstrap = self._function_bootstrap_notice()
 
-        system_prompt = f"{top_text}\n\n{bottom_text}".strip()
-        prompt = (
-            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
+        # Teddy's direct call (2026-09-03): the function-related notices
+        # need to be in *both* system and prompt, not prompt alone - his
+        # experience is that a local model tends to ignore instructions
+        # that only live in the system field, and he suspects this is a
+        # real contributor to how rarely functions actually get called
+        # despite being explained every cycle. notices_block is the
+        # shared text (bootstrap/chat/qualia/context/rotation/groups -
+        # everything that teaches or reminds about function-calling
+        # mechanics specifically, not the per-cycle context blocks like
+        # recent_thoughts/desires/inbox/groups content), built once and
+        # used identically in both fields below.
+        notices_block = (
             f"{function_bootstrap}\n\n{chat_notice}\n\n{qualia_notice}\n\n{context_notice}\n\n{rotation_notice}\n\n"
             f"{groups_notice}"
+        )
+        system_prompt = f"{top_text}\n\n{bottom_text}\n\n{notices_block}".strip()
+        prompt = (
+            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
+            f"{notices_block}"
         ).strip()
 
         payload = {
