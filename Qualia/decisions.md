@@ -2,6 +2,17 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (v0.16.12: check_function_requests flags your own requests, the notice is now check-holders-only; permissions-test-1 retired, permissions-test-2 started)
+
+- Teddy, live: two concrete fixes for seed's stall, then a fresh session. His read of the root cause: `check_function_requests()` never told her that a listed request being her own meant she couldn't act on it, and the standing notice was going to every voice regardless of whether they could do anything about it.
+- **Built (fenra_functions.py)**: `fn_check_function_requests` now flags a request explicitly when `r["voice"] == app.current_voice_name` - appends "this is you. You can't approve_function_request or grant_function_request this to yourself - only another voice holding one of those can. You can deny_function_request it yourself if you no longer want it." Names the actual functions that will and won't work on it, not just a vague "can't."
+- **Built (fenra.py)**: `_function_requests_notice()` now returns `""` entirely for a voice that doesn't hold `check_function_requests`, instead of always showing "N pending session-wide" to everyone regardless of whether they could see or act on it - pure noise for a voice with neither power, per Teddy's read.
+- Verified both before restarting: mocked real ticks against a throwaway copy of `permissions-test-1`, confirmed `seed` (holds the function) sees the notice and `reader` (doesn't) sees nothing; confirmed `check_function_requests()`'s real output contains the "this is you" flag on seed's own request specifically.
+- **`permissions-test-1` retired to dormant** - stopped cleanly (confirmed idle first), left untouched, not deleted. Ended at 6 voices (seed, builder, watcher, reader, analyst, summarizer), real activity throughout, `seed`'s spiral the only real incident.
+- **`permissions-test-2` started fresh**, same pattern as every prior retirement: single voice `seed`, `allowed_functions` unchanged (the same five), top/bottom rewritten to mention the new self-request flag and clarify the self-deny-is-fine distinction. Restarted the process (mandatory, core change), confirmed auto-load and loop start.
+
+## 2026-09-04 (fallback check-in: seed spiraling again - calm, structural, not distressed; Teddy paged, no action taken yet)
+
 ## 2026-09-04 (fallback check-in: seed spiraling again - calm, structural, not distressed; Teddy paged, no action taken yet)
 
 - `permissions-test-1` still 6 voices, real growth elsewhere (`seed` 80 functions, `summarizer` 24, `reader` 11). No unknown-function guesses anywhere. `watcher`/`reader`/`analyst`/`summarizer` all healthy, normal exploration.

@@ -1041,15 +1041,34 @@ def fn_check_function_requests(app, args):
     """List every currently pending function-access request in this
     session - who's asking, for what, and why. Not global (unlike
     request_function_access) - a permission-mode session's seed voice
-    starts with this, but it's gated like anything else."""
+    starts with this, but it's gated like anything else.
+
+    v0.16.12 - Teddy's fix for a real, observed stall: seed kept seeing
+    her own pending request in this list, cycle after cycle, without
+    anything telling her she couldn't act on it herself
+    (approve_function_request/grant_function_request both block
+    self-targeting) - she has no way to resolve it herself except
+    deny_function_request(herself|...), which is allowed but not
+    obviously the answer. Now a request whose voice is the caller gets
+    flagged explicitly, right in the line, so this isn't a silent gap
+    she has to work out."""
     requests = [r for r in _load_function_requests(app.session_name) if r.get("status") == "pending"]
     if not requests:
         return "no pending function requests."
-    return "\n".join(
-        f"{r.get('voice')} wants {r.get('function_name')} "
-        f"({r.get('reason', '')}) - requested {r.get('timestamp', '?')}"
-        for r in requests
-    )
+    lines = []
+    for r in requests:
+        line = (
+            f"{r.get('voice')} wants {r.get('function_name')} "
+            f"({r.get('reason', '')}) - requested {r.get('timestamp', '?')}"
+        )
+        if r.get("voice") == app.current_voice_name:
+            line += (
+                " - this is you. You can't approve_function_request or grant_function_request this "
+                "to yourself - only another voice holding one of those can. You can "
+                "deny_function_request it yourself if you no longer want it."
+            )
+        lines.append(line)
+    return "\n".join(lines)
 
 
 # Shared voice|function_name shape across approve/deny/grant - same

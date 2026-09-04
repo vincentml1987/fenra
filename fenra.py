@@ -519,7 +519,21 @@ import fenra_functions
 #             to check_function_requests if the calling voice holds it.
 #             Folded into notices_block, so (per v0.16.10) it's in both
 #             system and prompt like everything else there.
-FENRA_VERSION = "0.16.11"
+#   0.16.12 - Two direct fixes for a real, observed stall: seed spent
+#             ~1h45m circling check_function_requests() over and over,
+#             looking at her own pending request every cycle with
+#             nothing telling her she couldn't act on it herself. (1)
+#             check_function_requests (fenra_functions.py) now flags a
+#             request explicitly when it's the calling voice's own -
+#             "this is you," names the actual functions that will and
+#             won't work on it (approve/grant block self-targeting,
+#             deny doesn't). (2) _function_requests_notice now only
+#             shows to a voice that actually holds
+#             check_function_requests at all - previously shown to
+#             every voice in the session, pure noise for one with no
+#             power to act on it or even look. Both Teddy's direct
+#             read of what was actually happening.
+FENRA_VERSION = "0.16.12"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -2397,8 +2411,16 @@ class FenraApp:
         was actually waiting, so it just never got checked again after
         the cycle it was created. This is the always-present pointer
         _chat_notice already gives the chat system; function requests
-        need the same thing."""
+        need the same thing.
+
+        v0.16.12 - Teddy's correction: only show this to a voice that
+        actually holds check_function_requests. Originally shown to
+        every voice in the session regardless - a voice with no power
+        to act on it (or even look at it) just got told "N pending"
+        every cycle with nothing to do about it, pure noise for them."""
         if not self.permission_mode:
+            return ""
+        if "check_function_requests" not in (self.allowed_functions or []):
             return ""
         requests = [
             r for r in fenra_functions._load_function_requests(self.session_name)
@@ -2406,10 +2428,7 @@ class FenraApp:
         ]
         mine = [r for r in requests if r.get("voice") == self.current_voice_name]
         mine_note = f", {len(mine)} of them yours" if mine else ""
-        if requests and "check_function_requests" in (self.allowed_functions or []):
-            action_note = " You hold check_function_requests - call it to see who's asking, for what, and why."
-        else:
-            action_note = ""
+        action_note = " Call check_function_requests() to see who's asking, for what, and why." if requests else ""
         return f"[Function requests: {len(requests)} pending session-wide{mine_note}.{action_note}]"
 
     def _qualia_allowance_notice(self):
