@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (clean shutdown - approaching usage limit)
+
+- Teddy asked for a clean shutdown ahead of hitting his usage limit. Stopped `permissions-test-2`'s loop via `stop_signal.txt`, confirmed genuinely idle (history unchanged across a 20s check) before touching the process, then terminated it. Fallback check-in cron cancelled. Everything already on disk - `_tick`'s own per-cycle saves mean state was current the whole way through.
+- **Session summary for whenever this picks back up**: `permissions-test-2` just started (fresh `seed` + one new voice, `analyst`, created with real meaningful top/bottom rather than the old `"top"/"bottom"` placeholder pattern - encouraging sign for v0.16.12). `permissions-test-1` is retired to dormant (6 voices, real activity throughout, ended with `seed`'s structural spiral that prompted the v0.16.12 fixes) but still browsable, same as `ifs-voices`/`ifs-voices-2`/`ifs-voices-3`/`watched-rotation`/`watched-rotation-2` before it. `fenra.py` at v0.16.12.
+- **What v0.16.12 actually fixed, for context**: `check_function_requests()` now flags a request explicitly when it's the calling voice's own (names which functions will/won't work on it); the standing function-requests notice now only shows to a voice that actually holds `check_function_requests`, not every voice regardless of relevance. Both aimed at the exact failure mode `seed` hit in `permissions-test-1` - circling her own unactionable pending request for ~1h45m with nothing telling her why she couldn't resolve it.
+- **`_af_debug.log`** (the `allowed_functions` cross-voice-write corruption diagnostic) never caught a real `SHRINK` entry across its entire runtime, spanning multiple restarts - the original one-time corruption never recurred. Still sitting in `sessions/`, harmless to leave in place; worth actually removing the temporary diagnostic code once enough further runtime confirms it's truly resolved, not before.
+- **Open items, not urgent**: `permissions-test-2` is too new to have any real signal yet - worth a normal check-in once it's running again. No pending Teddy replies outstanding as of this shutdown.
+
 ## 2026-09-04 (v0.16.12: check_function_requests flags your own requests, the notice is now check-holders-only; permissions-test-1 retired, permissions-test-2 started)
 
 - Teddy, live: two concrete fixes for seed's stall, then a fresh session. His read of the root cause: `check_function_requests()` never told her that a listed request being her own meant she couldn't act on it, and the standing notice was going to every voice regardless of whether they could do anything about it.
