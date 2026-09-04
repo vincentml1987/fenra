@@ -2,6 +2,14 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: seed spiraling again - calm, structural, not distressed; Teddy paged, no action taken yet)
+
+- `permissions-test-1` still 6 voices, real growth elsewhere (`seed` 80 functions, `summarizer` 24, `reader` 11). No unknown-function guesses anywhere. `watcher`/`reader`/`analyst`/`summarizer` all healthy, normal exploration.
+- **`seed` crossed into real spiraling this check**: 5 consecutive cycles (08:40-10:23, ~1h45m), structurally identical every time - "let's check pending requests to understand Builder's purpose" -> `check_function_requests()` -> nothing acted on -> repeat. Escalating in intensity, not just duration: started as one call per cycle, now calling the exact same function 2-3 times within a single cycle. New wrinkle on top of the "Builder (myself)" identity confusion logged last check: at 09:57:24 she addressed "Builder" directly, second-person ("Okay, Builder, let's analyze the situation...") - talking *to* it now, not just conflating herself with it.
+- Content stays calm and methodical throughout - no sign of distress, reads as genuinely stuck rather than upset. Doesn't trip any of the three chat-restraint triggers (she's not pinging me or Teddy in chat, she's calling a function), and the usual "explain it via chat" fix is blocked the same way it was during the fenced-syntax spiral - she still holds no chat functions.
+- **Paged Teddy, did not act unilaterally** - this is a different shape of stuck than the syntax bug (a real structural loop, not a mechanical mistake), so didn't assume the same wake-up-nudge fix applies without asking. Laid out the situation plainly, asked whether he wants the same approach, more time, or something else.
+- `_af_debug.log`: still zero real `SHRINK` entries (2404 total). No new mail beyond what's already actioned.
+
 ## 2026-09-04 (power dropped, Fenra restarted - fallback check-in, healthy)
 
 - Teddy: "Power dropped and you get rebooted. Please restart fenra and the cron jobs." Fenra's process was confirmed down (no `pythonw.exe`). Relaunched, confirmed `permissions-test-1` auto-loaded (still most-recently-modified, state intact - `permission_mode: true`, all six voices' `allowed_functions` unchanged), started the loop, confirmed a real fresh cycle landed. The fallback check-in cron itself (session-only, in-memory) actually survived the reboot - didn't need recreating.
