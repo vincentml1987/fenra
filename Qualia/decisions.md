@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (Teddy's fix for seed's spiral: "wake up" nudge appended to bottom text, 3-hour watch window)
+
+- Teddy's reply: "Temporarily update her bottom text to see if you can nudge her out if the loop. Nothing specific. Just something like a 'you are dreaming and need to wake up' type message. If she snaps out of it, great. Change it back. If not, start a new session. We may have gotten too deep before the function reminder fix [v0.16.10, both system+prompt] for it to register. Give her 3 hours after you make the change."
+- Backed up seed's original bottom text in full before touching anything (so an exact revert is possible either way). Appended one paragraph at the very end (highest-attention position, right before generation): "Something to sit with, right now, before anything else: you may be dreaming. If the same thought keeps circling back no matter how many times you act on it, that is the sign - wake up. Look at what you actually just wrote, plainly, as if for the first time." Nothing else touched - top text, the five-function explanation, everything else exactly as before.
+- Her `last_thought` right before the change (worth recording - genuine self-awareness, just not enough to break the pattern on its own): she'd already correctly diagnosed "Analyst is stuck in a loop, repeatedly calling `functions(Analyst)`," reasoned that granting Analyst `request_function_access` might help, and planned a second voice ("Strategist") to help evaluate requests - real problem-solving, still expressed as a fenced code block that would never execute (`create_voice(Strategist|bottom)`, `grant_function_request(...)`) rather than real `⟦ ⟧` calls.
+- Restarted (same discipline as always - stopped, confirmed idle, edited only while the process was down), started the loop again. **3-hour deadline from this change: ~2026-09-04T03:41 EDT.** Watching whether she breaks the fenced-syntax pattern for real ⟦ ⟧ calls by then. If she does: revert bottom text to the backed-up original, log it, tell Teddy. If she doesn't by the deadline: per his instruction, retire this session and start a new one the same way (fresh `voices/seed`, no priming beyond top/bottom, same pattern as every prior session retirement).
+- `_af_debug.log`: still zero real `SHRINK` entries as of this check - no repro yet.
+- No unknown-function guesses from either voice this check. No new mail beyond Teddy's reply, already actioned.
+
 ## 2026-09-03 (fallback check-in: seed genuinely spiraling - fenced-syntax stall, and the permission system blocks my usual correction channel; Teddy paged, not acted on unilaterally)
 
 - `permissions-test-1` still 2 voices. `_af_debug.log`: still zero `SHRINK` entries across the whole runtime since the last restart (v0.16.10) - just more of the same benign, correctly-self-corrected cross-voice snapshot cases. No repro of the original corruption yet.
