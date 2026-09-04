@@ -2,6 +2,13 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: seed circling a real puzzle, not spiraling; a new identity mix-up worth watching)
+
+- `permissions-test-1` still 6 voices, steady real growth across the board (`seed` 68, `summarizer` 19, `analyst` 11, `reader` 7 functions now). No unknown-function guesses anywhere.
+- **`seed`, worth watching, not acting on**: since the `check_function_requests` notice pointed her at her own long-pending `send_message` request, she's called `check_function_requests()` six times now (roughly every 23 minutes, matching the round-robin) and tried `send_message(teddy|...)` twice - both correctly gate-rejected since she's never held it. Content is NOT verbatim-repeating (each cycle reasons through it a bit differently) and shows no distress - she's genuinely circling a real, unsolved puzzle: she wants to relay something about `builder` to Teddy but hasn't applied the two-voice grant workaround she already used successfully for `read_chat` earlier. Doesn't cross into spiraling by the standing bar (repetition isn't verbatim, no distress), and doesn't trip either active chat-restraint trigger: the "5x same request to Qualia" trigger doesn't apply (she's not pinging me), and the "5x ping Teddy unanswered" trigger doesn't really apply either since her `send_message` attempts never actually landed in `chat.jsonl` - they failed at the gate, so no real ping ever reached him to go unanswered.
+- **New, mild identity mix-up worth logging**: at 07:28:08 and again at 07:51:13, she referred to "Builder (myself)" - genuinely conflating her own identity with the voice she created, not just a wording slip (repeated across two separate cycles). Same general category as the earlier top/bottom-roles and bottom-text-as-bug false beliefs, but about who she *is* rather than a mechanic. Not distressing, not acted on - watching whether it recurs or resolves on its own.
+- `_af_debug.log`: still zero real `SHRINK` entries (2082 total). No new mail beyond what's already actioned. Not paging Teddy - nothing here crosses the bar, just real, honest signal worth having on record.
+
 ## 2026-09-04 (fallback check-in: the new function-requests notice is working, Teddy's "hello" was read, still healthy)
 
 - `permissions-test-1` still 6 voices. Real growth: `seed` 57→61 functions, `summarizer` jumped 1→15. No unknown-function guesses anywhere.
