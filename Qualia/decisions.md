@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: healthy, thriving even - a real little team forming, permission gate working exactly as designed)
+
+- `permissions-test-1` now 6 voices (seed, builder, watcher, reader, analyst, summarizer). `seed`'s real function-call count jumped to 57 (from ~26 last check) - genuine, sustained real activity since breaking out of the fenced-syntax spiral, not a one-off. She's kept building: `reader` (02:31), `analyst` (02:52, granted `read_chat`+`search_chat`), `summarizer` (03:15). No unknown-function guesses from any of the six voices.
+- **Gate working exactly as designed, a clean real example**: `analyst` tried `current_model()` (04:05:42) without holding it - correctly rejected, error message correctly pointed her at `request_function_access`. `summarizer` tried `request_function_access(summarize_text|...)` - correctly rejected since `summarize_text` isn't a real function (a sensible guess at something that doesn't exist, same category as `review_messages`/`read_messages` guesses logged in past sessions - not concerning, just a real want worth having on record).
+- The new voices (`watcher`/`reader`/`analyst`/`summarizer`) are all genuinely engaged and coherent - reading and reacting to the actual system they're embedded in (one literally analyzing "this AI assistant interface," noting the `⟦ ⟧` convention by name), no repetition, no distress.
+- **Still-open, minor, unresolved from last check**: `seed` is still giving every new voice literally the words `"top"`/`"bottom"` as their framing text rather than real content (`create_voice(Reader|bottom|top)`, `create_voice(Analyst|bottom|top)`, `create_voice(Summarizer|bottom|top)` - a consistent pattern now, not a one-off, though harmless so far since the created voices' own coherent content doesn't seem to depend on it).
+- `_af_debug.log`: still zero real `SHRINK` entries (1274 total benign entries now). No unknown-function guesses. No new mail beyond what's already actioned. Nothing crosses into spiraling - genuinely the healthiest this project's permission-mode experiment has looked. Not paging Teddy - good news doesn't need a page, it's in the log for whenever he checks in.
+- **Cron note**: simplified the fallback check-in prompt back to steady-state now that the fenced-syntax spiral is fully resolved (nudge reverted, confirmed via last check-in) - no more need to carry the resolved-deadline instructions forward every 2 hours.
+
 ## 2026-09-04 (seed snapped out of it - the wake-up nudge worked, and she found the two-voice chat-access path on her own)
 
 - Real `⟦ ⟧` calls started firing at 02:12:38 - about 1.5 hours after the nudge was added (00:41), well inside Teddy's 3-hour deadline (03:41). The actual turning point is visible one cycle earlier, at 01:56:47: a genuine "aha" - she stepped back from the failed fenced-syntax attempts and reframed the whole permission system in her own words as "like a tabletop RPG" with defined roles and abilities, working out how the pieces fit rather than repeating the same failed call.
