@@ -1009,6 +1009,27 @@ def load_voice_state(session_name, voice_name):
 def save_voice_state(session_name, voice_name, state):
     state = dict(state)
     state["fenra_version"] = FENRA_VERSION
+    # TEMPORARY DIAGNOSTIC (remove once the v0.16.9 allowed_functions
+    # mystery is root-caused) - log every write that shrinks a voice's
+    # allowed_functions to empty when it wasn't already, with a stack
+    # trace, regardless of which caller triggered it.
+    try:
+        old_path = voice_state_path(session_name, voice_name)
+        if os.path.exists(old_path):
+            with open(old_path, "r", encoding="utf-8") as _f:
+                old_state = json.load(_f)
+            old_af = old_state.get("allowed_functions")
+            new_af = state.get("allowed_functions")
+            if old_af and not new_af:
+                import traceback
+                with open(os.path.join(SESSIONS_DIR, "_af_debug.log"), "a", encoding="utf-8") as _dbg:
+                    _dbg.write(
+                        f"{datetime.now().isoformat()} save_voice_state({session_name!r}, {voice_name!r}) "
+                        f"SHRINK old={old_af!r} new={new_af!r} thread={threading.current_thread().name}\n"
+                    )
+                    _dbg.write("".join(traceback.format_stack(limit=10)) + "\n")
+    except Exception:
+        pass
     ensure_voice_dir(session_name, voice_name)
     with open(voice_state_path(session_name, voice_name), "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
@@ -1604,6 +1625,16 @@ class FenraApp:
             "qualia_allowance": self.qualia_allowance_var.get(),
             "voices": self.session_voices,
             "voice_rotation_index": self.voice_rotation_index,
+            # v0.16.9 - real bug, caught live: this dict used to omit
+            # permission_mode entirely, and _tick calls save_session()
+            # every single cycle, so it silently wiped permission_mode
+            # from disk on the very first tick after any permission-mode
+            # session started (in-memory self.permission_mode stayed
+            # correct for the life of the process, since it's only ever
+            # read once at _load_session - but a restart would have
+            # reloaded False from the now-corrupted file and silently
+            # disabled the whole gate for that session, permanently).
+            "permission_mode": self.permission_mode,
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Session saved {datetime.now().strftime('%H:%M:%S')}")
@@ -1666,7 +1697,25 @@ class FenraApp:
         widgets were last loaded."""
         snapshot = self._current_voice_state_from_widgets()
         snapshot["inbox"] = self._fresh_inbox(voice_name)
-        snapshot["allowed_functions"] = self._fresh_allowed_functions(voice_name)
+        fresh_af = self._fresh_allowed_functions(voice_name)
+        # TEMPORARY DIAGNOSTIC (remove once the v0.16.9 allowed_functions
+        # mystery is root-caused) - log every time a save is about to
+        # shrink/change a voice's allowed_functions, with full context on
+        # who called it and from where.
+        try:
+            import traceback
+            if fresh_af != snapshot.get("allowed_functions"):
+                with open(os.path.join(SESSIONS_DIR, "_af_debug.log"), "a", encoding="utf-8") as _dbg:
+                    _dbg.write(
+                        f"{datetime.now().isoformat()} _save_voice_snapshot({voice_name!r}) "
+                        f"widget-value={snapshot.get('allowed_functions')!r} fresh-value={fresh_af!r} "
+                        f"current_voice_name={getattr(self, 'current_voice_name', None)!r} "
+                        f"displayed_voice={self.displayed_voice!r} thread={threading.current_thread().name}\n"
+                    )
+                    _dbg.write("".join(traceback.format_stack(limit=8)) + "\n")
+        except Exception:
+            pass
+        snapshot["allowed_functions"] = fresh_af
         return snapshot
 
     def save_voice(self):
