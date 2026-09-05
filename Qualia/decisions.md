@@ -2,6 +2,24 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## OPEN TASK for Qualia (assigned 2026-09-05, not yet started): dig into the allowed_functions SHRINK bug
+
+Teddy's direct instruction: "You'll be the one digging deeper into the code for the SHRINK issue." Written here so it survives a restart/context loss. **Do not start digging until Teddy actually asks for it** - this is a note-to-self for later, not a request to act now.
+
+**What's confirmed so far** (full detail + a diagram in `Qualia/chorus-1-report/chorus-1-report.docx`, section 3):
+- `_af_debug.log`'s SHRINK diagnostic (added 2026-09-04 after a one-time, never-reproduced `permissions-test-1` corruption) caught a REAL one for the first time, in `chorus-1`:
+  ```
+  2026-09-05T05:38:51.334967 save_voice_state('chorus-1', 'seed') SHRINK
+    old=['create_voice', 'check_function_requests', 'approve_function_request',
+         'deny_function_request', 'grant_function_request']
+    new=[]
+  ```
+- Traceback points at `fenra.py`'s end-of-cycle save: `save_voice_state(self.session_name, active_voice, vstate)` (currently ~line 3067, right after `append_voice_history` and the `vstate.update({...})` block that sets `"allowed_functions": self.allowed_functions`).
+- Cross-referenced against `seed`'s own history entry `seed-2026-09-05T05:35:01`: this SHRINK is the tail end of THAT SAME cycle, not a separate one - two debug entries fire near-simultaneously at 05:35:01 (start of the cycle), both showing a widget/disk mismatch (`_save_voice_snapshot`'s `widget-value` showed `warden`'s 3-function list while `fresh-value` correctly showed seed's real 5-function list) that got CORRECTLY resolved via the existing `_fresh_allowed_functions` fix. The model then took ~3m50s to actually respond, and the SHRINK fired at 05:38:51 when the cycle finally finished and saved.
+- **The real question**: somewhere between that correctly-resolved start-of-cycle read (`self.allowed_functions` should have been the real 5-list at that point) and the end-of-cycle write, `self.allowed_functions` became `[]` before being persisted. Not yet pinpointed to a specific line - this is the actual digging to do. Also unresolved: separately (possibly the same root cause, possibly not), `dreamer`'s `allowed_functions` grew to an exact copy of what `seed` lost (first matching `warden`'s 3-function list at an earlier point, then later matching seed's original full 5) - no `grant_function_request`/`approve_function_request` call targeting `dreamer` exists anywhere in the session's function logs, so this isn't happening through the app's own function-call machinery.
+- **Where to start looking**: everything that touches `self.allowed_functions` as a plain instance attribute between load and save in `_tick()` - the gate check in `_execute_one_call` (does a rejected call ever accidentally reassign it, e.g. via a shared mutable default argument, or a `.clear()`/`= []` where a copy was intended?), and anything that runs during a real generation cycle for a permission_mode session that reads or writes `app.allowed_functions` directly rather than through the established fresh-read helpers (`_fresh_allowed_functions`, `_save_voice_snapshot`).
+- `chorus-1` is still live; `seed` currently has zero functions and `dreamer` holds seed's original full set. Nothing has been reverted - left as-is for Teddy to decide, per his standing preference not to fix a live voice's state without his call.
+
 ## 2026-09-05 (fallback check-in: chorus-1 healthy - seed self-resolved its own stuck request, dreamer/warden duplicate stable and not spreading)
 
 - All 8 voices progressing (6-7 cycles each). `listener` is behaving exactly as designed - "... (silence)" every single cycle, correctly doing nothing until told otherwise.
