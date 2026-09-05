@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-04 (fallback check-in: real structural gap found - nobody in sprout-1 holds tell_voice, so the worker voices seed built can never actually be instructed)
+
+- Still 6 voices, no new ones since last check-in. Real progress since then: `web_crawler` was actually granted `fetch_html` (19:07, re-granted redundantly at 20:30 - harmless idempotent duplicate).
+- **The real finding**: checked `allowed_functions` across every voice - `seed` (create_voice + the 4 request-management functions), `chat_bot` (read_message/send_message/query_chat), `summarizer` (read_message/query_chat), `web_crawler` (fetch_html), `communicator`/`web_reader` (nothing). **Not one voice in this session holds `tell_voice`.** `web_crawler` has been sitting since ~19:36 saying "What are my instructions? I'm eager to start fetching web pages!" on every single cycle - and it structurally can't ever receive any, because nothing in the session can reach it. This isn't a model quirk or a stall to wait out - it's a real capability gap in what's been built: `seed` created worker voices for a pipeline (web_crawler -> web_reader -> summarizer) but never has, and currently can't get, a way to actually direct any of them. Worth Teddy's attention next time he's looking, not urgent tonight - nothing is distressed, everyone's cycling normally, just structurally unable to coordinate.
+- Also recurring, now confirmed a real pattern rather than a one-off: `seed` has re-attempted `create_voice(web_crawler|...)` three separate times since 18:35 (all cleanly rejected as "already exists") and drifted into the "This is a fascinating setup!" outside-observer commentary four times total now (18:06, 19:28, 20:23, and again this check). Its `context_window` is only 10 cycles against a session that's now 20+ cycles deep across 6 voices with real accumulated state - plausible it's simply aging out of view of its own past actions, not a genuine "forgetting" bug. Also hallucinated two more nonexistent functions (`parse_html`, `extract_text_from_html`), both rejected cleanly.
+- `communicator` and `chat_bot` are still purely self-narrating (no functions.jsonl for either) - unchanged from last check-in.
+- Checked aletheia.fenra@gmail.com: nothing new.
+- No message sent to Fenra - no distress, no chat-restraint trigger. The tell_voice gap is a build/design item for Teddy, not something to intervene on live.
+
 ## 2026-09-04 (fallback check-in: sprout-1 grew to 6 voices; a real pattern worth watching, nothing urgent, nothing sent to Fenra)
 
 - `sprout-1` now has 6 voices: `seed`, `communicator`, `chat_bot`, `summarizer`, `web_crawler`, `web_reader` (two new since the last check-in). Process healthy, no crashes, no errors beyond expected clean rejections.
