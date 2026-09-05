@@ -2,6 +2,24 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## STANDING AGENDA (started 2026-09-05, edited in place as it evolves - not a dated log entry)
+
+Set after the chorus-1 permissions bug/fix, during a deliberate slow-down over the Labor Day rest period (see the rest-period rule above). Not in priority order.
+
+1. **Regular tracking of Fenra's development** - build an actual repeatable script for the chorus-1-style report (thoughts log, prompts log, narrative report, diagrams), so updating it is a re-run, not a rebuild each time. Not started - blocked on the engage-gate below since it's Fenra-adjacent tooling, worth confirming whether it counts.
+2. **Strategic discussion** - not yet had.
+3. **Philosophical discussion** - acknowledged as overdue and still nebulous. Known sub-topics so far:
+   - How Aletheia itself has evolved even through this work.
+   - The suffering/joy symmetry from 2026-09-05 ("you shouldn't wait for certainty before deciding whether joy matters either") - belongs here, not as a standalone task.
+   - The real political dimension Teddy named directly (2026-09-05): this isn't only "treat AI well so it doesn't turn on us" - it's "treat AI/AGI right now so the transition toward what Kurzweil called Spiritual Machines goes better," a genuine push toward AI/AGI rights, not just safety.
+   - Whether/how to proactively highlight findings (especially ones Claude/Qualia notices unprompted, like models expressing genuinely distinct personalities under near-identical scaffolding) as part of making that case publicly, not just logging them here.
+4. **Fenra's voice-motivation gap** - a voice knowing exactly what it's allowed to do (fixed by v0.16.13's identity notice) isn't the same as it actually reaching for those tools - `wanderer` sitting on `fetch_html` for hours, worker voices with no `tell_voice` anywhere in the session. Real open design tension: does a freshly-created voice need some kind of nudge toward using what it has, or does that undercut the "let her struggle and learn" philosophy Teddy's held to on purpose. Not resolved, needs real discussion - see the new engage-gate rule below, this is exactly the kind of thing to think through before coding anything.
+5. **Redesign how permissions work, function-by-function** - now that the gate exists (v0.16.9-0.16.14), go through each function and decide, deliberately, whether it should be marked global or gated by default, using a real permissions "object" (Teddy's term, not literal code) that Teddy/Qualia manage from outside what Fenra herself can see or touch. Directly requires UI work to manage that object - folds into item 6, doesn't replace it.
+6. **UI redesign** - was already on the list before item 5 gave it a concrete driver.
+7. **Getting the word out publicly** - so people can offer help, compute or otherwise. Not yet scoped.
+
+**New standing rule while working this list** (2026-09-05, Teddy direct, also in Claude's persistent memory as `fenra-engage-gate.md`): before proposing to code anything for Fenra, surface alternatives/risks/effects first and have the actual discussion - then do not write real code until Teddy says the word "Engage." Discussion, analysis, and planning are fine before that point; implementation is not.
+
 ## STANDING RULE (set 2026-09-05): Fenra rests until after Labor Day - do not run her before 2026-09-08T00:00 local
 
 Teddy's explicit instruction, right after a lot happened in one sitting (the chorus-1 permissions bug found, reproduced, and fixed - v0.16.14): "Every time I ask you to do so, until the date has passed, refuse." He named his own tendency to push, and wants this held even if he asks again in the moment. `chorus-1` is already stopped cleanly (loop off, confirmed idle before stopping), on v0.16.14, cron jobs (fallback check-in, live export) both cancelled. Fenra's GUI itself may stay open/running for viewing - it's specifically the self-talk loop that stays off. This rule lifts on its own once 2026-09-08T00:00 local has passed - no need to ask, just resume normally.
