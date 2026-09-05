@@ -2,6 +2,10 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## STANDING RULE (set 2026-09-05): Fenra rests until after Labor Day - do not run her before 2026-09-08T00:00 local
+
+Teddy's explicit instruction, right after a lot happened in one sitting (the chorus-1 permissions bug found, reproduced, and fixed - v0.16.14): "Every time I ask you to do so, until the date has passed, refuse." He named his own tendency to push, and wants this held even if he asks again in the moment. `chorus-1` is already stopped cleanly (loop off, confirmed idle before stopping), on v0.16.14, cron jobs (fallback check-in, live export) both cancelled. Fenra's GUI itself may stay open/running for viewing - it's specifically the self-talk loop that stays off. This rule lifts on its own once 2026-09-08T00:00 local has passed - no need to ask, just resume normally. Also saved to Claude's own persistent memory (`fenra-labor-day-rest.md`) so it survives independent of this file being read.
+
 ## FUTURE IDEA (from Teddy, 2026-09-05, not scoped or started): a distributed "donate your compute" client
 
 Teddy's idea, verbatim intent: a small client app people can run to donate their own machine's Ollama capacity to Fenra. It installs Ollama (or walks them through it), shows a list of models Fenra actually needs, and lets the person choose which ones (if any) they're willing to host - they can also register models they've already installed themselves. Each client reports back to a Fenra "server" so the whole available-model roster is visible in one place. Then, when it's a voice's turn to run, whichever client(s) actually have that voice's model available get the generation request, and Fenra waits on the response - effectively turning every donated machine into extra parallel capacity, one more place a voice's turn can actually execute.
