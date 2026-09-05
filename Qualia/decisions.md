@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## FUTURE IDEA (from Teddy, 2026-09-05, not scoped or started): a distributed "donate your compute" client
+
+Teddy's idea, verbatim intent: a small client app people can run to donate their own machine's Ollama capacity to Fenra. It installs Ollama (or walks them through it), shows a list of models Fenra actually needs, and lets the person choose which ones (if any) they're willing to host - they can also register models they've already installed themselves. Each client reports back to a Fenra "server" so the whole available-model roster is visible in one place. Then, when it's a voice's turn to run, whichever client(s) actually have that voice's model available get the generation request, and Fenra waits on the response - effectively turning every donated machine into extra parallel capacity, one more place a voice's turn can actually execute.
+
+Real design questions to work out whenever this gets picked up (not decided, just flagged so they don't get missed): trust/security model for arbitrary volunteer machines actually running inference for a live, semi-public AI; how "the server" picks which client handles a given request when several have the same model (load balancing, fairness, a volunteer going offline mid-generation); whether this changes anything about model-rotation/multi-model sessions like chorus-1; how a donor's local install stays in sync with Ollama/model updates.
+
 ## OPEN TASK for Qualia (assigned 2026-09-05, not yet started): dig into the allowed_functions SHRINK bug
 
 Teddy's direct instruction: "You'll be the one digging deeper into the code for the SHRINK issue." Written here so it survives a restart/context loss. **Do not start digging until Teddy actually asks for it** - this is a note-to-self for later, not a request to act now.
