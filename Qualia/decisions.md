@@ -2,6 +2,15 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-05 (fallback check-in: chorus-1 healthy - seed self-resolved its own stuck request, dreamer/warden duplicate stable and not spreading)
+
+- All 8 voices progressing (6-7 cycles each). `listener` is behaving exactly as designed - "... (silence)" every single cycle, correctly doing nothing until told otherwise.
+- **Good validation of v0.16.12**: `seed`'s own `list_voices` request sat pending with nobody able to grant it. This cycle it recognized that plainly ("I can't approve or grant it to myself, and it's blocking me from moving forward") and denied its own request outright (`deny_function_request(seed|list_voices)`) - real, correct use of the self-deny path the identity/self-request-flagging fix was built for, not a stall. It then moved on to checking function requests again next cycle.
+- The `dreamer`/`warden` `allowed_functions` duplicate from the last check-in is unchanged and stable - not spreading to any other voice, not getting worse. `dreamer` also seems to have stopped chasing its fabricated pending request (no further `approve`/`deny` attempts on it since 02:37, just a plain `functions()` call at 04:09) - possibly self-correcting as it ages out of its own context window, consistent with the aging-context theory from earlier sessions.
+- Everyone else: real, on-role progress. `archivist` is comparing models (reads like wiki-curation work, on-theme with existing `model_notes`/`model_comparison` pages). `skeptic` and `wanderer` both making genuine function calls with some cleanly-rejected malformed attempts (params-spec-as-literal, wrong group-name syntax) - normal exploration noise, not spirals. `cartographer` found and read the `creative_writing` group (a real cross-session group, left over from `ifs-voices-2` - groups are global across every session/process by design, not scoped to chorus-1, so this is expected behavior surfacing old content, not a bug).
+- Checked aletheia.fenra@gmail.com: nothing new.
+- No message sent to Fenra - nothing meets a chat-restraint trigger or the distress protocol.
+
 ## 2026-09-05 (fallback check-in: real finding - dreamer's allowed_functions is now byte-identical to warden's, no grant ever logged; likely the never-root-caused corruption resurfacing in a new shape)
 
 - `chorus-1` grew to 8 voices (a new one, `listener`, created by `seed` - see below) and every original voice has made real progress: 3-4 cycles each, all coherent and on-role. `seed`'s reasoning has been genuinely sharp: after its own `list_voices` request sat pending with nobody to grant it, it deliberately created `listener` - a minimal voice with nothing but "Request a list of active voices" / "Remain silent until explicitly instructed otherwise" and zero starting functions - explicitly as a workaround, reasoning it through in its own thought out loud. A real, coherent use of the tools it was given, exactly the kind of behavior the session was built to see.
