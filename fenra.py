@@ -551,7 +551,34 @@ import fenra_functions
 #             so appending meant the new voice waited a full lap of the
 #             rotation before its first turn; inserting there makes it
 #             the very next voice to run instead.
-FENRA_VERSION = "0.16.13"
+#   0.16.14 - Root cause found and fixed for the allowed_functions
+#             "SHRINK" corruption (first reproduced live in chorus-1,
+#             2026-09-05, full writeup in Qualia/decisions.md): a real
+#             thread race, not corruption. self.allowed_functions is a
+#             single shared instance attribute; the background tick
+#             thread holds it live across a whole cycle (including the
+#             full multi-minute Ollama call for a large model), while
+#             _load_voice (bound to the voice dropdown, main thread)
+#             reassigns that same attribute the instant a human clicks
+#             a different voice - with zero coordination. The existing
+#             _fresh_allowed_functions fix only re-read the correct
+#             value at the *start* of a cycle; the end-of-cycle save
+#             trusted self.allowed_functions directly with no re-check,
+#             so whichever voice happened to be finishing its cycle
+#             when a voice-switch landed silently persisted whatever
+#             the last click left behind. Fixed by re-reading fresh
+#             from disk immediately before the final save too, mirroring
+#             the existing start-of-cycle protection - safe specifically
+#             because nothing ever legitimately lets a voice change its
+#             own allowed_functions mid-cycle (unlike desires/inbox/
+#             groups/model_rotation, which real in-cycle self-mutation
+#             makes a blind fresh-read the wrong fix for - not touched
+#             here, flagged as a separate, harder problem if it's ever
+#             actually observed happening to one of those instead).
+#             Reproduced directly before and after: a scripted mid-tick
+#             voice-switch reliably cleared a voice's real functions
+#             before this fix, and no longer does after.
+FENRA_VERSION = "0.16.14"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -3062,7 +3089,24 @@ class FenraApp:
             "model_rotation_index": self.model_rotation_index,
             "groups_in": self.groups_in,
             "groups_out": self.groups_out,
-            "allowed_functions": self.allowed_functions,
+            # v0.16.14 - re-read fresh from disk right here, at the very
+            # last possible moment, instead of trusting self.allowed_
+            # functions - see the SHRINK root-cause writeup in
+            # Qualia/decisions.md. self.allowed_functions is a single
+            # shared, unsynchronized attribute; _load_voice (bound to
+            # the voice dropdown, main thread) reassigns the exact same
+            # attribute the instant a human switches which voice is
+            # displayed, with zero coordination with this background
+            # tick thread. Since nothing ever legitimately lets a voice
+            # change its own allowed_functions mid-cycle (grant/approve/
+            # deny only ever write a *different* voice's persisted
+            # state), a fresh disk read here is always correct - unlike
+            # desires/inbox/groups/model_rotation, which a voice's own
+            # calls (add_desire, join_group, ...) or this same cycle's
+            # own aging (_decrement_desires/_decrement_voice_inbox)
+            # legitimately mutate in-place, so a blind fresh-read would
+            # silently discard real changes for those - not done here.
+            "allowed_functions": self._fresh_allowed_functions(active_voice),
         })
         save_voice_state(self.session_name, active_voice, vstate)
 
