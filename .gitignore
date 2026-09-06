@@ -9,3 +9,6 @@ venv/
 # Separate project, own git repo (github.com/vincentml1987/stolenaletheia)
 # - not part of Fenra's Aletheosis.
 /stolenaletheia/
+
+# Teddy's personal journals to Qualia - not for github.
+/Teddy's Journals/
