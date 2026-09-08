@@ -31,22 +31,33 @@ item in the UI I can view and, in some cases, update").
 | Start/Stop, status | Main tab | Stays, Session tab |
 
 ### Voice (currently: exactly one at a time, via a flat dropdown)
+
+Two parts to the detail panel: an editable **Framing** section, and a
+read-only **Context** section - a real dashboard of the voice's own current
+state, which is Teddy's actual ask (corrected from an earlier, wrong read of
+mine that proposed a live-recomputed prompt preview instead - not what was
+wanted; "Context" means her parameters, what's been sent to her, and what
+she can do, not a re-derivation of prompt-assembly logic).
+
+**Framing (editable):**
 | Field | Today | Proposed |
 |---|---|---|
 | Which voice is being viewed | `Voice:` combobox, one at a time | **A real list** (left pane) of every voice in the session - click to view/edit, same pattern as History tab's listbox already uses |
 | top | Editable text box, **no visible label at all today** (it's just an unlabeled box in a fixed position) | Editable, **labeled "Behavior"** (extends the `create_voice` voice-facing rename into the GUI itself, per Teddy's direct call - same terms: top = read first, every cycle) |
 | bottom | Editable text box, also unlabeled | Editable, **labeled "Identity"** (bottom = read last, right before generating - where a model's attention actually lands most) |
-| model, max_tokens | Dropdown/entry | Stays editable |
-| context_window | Entry+Set | Stays editable |
-| model_rotation | Display+entry+Set | Stays editable |
-| **allowed_functions** | **Not shown anywhere in the GUI at all today** - only visible by reading state.json directly or asking the voice herself via `functions()` | **New**: a real panel - baseline set shown read-only (it's the same for everyone, nothing to manage), gated/extra functions shown as a checklist or add/remove list you can actually grant or revoke directly. This is the "permissions object... managed from outside what Fenra herself can see or touch" item 5 already called for. |
-| desires | Read-only display | Stays read-only (Fenra-set only, by design) |
-| inbox (tell_voice messages) | Not shown in the GUI at all | Worth adding read-only, low effort, same pattern as desires |
-| family_group | Not shown | Show read-only, one line |
-| groups_in / groups_out | Crude comma-separated entry+Set fields, no roster context | Replace with a read-only list of "which groups, what direction" - view only, no GUI editing (**decided**: no direct group editing at all, see Groups below) |
-| history | Separate "History" tab | **Stays standalone, unchanged** (**decided**) - it's specifically the raw Ollama request/response log, a different purpose than the new Context view below, not something to fold in |
-| **context (live, current)** | **Doesn't exist** - the closest thing is picking a past History entry and reading raw JSON | **New**, per Teddy's direct ask: a "Context" sub-view in the voice detail panel showing what this voice's *next* prompt would actually look like right now - Behavior and Identity text clearly labeled and visible (not buried in JSON), assembled live from current state using the same logic `_tick` uses, not tied to any one past cycle. Distinct from History: History is the permanent record of what was actually sent for a completed cycle; Context is "what would go out if she ran right now." |
 | New voice / Delete voice | Buttons, main tab | Stay, near the voice list |
+
+**Context (read-only dashboard - Teddy's actual ask):**
+| Field | Today | Proposed |
+|---|---|---|
+| model, max_tokens, context_window, model_rotation | Editable entries scattered across the main tab | Shown together as this voice's current parameters. **Still editable here too** (not view-only) - Context isn't a separate read-only mode for these, just a better place to see and set them than the current scattered rows |
+| **allowed_functions** | **Not shown anywhere in the GUI at all today** - only visible by reading state.json directly or asking the voice herself via `functions()` | **New**: baseline set shown read-only (same for everyone, nothing to manage), gated/extra functions shown as a checklist or add/remove list you can actually grant or revoke directly. This is the "permissions object... managed from outside what Fenra herself can see or touch" item 5 already called for. |
+| **inbox (messages sent to them via tell_voice)** | **Not shown in the GUI at all** | **New** - what's actually sitting in her inbox right now, who it's from, how many ticks it has left. This was the specific example Teddy gave. |
+| desires | Read-only display | Stays read-only (Fenra-set only, by design) |
+| family_group | Not shown | Show read-only, one line |
+| groups_in / groups_out | Crude comma-separated entry+Set fields, no roster context | Read-only list of "which groups, what direction" - no GUI editing (**decided**: no direct group editing at all, see Groups below) |
+
+**History** stays a fully separate, standalone tab - unchanged (**decided**), it's specifically the raw Ollama request/response log, a different purpose than Context.
 
 ### Group (does not exist as a UI concept at all today) - **view-only, no admin editing from the GUI (decided)**
 | Field | Today | Proposed |
@@ -59,7 +70,7 @@ item in the UI I can view and, in some cases, update").
 ## Proposed tab layout
 
 - **Session** (renamed from "Fenra") - host/interval/max_tokens/permission_mode (read-only)/qualia_allowance/Start-Stop/status. Session picker removed entirely, moved to File menu.
-- **Voices** (new) - list of every voice (left) + detail panel (right): Behavior/Identity text (renamed, see above), model controls, allowed_functions (baseline read-only + gated grant/revoke), desires, inbox, family_group, group memberships (read-only), and a **Context** sub-view (live, current-state preview of the next prompt - see above).
+- **Voices** (new) - list of every voice (left) + detail panel (right), two sections: **Framing** (Behavior/Identity text, renamed per above) and **Context** (model/context_window/model_rotation, allowed_functions with baseline read-only + gated grant/revoke, inbox, desires, family_group, group memberships read-only).
 - **Groups** (new) - list of every group in the session (left) + detail panel (right): owner/kind/join_policy/visibility, roster with direction, banned list. View-only.
 - **History** - stays exactly where it is, standalone, unchanged - the raw Ollama request/response log.
 - **Chat** - unchanged.
@@ -72,7 +83,7 @@ item in the UI I can view and, in some cases, update").
 
 - No direct group editing from the GUI - Groups tab is view-only.
 - History stays a standalone tab, unchanged - it's specifically the literal Ollama prompt/response log, not something to merge with anything else.
-- New: a Context view per voice - what her next prompt would actually look like right now, Behavior/Identity clearly visible, not a JSON dump.
+- **Corrected**: Context is not a live-recomputed prompt preview (my first read was wrong) - it's a dashboard of the voice's actual current state: parameters, inbox (messages sent to them), and functions they hold. Real state, not a re-derivation of prompt-assembly logic.
 - The `create_voice` behavior/identity rename extends into the GUI itself - the two text boxes get real labels for the first time ("Behavior", "Identity") instead of being unlabeled boxes in a fixed position.
 
 ## Remaining open question
