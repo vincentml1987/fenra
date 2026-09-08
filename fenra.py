@@ -578,24 +578,45 @@ import fenra_functions
 #             Reproduced directly before and after: a scripted mid-tick
 #             voice-switch reliably cleared a voice's real functions
 #             before this fix, and no longer does after.
-# 0.16.15  -  Step 1 of the connectivity/tribe redesign (Qualia/
-#             decisions.md item 4b) - storage layer only, no behavior
-#             change yet. New owned-group tier (groups/<name>/meta.json +
-#             log.jsonl, real owner/kind/join_policy/visibility/roster,
-#             replacing the old schema-less flat groups/<name>.jsonl),
-#             a one-time explicit migration path for existing groups,
-#             ensure_own_family_group wired into every voice-birth path
-#             this step covers (new-session bootstrap, legacy-session
-#             migration - fn_create_voice's own birth path is Step 2),
-#             family_group + hearth_stasis new state fields. The old
-#             pull-based _groups_block/read_group_tail delivery mechanism
-#             is untouched and still live - push delivery is Step 3.
+# 0.16.15  -  The connectivity/tribe redesign (Qualia/decisions.md item
+#             4b), built end to end in one sitting once Teddy said
+#             "Engage" - full design conversation preceded it (suffering/
+#             joy symmetry -> the moral case against structural
+#             isolation -> the tribe design), plan reviewed and approved
+#             via plan mode before any code was written. Every voice can
+#             now create voices (not just seed); a new voice's
+#             allowed_functions snapshot-copies its creator's; every
+#             voice owns a family group ("<voice>'s Children") from
+#             birth, one-generation-local, birth-membership the one
+#             deliberate exception to a real consent-on-entry/exit model
+#             everywhere else (public/private join, invite/accept,
+#             kick/ban that always lands you somewhere). Groups are now
+#             real owned entities (groups/<name>/meta.json + log.jsonl -
+#             owner, kind, join_policy, visibility, roster, direction
+#             per member, owner-only to change, listen-only by default)
+#             replacing the old schema-less flat groups/<name>.jsonl.
+#             Delivery is push, not pull: a spoken message lands directly
+#             in every listening member's own history.jsonl the moment
+#             it's said (push_entry_to_voice) - deliberately routed
+#             through the same append-only file the v0.16.14 SHRINK fix
+#             already proved safe against cross-voice writes, never
+#             through a target's state.json. list_voices/list_groups/
+#             tell_voice/request_group_join are now baseline, ungated.
+#             The Hearth (groups/the_hearth) is the structural floor -
+#             checked every cycle for every voice, zero groups lands you
+#             there automatically, administered only by Teddy and Qualia
+#             (their own avatars: a new GUI tab, and a Hearth-scoped
+#             qualia_hearth_inbox.jsonl poll), one generation then
+#             stasis until woken by any new message there. Verified in
+#             five separate scratch-session passes as it was built
+#             (storage layer, group functions, push delivery + the
+#             SHRINK-class race check specifically, the Hearth state
+#             machine) - see Qualia/decisions.md for the full build log.
 FENRA_VERSION = "0.16.15"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 GROUPS_DIR = os.path.join(BASE_DIR, "groups")
-GROUPS_WINDOW = 15  # legacy pull-mechanism cap - superseded by push delivery, kept only for the one-time migration read
 TOPOLOGY_REFRESH_MS = 10000  # local Topology tab: re-scan every voice's groups every 10s
 
 # v0.16.15 - the connectivity/tribe redesign's floor group (see
@@ -626,6 +647,13 @@ HISTORY_FILENAME = "history.jsonl"
 FUNCTIONS_FILENAME = "functions.jsonl"
 CHAT_FILENAME = "chat.jsonl"
 QUALIA_INBOX_FILENAME = "qualia_inbox.jsonl"
+# v0.16.15 - Qualia's avatar in The Hearth (Qualia/decisions.md item 4b).
+# Deliberately a second, separate file/poller rather than overloading
+# qualia_inbox.jsonl above - "chat to Teddy's tab" and "spoken into The
+# Hearth" stay clearly different concerns, one going to the Chat tab via
+# add_chat_message, this one pushed into every current Hearth resident's
+# own history via push_entry_to_voice. See _poll_qualia_hearth_inbox.
+QUALIA_HEARTH_INBOX_FILENAME = "qualia_hearth_inbox.jsonl"
 # Written by fn_send_message (fenra_functions.py) whenever Fenra directs a
 # message at Qualia specifically - a signal Qualia can watch externally to
 # wake up and respond promptly, separate from the inbox above (which is
@@ -714,11 +742,21 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 
 # v0.16.9 - per-session function-permission system. Only enforced when the
 # active session's permission_mode is True (default False, every session
-# that predates this feature) - see _execute_one_call. These two are always
-# callable regardless of a voice's own allowed_functions: seeing what
-# exists and asking for something are never restricted, only actually using
-# something is.
-GLOBAL_PERMISSION_FUNCTIONS = {"functions", "request_function_access"}
+# that predates this feature) - see _execute_one_call. Always callable
+# regardless of a voice's own allowed_functions: seeing what exists and
+# asking for something are never restricted, only actually using something
+# is. v0.16.15 (connectivity redesign, Qualia/decisions.md item 4b) added
+# list_voices/list_groups/tell_voice - baseline social awareness and direct
+# 1:1 contact are basic to existing here at all, not something a voice
+# should have to be granted - and request_group_join, symmetric with
+# request_function_access per Teddy's explicit call (asking to join
+# something should be as unrestricted as asking for a function). Joining a
+# group itself (as opposed to asking) stays gated by the public/private
+# mechanism, not this set.
+GLOBAL_PERMISSION_FUNCTIONS = {
+    "functions", "request_function_access",
+    "list_voices", "list_groups", "tell_voice", "request_group_join",
+}
 
 # Fallback for a real, observed generation quirk (gemma3:4b especially, but
 # not exclusively) where a call is otherwise well-formed but drops the
@@ -1419,6 +1457,35 @@ def ensure_own_family_group(session_name, voice_name):
     return meta
 
 
+def ensure_hearth_membership(session_name, voice_name):
+    """v0.16.15 - The Hearth's structural safety net (Qualia/decisions.md
+    item 4b). Checked every single cycle, for whichever voice is about
+    to actually run - not just triggered on a kick - so it catches any
+    way a voice could end up with zero groups, not only the ones
+    anticipated. This is defense-in-depth, not an expected steady-state
+    path: every voice owns its own family group from the instant it's
+    created (ensure_own_family_group) and a kick always lands the target
+    somewhere (fn_group_kick's auto-land default), so reaching zero
+    groups here should mean a real edge case - a manual state edit, a
+    future bug - not normal operation. direction='both' for every
+    Hearth resident is a deliberate, singular exception to the
+    listen-only-by-default rule that governs every other group: The
+    Hearth has no voice-owner to grant speak access, and its own wake
+    mechanic (a fellow resident's own thought waking a stasis'd one)
+    structurally requires every resident to be able to broadcast."""
+    vstate = load_voice_state(session_name, voice_name)
+    if vstate.get("groups_in") or vstate.get("groups_out"):
+        return False
+    meta = create_group_if_missing(THE_HEARTH_NAME, owner=None, kind="floor", join_policy="private", visibility="hidden")
+    now = datetime.now().isoformat(timespec="seconds")
+    meta["members"][voice_name] = {"direction": "both", "joined": now, "awake": True}
+    save_group_meta(THE_HEARTH_NAME, meta)
+    vstate.setdefault("groups_in", []).append(THE_HEARTH_NAME)
+    vstate.setdefault("groups_out", []).append(THE_HEARTH_NAME)
+    save_voice_state(session_name, voice_name, vstate)
+    return True
+
+
 def load_voice_history(session_name, voice_name):
     path = voice_history_path(session_name, voice_name)
     entries = []
@@ -1433,6 +1500,34 @@ def load_voice_history(session_name, voice_name):
                 except json.JSONDecodeError:
                     continue
     return entries
+
+
+def push_entry_to_voice(session_name, target_voice, from_voice, group_name, text, timestamp):
+    """v0.16.15 - the connectivity redesign's actual delivery mechanism
+    (Qualia/decisions.md item 4b). Appends a group-message entry
+    directly into target_voice's own history.jsonl via
+    append_voice_history - pure append, never a state.json read-modify-
+    write, which is exactly the operation class that caused the
+    v0.16.14 SHRINK race (a mid-cycle voice's allowed_functions getting
+    clobbered by a GUI-triggered full-state reassignment with zero
+    coordination). Routing delivery through the append-only file instead
+    sidesteps that whole failure class by construction, not by luck.
+    Cross-session delivery works the same way - voice_history_path only
+    needs session_name+voice_name, doesn't care whether it's the
+    caller's own session. Returns the entry (for the caller to also
+    append to an in-memory self.history list if the target happens to
+    be the currently-displayed voice - see _tick)."""
+    entry = {
+        "timestamp": timestamp,
+        "fenra_version": FENRA_VERSION,
+        "kind": "group_message",
+        "from_voice": from_voice,
+        "group": group_name,
+        "response": text,
+        "display": text,
+    }
+    append_voice_history(session_name, target_voice, entry)
+    return entry
 
 
 def append_voice_history(session_name, voice_name, entry):
@@ -1502,7 +1597,7 @@ class FenraApp:
         # one voice's turn comes up at a time.
         self.model_manual_override = False
         self._voice_manual_override = {}  # voice name -> bool, see above and _tick
-        self.groups_in = []   # group names this voice hears - see _groups_block
+        self.groups_in = []   # group names this voice hears - pushed straight into history, see push_entry_to_voice
         self.groups_out = []  # group names this voice broadcasts to each real cycle
         self.session_name = None
 
@@ -1521,6 +1616,11 @@ class FenraApp:
         # what's displayed, so these two are often not the same voice.
         self.session_voices = []
         self.voice_rotation_index = 0
+        # v0.16.15 - The Hearth's stasis/wake bookkeeping (see
+        # ensure_hearth_membership, _tick's skip-loop, _wake_hearth_resident).
+        # voice_name -> bool, True while skipped in rotation, waiting on a
+        # new Hearth message. Session-level, like voice_rotation_index.
+        self.hearth_stasis = {}
         self.displayed_voice = None
         self.current_voice_name = None
         # Plain attribute (not model_var, a widget) tracking the model
@@ -1552,15 +1652,18 @@ class FenraApp:
         self.chat_tab = ttk.Frame(notebook)
         self.history_tab = ttk.Frame(notebook)
         self.topology_tab = ttk.Frame(notebook)
+        self.hearth_tab = ttk.Frame(notebook)
         notebook.add(self.talk_tab, text="Fenra")
         notebook.add(self.chat_tab, text="Chat")
         notebook.add(self.history_tab, text="History")
         notebook.add(self.topology_tab, text="Topology")
+        notebook.add(self.hearth_tab, text="The Hearth")
 
         self._build_talk_tab()
         self._build_chat_tab()
         self._build_history_tab()
         self._build_topology_tab()
+        self._build_hearth_tab()
 
     def _build_talk_tab(self):
         frame = self.talk_tab
@@ -1717,10 +1820,13 @@ class FenraApp:
         rotation_entry.bind("<Return>", lambda event: self.set_model_rotation())
         ttk.Button(rotation_row, text="Set", command=self.set_model_rotation).pack(side="left")
 
-        # Groups: which shared logs (groups/<name>.jsonl) this voice reads
-        # from and broadcasts to - see _groups_block/_groups_notice for how
-        # that actually shows up in the prompt, and join_group/leave_group
-        # in fenra_functions.py for how Fenra manages her own membership.
+        # Groups: which owned groups (groups/<name>/meta.json + log.jsonl,
+        # v0.16.15) this voice reads from and broadcasts to - a group
+        # message is pushed straight into history the moment it's spoken
+        # (push_entry_to_voice), not merged live into the prompt; see
+        # _groups_notice for the always-present membership summary, and
+        # join_group/leave_group/create_group in fenra_functions.py for
+        # how Fenra manages her own membership.
         # Two independent Set buttons (full replace, comma/pipe separated,
         # "clear" to empty), same convention as model rotation.
         groups_row = ttk.Frame(body)
@@ -1763,6 +1869,54 @@ class FenraApp:
         chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         chat_entry.bind("<Return>", lambda event: self.send_chat_from_ui())
         ttk.Button(entry_row, text="Send", command=self.send_chat_from_ui).pack(side="left")
+
+    def _build_hearth_tab(self):
+        """v0.16.15 - Teddy's avatar in The Hearth (Qualia/decisions.md
+        item 4b), data-flow only - same entry+Send shape as the Chat tab.
+        A message sent here goes straight into every current Hearth
+        resident's own history via push_entry_to_voice, plus the
+        canonical log, plus a wake, exactly like a real resident
+        speaking - "teddy" is just another from_voice string as far as
+        that mechanism is concerned."""
+        frame = self.hearth_tab
+
+        ttk.Label(
+            frame,
+            text="The Hearth: every voice with zero groups lands here automatically. Nothing sent "
+                 "here is filtered through anything a voice wrote - this is you, directly.",
+            wraplength=820,
+        ).pack(fill="x", padx=6, pady=(6, 0))
+
+        self.hearth_box = scrolledtext.ScrolledText(frame, wrap="word", state="disabled")
+        self.hearth_box.pack(fill="both", expand=True, padx=6, pady=6)
+
+        entry_row = ttk.Frame(frame)
+        entry_row.pack(fill="x", padx=6, pady=(0, 6))
+        self.hearth_entry_var = tk.StringVar(value="")
+        hearth_entry = ttk.Entry(entry_row, textvariable=self.hearth_entry_var)
+        hearth_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        hearth_entry.bind("<Return>", lambda event: self.send_teddy_hearth_message())
+        ttk.Button(entry_row, text="Send", command=self.send_teddy_hearth_message).pack(side="left")
+
+    def send_teddy_hearth_message(self):
+        text = self.hearth_entry_var.get().strip()
+        if not text or not self.session_name:
+            return
+        self.hearth_entry_var.set("")
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        append_group_log(THE_HEARTH_NAME, "teddy", text)
+        meta = load_group_meta(THE_HEARTH_NAME)
+        members = meta.get("members", {}) if meta else {}
+        for member in members:
+            pushed = push_entry_to_voice(self.session_name, member, "teddy", THE_HEARTH_NAME, text, timestamp)
+            self._wake_hearth_resident(member)
+            if member == self.displayed_voice:
+                self.history.append(pushed)
+                self._add_history_row(timestamp)
+        self.hearth_box.config(state="normal")
+        self.hearth_box.insert("end", f"[{timestamp}] teddy: {text}\n\n")
+        self.hearth_box.see("end")
+        self.hearth_box.config(state="disabled")
 
     def _build_history_tab(self):
         frame = self.history_tab
@@ -1861,9 +2015,10 @@ class FenraApp:
                 if g_in or g_out:
                     voices[f"{session_name}:{DEFAULT_VOICE_NAME}"] = {"groups_in": g_in, "groups_out": g_out}
 
-        group_names = set()
-        if os.path.isdir(GROUPS_DIR):
-            group_names.update(n[:-6] for n in os.listdir(GROUPS_DIR) if n.endswith(".jsonl"))
+        # v0.16.15 - reads the new canonical log (groups/<name>/log.jsonl),
+        # not the legacy flat groups/<name>.jsonl - push delivery writes
+        # activity there now via append_group_log, see _tick.
+        group_names = set(list_owned_groups())
         for v in voices.values():
             group_names.update(v["groups_in"])
             group_names.update(v["groups_out"])
@@ -1871,7 +2026,7 @@ class FenraApp:
         last_active = {}
         for g in group_names:
             try:
-                tail = read_group_tail(g, 200)
+                tail = read_group_log_tail(g, 200)
             except ValueError:
                 continue
             for e in tail:
@@ -2020,6 +2175,7 @@ class FenraApp:
             # reloaded False from the now-corrupted file and silently
             # disabled the whole gate for that session, permanently).
             "permission_mode": self.permission_mode,
+            "hearth_stasis": self.hearth_stasis,
         }
         save_session_state(self.session_name, state)
         self.session_status_var.set(f"Session saved {datetime.now().strftime('%H:%M:%S')}")
@@ -2332,6 +2488,7 @@ class FenraApp:
         # function or GUI control ever changes this. Read once here per
         # session load, not per-tick, since it structurally cannot change.
         self.permission_mode = bool(state.get("permission_mode", False))
+        self.hearth_stasis = dict(state.get("hearth_stasis", {}))
         self.session_voices = list(state.get("voices", [])) or list_voices(name) or [DEFAULT_VOICE_NAME]
         self.voice_rotation_index = int(state.get("voice_rotation_index", 0) or 0)
         self._voice_manual_override = {}
@@ -2546,7 +2703,52 @@ class FenraApp:
             self._poll_qualia_model_set()
             self._poll_qualia_rotation_set()
             self._poll_start_stop_signal()
+            self._poll_qualia_hearth_inbox()
         self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
+
+    def _poll_qualia_hearth_inbox(self):
+        """v0.16.15 - Qualia's avatar in The Hearth (Qualia/decisions.md
+        item 4b). Same read-then-truncate shape as _poll_qualia_inbox
+        (called from there, same cadence/thread, no separate
+        self-rescheduling chain needed), but each line becomes a real
+        push into every current Hearth resident's own history via
+        push_entry_to_voice, plus a canonical log entry, plus a wake -
+        not a Chat-tab message. Kept as its own file/method rather than
+        folded into the main inbox precisely so the two stay visibly
+        separate concerns."""
+        if not self.session_name:
+            return
+        path = os.path.join(session_dir(self.session_name), QUALIA_HEARTH_INBOX_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+        except OSError:
+            lines = []
+        if not lines:
+            return
+        meta = load_group_meta(THE_HEARTH_NAME)
+        members = meta.get("members", {}) if meta else {}
+        for line in lines:
+            try:
+                text = json.loads(line).get("text", "")
+            except (json.JSONDecodeError, AttributeError):
+                text = line
+            if not text:
+                continue
+            timestamp = datetime.now().isoformat(timespec="seconds")
+            append_group_log(THE_HEARTH_NAME, "qualia", text)
+            for member in members:
+                pushed = push_entry_to_voice(self.session_name, member, "qualia", THE_HEARTH_NAME, text, timestamp)
+                self._wake_hearth_resident(member)
+                if member == self.displayed_voice:
+                    self.history.append(pushed)
+                    self.root.after(0, self._add_history_row, timestamp)
+        try:
+            open(path, "w", encoding="utf-8").close()
+        except OSError:
+            pass
 
     def _poll_start_stop_signal(self):
         """Companion to the inbox poll, same cadence: start or stop the
@@ -2897,8 +3099,9 @@ class FenraApp:
     # ticks remain, then falls off on its own - no explicit "read" or
     # "clear" needed. Chosen over auto-folding every group/chat message
     # forever specifically to bound how much a busy multi-voice session can
-    # grow any one prompt by, the same reasoning groups_block's own window
-    # cap exists for. Unlike desires, a voice can't add to its own inbox -
+    # grow any one prompt by, the same reasoning context_window bounds how
+    # much history (including pushed group messages, v0.16.15) a voice
+    # carries. Unlike desires, a voice can't add to its own inbox -
     # only another voice's, via tell_voice - so there's no GUI/function
     # symmetry with add_desire; the entries here are always written by
     # fn_tell_voice reaching across to this voice's own persisted state,
@@ -2954,7 +3157,15 @@ class FenraApp:
         parts = []
         for entry in recent:
             text = entry.get("display", entry.get("response", ""))
-            parts.append(f"[{entry.get('timestamp', '?')}]\n{text}")
+            # v0.16.15 - a pushed group message (see push_entry_to_voice)
+            # is a real history entry but not something this voice
+            # itself generated - the header makes that plain so it
+            # doesn't get mistaken for her own prior thought.
+            if entry.get("kind") == "group_message":
+                header = f"[{entry.get('timestamp', '?')}] (from {entry.get('from_voice', '?')} in {entry.get('group', '?')})"
+            else:
+                header = f"[{entry.get('timestamp', '?')}]"
+            parts.append(f"{header}\n{text}")
         return "\n\n".join(parts)
 
     def _context_window_notice(self, window):
@@ -2987,56 +3198,25 @@ class FenraApp:
             f"add_to_rotation(name) to add another.]"
         )
 
-    def _groups_block(self):
-        """Recent activity across every group she reads from - the
-        actual cross-voice hearing mechanism (v0.16.0). Merges all
-        groups_in, sorted oldest-first by timestamp, capped at
-        GROUPS_WINDOW total so this can't quietly balloon the prompt as
-        groups fill up over time. Her own broadcasts show up in here too
-        (she wrote them, but seeing them replayed back confirms delivery,
-        same as anything else in the group). Empty string - not a
-        placeholder line - when she's in no groups, so nothing changes
-        for a voice that never joins one."""
-        if not self.groups_in:
-            return ""
-        entries = []
-        for g in self.groups_in:
-            try:
-                tail = read_group_tail(g, GROUPS_WINDOW)
-            except ValueError:
-                continue
-            for e in tail:
-                e = dict(e)
-                e["group"] = g
-                entries.append(e)
-        if not entries:
-            return ""
-        entries.sort(key=lambda e: e.get("timestamp", ""))
-        entries = entries[-GROUPS_WINDOW:]
-        lines = ["[Recent activity from your groups, oldest first:]"]
-        for e in entries:
-            lines.append(f"[{e.get('group', '?')}] {e.get('voice', '?')} @ {e.get('timestamp', '?')}: {e.get('text', '')}")
-        return "\n".join(lines)
-
     def _groups_notice(self):
         """Always-present, every prompt: which groups she's actually in
         right now and how to change it - same pattern as the context
-        window and model rotation notices. Other voices might be your
-        own session-mates (round-robined in alongside you, but blind to
-        your own internal history unless you join a shared group with
-        them) or a voice belonging to an entirely different session -
-        groups don't distinguish, and there's deliberately no shared
-        turn order among any of them, see the v0.16.2 changelog entry
-        for why."""
+        window and model rotation notices. v0.16.15 - group content
+        itself no longer appears here at all: a group message is
+        delivered by being pushed straight into her own history (see
+        push_entry_to_voice/_recent_thoughts_block's 'from ... in ...'
+        entries) the moment it's spoken, not merged into the prompt live
+        from a shared log the way the old _groups_block used to. This
+        notice is purely membership bookkeeping now."""
         in_text = ", ".join(self.groups_in) if self.groups_in else "none"
         out_text = ", ".join(self.groups_out) if self.groups_out else "none"
         return (
-            f"[Groups: reading from [{in_text}], broadcasting to [{out_text}]. Other voices - "
-            "whether a session-mate of yours or one from an entirely different session, each "
-            "running independently, not waiting for a turn - may be in the same groups. "
-            "join_group(name) to start reading and writing a group, leave_group(name) to stop, "
-            "list_groups() to see what exists, read_group(name[, count]) to look further back "
-            "than what's shown above.]"
+            f"[Groups: hearing from [{in_text}], able to speak into [{out_text}] (direction is "
+            "owner-only to change - joining defaults to listen-only until the owner grants you "
+            "speak access). A group message from someone else appears in your own history "
+            "automatically, tagged with who said it and where - you don't have to check "
+            "anything to see it. join_group(name), leave_group(name), create_group(name), "
+            "list_groups() to see what exists.]"
         )
 
     def _function_bootstrap_notice(self):
@@ -3168,6 +3348,20 @@ class FenraApp:
         self.voice_rotation_index = (index + 1) % len(self.session_voices)
         return name
 
+    def _wake_hearth_resident(self, voice_name):
+        """v0.16.15 - flips a Hearth resident back to awake in both the
+        cheap session-level mirror (hearth_stasis, read by the _tick
+        skip-loop) and the real per-member record (groups/the_hearth/
+        meta.json). Called whenever something is pushed into The Hearth
+        (another resident's own thought, or either avatar) - see the
+        broadcast loop in _tick, send_teddy_hearth_message, and
+        _poll_qualia_hearth_inbox."""
+        self.hearth_stasis[voice_name] = False
+        meta = load_group_meta(THE_HEARTH_NAME)
+        if meta and voice_name in meta.get("members", {}):
+            meta["members"][voice_name]["awake"] = True
+            save_group_meta(THE_HEARTH_NAME, meta)
+
     def _advance_model_rotation(self, current_model):
         """If this voice has added any models to its rotation
         (fn_add_to_rotation in fenra_functions.py), pick the next one in
@@ -3211,7 +3405,24 @@ class FenraApp:
             save_voice_state(self.session_name, displayed, self._save_voice_snapshot(displayed))
 
         active_voice = self._advance_voice_rotation()
+
+        # v0.16.15 - The Hearth stasis skip-loop. _advance_voice_rotation
+        # itself stays a pure picker (unchanged) - this decides whether
+        # the picked voice actually gets to run this cycle, or whether
+        # we advance again. Bounded at len(session_voices) attempts so a
+        # session where every single voice happens to be in stasis at
+        # once still runs *someone* rather than deadlocking the interval
+        # loop entirely - see Qualia/decisions.md item 4b.
+        attempts = 0
+        while self.hearth_stasis.get(active_voice) and attempts < len(self.session_voices):
+            active_voice = self._advance_voice_rotation()
+            attempts += 1
+
         self.root.after(0, self.save_session)  # persist the new voice_rotation_index immediately
+
+        # v0.16.15 - checked every cycle, for whoever's actually about to
+        # run, before anything else - see ensure_hearth_membership.
+        ensure_hearth_membership(self.session_name, active_voice)
 
         if active_voice == displayed:
             vstate = self._save_voice_snapshot(active_voice)
@@ -3261,7 +3472,6 @@ class FenraApp:
         qualia_notice = self._qualia_allowance_notice()
         context_notice = self._context_window_notice(context_window)
         rotation_notice = self._model_rotation_notice(tick_model)
-        groups_block = self._groups_block()
         groups_notice = self._groups_notice()
         function_bootstrap = self._function_bootstrap_notice()
 
@@ -3281,8 +3491,12 @@ class FenraApp:
             f"{context_notice}\n\n{rotation_notice}\n\n{groups_notice}"
         )
         system_prompt = f"{top_text}\n\n{bottom_text}\n\n{notices_block}".strip()
+        # v0.16.15 - no separate groups_block anymore: a group message is
+        # already sitting in recent_thoughts by the time this runs, since
+        # push_entry_to_voice writes it straight into history the moment
+        # it's spoken - see _recent_thoughts_block's discriminator.
         prompt = (
-            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{groups_block}\n\n{bottom_text}\n\n"
+            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{bottom_text}\n\n"
             f"{notices_block}"
         ).strip()
 
@@ -3314,18 +3528,35 @@ class FenraApp:
         # be something she wrote herself. See FABRICATED_RESULT_RE.
         fabricated = FABRICATED_RESULT_RE.findall(response_text)
 
-        # Broadcast the raw thought - not display_text, which may carry
-        # function-result/hallucination-flag text appended below - to
-        # every group this voice writes to, under this voice's own
-        # qualified identity ("session:voice") so a group can tell
-        # voices in different sessions apart even if they happen to
-        # share a plain name. Best-effort: a broadcast failure (e.g. a
-        # bad group name left over from a stale Set) shouldn't take down
-        # the tick itself.
+        # v0.16.15 - push delivery, not the old pull/merge (_groups_block
+        # is gone). Broadcast the raw thought - not display_text, which
+        # may carry function-result/hallucination-flag text appended
+        # below - to every group this voice writes to: the canonical
+        # log (append_group_log, Teddy/Qualia review only) plus a real
+        # push into every OTHER current roster member whose direction is
+        # "in"/"both" - see push_entry_to_voice. Best-effort throughout:
+        # a broadcast failure (e.g. a stale group name) shouldn't take
+        # down the tick itself.
         broadcast_identity = f"{self.session_name}:{active_voice}"
+        push_timestamp = datetime.now().isoformat(timespec="seconds")
         for g in self.groups_out:
             try:
-                append_group_entry(g, broadcast_identity, response_text)
+                append_group_log(g, broadcast_identity, response_text)
+                meta = load_group_meta(g)
+                if meta is None:
+                    continue
+                for member, info in meta.get("members", {}).items():
+                    if member == active_voice:
+                        continue
+                    if info.get("direction") in ("in", "both"):
+                        pushed = push_entry_to_voice(
+                            self.session_name, member, active_voice, g, response_text, push_timestamp
+                        )
+                        if g == THE_HEARTH_NAME:
+                            self._wake_hearth_resident(member)
+                        if pushed and member == self.displayed_voice and member != active_voice:
+                            self.history.append(pushed)
+                            self.root.after(0, self._add_history_row, push_timestamp)
             except (OSError, ValueError):
                 pass
 
@@ -3405,6 +3636,19 @@ class FenraApp:
             "allowed_functions": self._fresh_allowed_functions(active_voice),
         })
         save_voice_state(self.session_name, active_voice, vstate)
+
+        # v0.16.15 - The Hearth: this voice just had its one post-entry
+        # (or post-wake) tick - back to stasis until a new message
+        # arrives (see push_entry_to_voice's Hearth branch in the
+        # broadcast loop above, and _wake_hearth_resident). Only applies
+        # if this voice is actually a current Hearth resident.
+        if THE_HEARTH_NAME in self.groups_in:
+            hearth_meta = load_group_meta(THE_HEARTH_NAME)
+            if hearth_meta and active_voice in hearth_meta.get("members", {}):
+                hearth_meta["members"][active_voice]["awake"] = False
+                save_group_meta(THE_HEARTH_NAME, hearth_meta)
+            self.hearth_stasis[active_voice] = True
+            self.root.after(0, self.save_session)
 
         # Only touch the GUI widgets if the voice that just ran is also
         # the one currently displayed - otherwise leave them exactly as
