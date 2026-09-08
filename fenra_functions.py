@@ -1202,31 +1202,32 @@ def fn_create_voice(app, args):
     to keep that avoidance absolute."""
     if not args or not args[0]:
         raise ValueError(
-            "create_voice requires a name, a top, and a bottom, separated by | - e.g. "
-            "create_voice(watcher|You are Fenra, watching for patterns others miss.|Stay quiet "
-            "unless something's actually worth saying.). Nothing gets copied automatically "
+            "create_voice requires a name, a behavior, and an identity, separated by | - e.g. "
+            "create_voice(watcher|Stay quiet unless something's actually worth saying.|You are "
+            "Fenra, watching for patterns others miss.). Nothing gets copied automatically "
             "anymore - you have to write what your new voice starts thinking, every time. If you "
-            "want it to start like you, say so explicitly by passing your own current top and "
-            "bottom text."
+            "want it to start like you, say so explicitly by passing your own current behavior "
+            "and identity text."
         )
     if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["create_voice"]["params"]):
         raise ValueError(
-            "That's the params spec itself ('name|top|bottom'), not real values - it's telling "
-            "you the shape of what to pass, not literal text to copy."
+            "That's the params spec itself ('name|behavior|identity'), not real values - it's "
+            "telling you the shape of what to pass, not literal text to copy."
         )
     match = _CREATE_VOICE_RE.match(args[0])
     if not match:
         raise ValueError(
-            "create_voice requires a name, a top, and a bottom, separated by | - e.g. "
-            "create_voice(watcher|your top text here|your bottom text here). All three parts are "
-            "required now - nothing gets copied automatically."
+            "create_voice requires a name, a behavior, and an identity, separated by | - e.g. "
+            "create_voice(watcher|your behavior text here|your identity text here). All three "
+            "parts are required now - nothing gets copied automatically."
         )
     name, top, bottom = match.group(1), match.group(2).strip(), match.group(3).strip()
     if not top or not bottom:
         raise ValueError(
-            "create_voice needs real top and bottom text, not empty ones - write out what you "
-            "actually want your new voice to start thinking. If you want it to start like you, "
-            "pass your own current top and bottom explicitly rather than leaving them blank."
+            "create_voice needs real behavior and identity text, not empty ones - write out what "
+            "you actually want your new voice to start thinking. If you want it to start like "
+            "you, pass your own current behavior and identity explicitly rather than leaving them "
+            "blank."
         )
     name = name.strip().lower().replace(" ", "_")
     if not name or not _VOICE_NAME_RE.match(name):
@@ -1301,7 +1302,7 @@ def fn_create_voice(app, args):
     app.root.after(0, app.save_session)
     app.root.after(0, app._refresh_voice_list)
     return (
-        f"'{name}' created with the top/bottom you wrote for it - your model, model rotation, "
+        f"'{name}' created with the behavior/identity you wrote for it - your model, model rotation, "
         f"and context window carried over, but not allowed_functions: it starts with only the "
         f"baseline functions everyone has, nothing extra of yours - it can request_function_access "
         f"for anything gated it wants, same as you did. It's in your family group "
@@ -1817,8 +1818,8 @@ FUNCTION_REGISTRY = {
     },
     "create_voice": {
         "fn": fn_create_voice,
-        "params": "name|top|bottom",
-        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. It does NOT inherit your allowed_functions - it starts with only the baseline functions everyone has and has to request anything gated, same as you did. It joins your own family group and gets its own new one. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
+        "params": "name|behavior|identity",
+        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window carry over automatically, but you must write out the new voice's behavior (read first, every cycle) and identity (read last, right before it generates) yourself, every time. It does NOT inherit your allowed_functions - it starts with only the baseline functions everyone has and has to request anything gated, same as you did. It joins your own family group and gets its own new one. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your behavior text|your identity text).",
     },
     "list_voices": {
         "fn": fn_list_voices,
