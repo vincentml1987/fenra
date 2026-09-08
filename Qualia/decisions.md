@@ -2,6 +2,21 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-08 (v0.16.15 - connectivity redesign, Step 1 of 5: storage layer, "Engage" given)
+
+Teddy said the word. Building per the approved plan (`C:\Users\Matt\.claude\plans\plan-mode-enabled-please-crystalline-sundae.md`), which itself required a real explore-then-design pass over the actual codebase before Teddy would sign off - the plan-mode UI approval was deliberately *not* treated as satisfying the engage-gate; held for the literal word, which then came.
+
+**Step 1 (fenra.py, restart required, purely additive - no live behavior change yet):**
+- New owned-group storage tier: `groups/<name>/meta.json` (owner, kind, join_policy, visibility, roster, banned) + `groups/<name>/log.jsonl` (canonical full log), replacing the old schema-less flat `groups/<name>.jsonl` which had no owner/roster/public-private/hidden-visible concept at all (confirmed via exploration - genuinely absent, not just unused).
+- `THE_HEARTH_NAME` reserved constant; `sanitize_group_name` now strips apostrophes instead of rejecting them, so `"seed's Children"` sanitizes cleanly.
+- `ensure_own_family_group(session, voice)` - idempotent, creates `"<voice>'s Children"` (owner=voice, private, voice as sole member) - wired into the two of three voice-birth paths this step covers (new-session bootstrap, legacy-session migration). `fn_create_voice`'s own birth path is Step 2.
+- `migrate_all_legacy_groups()` - explicit, one-time, not automatic on launch (same posture as `_migrate_legacy_session`) - wraps every pre-existing `groups/<name>.jsonl` into the new layout, reconstructing a roster from every existing voice's `groups_in`/`groups_out`.
+- New state fields: `family_group` (per-voice), `hearth_stasis` (per-session).
+- **Verified** (scratch script against a throwaway copy of real `sessions/`+`groups/` data, deleted after, originals untouched): migration on the one real legacy group (`creative_writing`) produces byte-identical log content and a correctly reconstructed roster; re-running migration is a clean no-op; `ensure_own_family_group` produces a correctly owned/private/family-kind group and is itself idempotent; apostrophe sanitization confirmed working.
+- Old pull-based `_groups_block`/`read_group_tail` delivery is untouched and still live - the app's actual behavior hasn't changed yet, this step only adds new, unused-so-far machinery underneath it. `git status` confirms only `fenra.py` changed.
+
+Next: Step 2 (fenra_functions.py, hot-reloadable) - the new group functions themselves (`create_group`, rewritten `join_group`/`leave_group`, owner-admin functions, group-join request/approve/deny, `create_voice`'s snapshot-inheritance + family auto-join).
+
 ## STANDING AGENDA (started 2026-09-05, edited in place as it evolves - not a dated log entry)
 
 Set after the chorus-1 permissions bug/fix, during a deliberate slow-down over the Labor Day rest period (see the rest-period rule above). Not in priority order.

@@ -578,13 +578,34 @@ import fenra_functions
 #             Reproduced directly before and after: a scripted mid-tick
 #             voice-switch reliably cleared a voice's real functions
 #             before this fix, and no longer does after.
-FENRA_VERSION = "0.16.14"
+# 0.16.15  -  Step 1 of the connectivity/tribe redesign (Qualia/
+#             decisions.md item 4b) - storage layer only, no behavior
+#             change yet. New owned-group tier (groups/<name>/meta.json +
+#             log.jsonl, real owner/kind/join_policy/visibility/roster,
+#             replacing the old schema-less flat groups/<name>.jsonl),
+#             a one-time explicit migration path for existing groups,
+#             ensure_own_family_group wired into every voice-birth path
+#             this step covers (new-session bootstrap, legacy-session
+#             migration - fn_create_voice's own birth path is Step 2),
+#             family_group + hearth_stasis new state fields. The old
+#             pull-based _groups_block/read_group_tail delivery mechanism
+#             is untouched and still live - push delivery is Step 3.
+FENRA_VERSION = "0.16.15"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 GROUPS_DIR = os.path.join(BASE_DIR, "groups")
-GROUPS_WINDOW = 15  # max merged entries shown per prompt across all groups_in
+GROUPS_WINDOW = 15  # legacy pull-mechanism cap - superseded by push delivery, kept only for the one-time migration read
 TOPOLOGY_REFRESH_MS = 10000  # local Topology tab: re-scan every voice's groups every 10s
+
+# v0.16.15 - the connectivity/tribe redesign's floor group (see
+# Qualia/decisions.md item 4b). A singleton, no voice-owner - every voice
+# with zero group memberships at the start of its own cycle lands here
+# automatically (see ensure_hearth_membership). Reserved: cannot be created,
+# joined, invited-to, kicked/banned-from via the normal voice-facing group
+# functions - see fn_create_group/fn_group_kick/fn_group_ban's explicit
+# rejection of this name and of kind == "floor".
+THE_HEARTH_NAME = "the_hearth"
 
 DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
@@ -873,7 +894,10 @@ _GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def sanitize_group_name(name):
-    return (name or "").strip().lower().replace(" ", "_")
+    # v0.16.15 - strip apostrophes rather than reject them, so family
+    # group names ("Seed's Children") sanitize cleanly instead of
+    # tripping _GROUP_NAME_RE.
+    return (name or "").strip().lower().replace(" ", "_").replace("'", "")
 
 
 def group_path(name):
@@ -912,6 +936,11 @@ def append_group_entry(name, voice, text):
 
 
 def read_group_tail(name, limit):
+    """Legacy pull-read of the old flat groups/<name>.jsonl file - kept
+    only so the one-time migration (migrate_legacy_group, below) can read
+    a pre-v0.16.15 group's content before it's wrapped into the new
+    groups/<name>/log.jsonl. Not called anywhere in the live push-delivery
+    path - see push_entry_to_voice."""
     path = group_path(name)
     if not os.path.exists(path):
         return []
@@ -927,6 +956,220 @@ def read_group_tail(name, limit):
         except (json.JSONDecodeError, AttributeError):
             continue
     return out
+
+
+# ------------------------------------------------- groups v0.16.15 (owned) --
+# The connectivity/tribe redesign (Qualia/decisions.md item 4b). Replaces
+# the old schema-less groups/<name>.jsonl (no owner, no roster, no public/
+# private or hidden/visible concept - pure implicit-existence-by-file) with
+# a real per-group entity, following the same state.json+history.jsonl
+# convention already used per-session and per-voice, one level down:
+#   groups/<name>/meta.json   - owner, kind, join_policy, visibility,
+#                                members{voice: {direction, joined}}, banned
+#   groups/<name>/log.jsonl   - canonical full log, Teddy/Qualia review
+#                                only, written by append_group_log at the
+#                                same moment a message is pushed to every
+#                                listening member's own history.jsonl -
+#                                never read back into any voice's prompt.
+GROUP_META_FILENAME = "meta.json"
+GROUP_LOG_FILENAME = "log.jsonl"
+
+
+def owned_group_dir(name):
+    name = sanitize_group_name(name)
+    if not name or not _GROUP_NAME_RE.match(name):
+        raise ValueError(
+            "group names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces and apostrophes get stripped/replaced automatically) - got '{name}'"
+        )
+    return os.path.join(GROUPS_DIR, name)
+
+
+def ensure_owned_group_dir(name):
+    path = owned_group_dir(name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def group_meta_path(name):
+    return os.path.join(owned_group_dir(name), GROUP_META_FILENAME)
+
+
+def group_log_path(name):
+    return os.path.join(owned_group_dir(name), GROUP_LOG_FILENAME)
+
+
+def default_group_meta(owner=None, kind="adhoc", join_policy="public", visibility="visible"):
+    return {
+        "owner": owner,          # voice name, or None for kind == "floor" (The Hearth)
+        "kind": kind,            # "family" | "adhoc" | "floor"
+        "join_policy": join_policy,  # "public" | "private" - meaningless for "floor"
+        "visibility": visibility,     # "visible" | "hidden"
+        "members": {},            # voice -> {"direction": "in"|"out"|"both", "joined": timestamp}
+        "banned": [],
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def group_exists(name):
+    return os.path.exists(group_meta_path(name))
+
+
+def load_group_meta(name):
+    path = group_meta_path(name)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def save_group_meta(name, meta):
+    ensure_owned_group_dir(name)
+    with open(group_meta_path(name), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+
+def create_group_if_missing(name, owner=None, kind="adhoc", join_policy="public", visibility="visible", initial_member=None):
+    """Idempotent. Returns the (possibly pre-existing) meta dict."""
+    existing = load_group_meta(name)
+    if existing is not None:
+        return existing
+    meta = default_group_meta(owner=owner, kind=kind, join_policy=join_policy, visibility=visibility)
+    if initial_member:
+        meta["members"][initial_member] = {
+            "direction": "both",
+            "joined": meta["created"],
+        }
+    save_group_meta(name, meta)
+    return meta
+
+
+def append_group_log(name, voice, text):
+    """The canonical, complete record of a group's activity - Teddy/Qualia
+    review only (see Qualia/decisions.md's 'private means opaque' /
+    'canonical log' design). Never read back into any voice's own prompt -
+    that's push_entry_to_voice's job, and it writes directly to the
+    receiving voice's own history.jsonl instead. Same tolerant-retry shape
+    as the old append_group_entry, for the same reason (concurrent
+    writers)."""
+    ensure_owned_group_dir(name)
+    entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "voice": voice,
+        "text": text,
+    }
+    line = json.dumps(entry, ensure_ascii=False) + "\n"
+    path = group_log_path(name)
+    for attempt in range(5):
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+            return
+        except OSError:
+            if attempt == 4:
+                raise
+            time.sleep(0.1)
+
+
+def read_group_log_tail(name, limit):
+    """Internal/Teddy-Qualia tooling only (e.g. a future Topology-style
+    viewer) - never registered as a voice-facing function. Reading a
+    group's history beyond what's already been pushed into a voice's own
+    history.jsonl is exactly the 'world exploration' territory explicitly
+    deferred, not part of this redesign."""
+    path = group_log_path(name)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except OSError:
+        return []
+    out = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return out
+
+
+def list_owned_groups():
+    if not os.path.isdir(GROUPS_DIR):
+        return []
+    return sorted(
+        d for d in os.listdir(GROUPS_DIR)
+        if os.path.isdir(os.path.join(GROUPS_DIR, d)) and group_exists(d)
+    )
+
+
+def migrate_legacy_group(name, known_voices_groups_in, known_voices_groups_out):
+    """One-time, explicit (not automatic on app start - see the GUI
+    migration trigger), for a pre-v0.16.15 groups/<name>.jsonl. Wraps its
+    content into groups/<name>/log.jsonl unchanged, synthesizes a meta.json
+    (kind='adhoc', join_policy='public', direction='both' for every voice
+    the migration is told already had this group in its own groups_in/out -
+    grandfathered in at full access, since the old system had no direction
+    concept to restrict against). known_voices_groups_in/out are
+    {voice_name: [group_names]} dicts the caller assembles by scanning
+    every voice's own state.json - this function doesn't scan disk itself,
+    keeping it testable against a fabricated mapping."""
+    if group_exists(name):
+        return load_group_meta(name)  # already migrated, idempotent
+    legacy_path = group_path(name)
+    if not os.path.exists(legacy_path):
+        raise ValueError(f"no legacy group '{name}' to migrate")
+    meta = default_group_meta(owner=None, kind="adhoc", join_policy="public", visibility="visible")
+    now = meta["created"]
+    for voice, groups in known_voices_groups_in.items():
+        if name in groups:
+            meta["members"].setdefault(voice, {"direction": "in", "joined": now})
+    for voice, groups in known_voices_groups_out.items():
+        if name in groups:
+            entry = meta["members"].setdefault(voice, {"direction": "out", "joined": now})
+            if entry["direction"] != "out":
+                entry["direction"] = "both"
+    save_group_meta(name, meta)
+    ensure_owned_group_dir(name)
+    with open(legacy_path, "r", encoding="utf-8") as src:
+        content = src.read()
+    with open(group_log_path(name), "w", encoding="utf-8") as dst:
+        dst.write(content)
+    return meta
+
+
+def migrate_all_legacy_groups():
+    """Explicit, one-time entry point - not called automatically anywhere
+    (no auto-run-on-launch, unlike _migrate_legacy_session's per-session
+    lazy trigger). Scans every session's every voice for its groups_in/
+    groups_out, then migrates every pre-v0.16.15 groups/<name>.jsonl found
+    on disk that doesn't already have a groups/<name>/ directory. Meant to
+    be run once, deliberately, before push delivery goes live (Step 3) -
+    call it from a scratch/maintenance script or a future GUI action, not
+    from app startup."""
+    groups_in_map = {}
+    groups_out_map = {}
+    for session_name in list_sessions():
+        for voice_name in list_voices(session_name):
+            vstate = load_voice_state(session_name, voice_name)
+            key = f"{session_name}:{voice_name}"
+            groups_in_map[key] = list(vstate.get("groups_in", []))
+            groups_out_map[key] = list(vstate.get("groups_out", []))
+
+    migrated = []
+    if os.path.isdir(GROUPS_DIR):
+        for fname in os.listdir(GROUPS_DIR):
+            if not fname.endswith(".jsonl"):
+                continue
+            name = fname[: -len(".jsonl")]
+            if group_exists(name):
+                continue
+            migrate_legacy_group(name, groups_in_map, groups_out_map)
+            migrated.append(name)
+    return migrated
 
 
 def list_sessions():
@@ -976,6 +1219,15 @@ def default_session_state():
         # for every session that predates this feature - identical
         # behavior to before, see _execute_one_call's gate.
         "permission_mode": False,
+        # v0.16.15 - The Hearth's stasis/wake bookkeeping (see
+        # ensure_hearth_membership, the _tick skip-loop, and
+        # push_entry_to_voice's Hearth-wake side effect). voice_name ->
+        # bool, True while that voice is skipped in rotation waiting on a
+        # new Hearth message. Cheap session-level mirror of the real
+        # per-member "awake" flag in groups/the_hearth/meta.json, kept
+        # here so the rotation skip-loop doesn't need a disk read every
+        # single advance.
+        "hearth_stasis": {},
     }
 
 
@@ -1001,10 +1253,15 @@ def default_voice_state():
         "inbox": [],  # direct messages from other voices via tell_voice - see _voice_inbox_block
         # v0.16.9 - only meaningful inside a permission_mode session (see
         # default_session_state); harmless/unread otherwise. Which
-        # functions this voice may call, beyond the two always-global
-        # ones (functions, request_function_access) - see
-        # _execute_one_call's gate.
+        # functions this voice may call, beyond the growing set that's
+        # always-global regardless - see _execute_one_call's gate.
         "allowed_functions": [],
+        # v0.16.15 - this voice's own owned family group ("<voice>'s
+        # Children"), set once at creation via ensure_own_family_group,
+        # never changes afterward. Read-through mirror only for display -
+        # groups/<name>/meta.json is the real source of truth for
+        # membership/ownership. See Qualia/decisions.md item 4b.
+        "family_group": "",
     }
 
 
@@ -1123,6 +1380,43 @@ def save_voice_state(session_name, voice_name, state):
     ensure_voice_dir(session_name, voice_name)
     with open(voice_state_path(session_name, voice_name), "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
+
+
+def family_group_name(voice_name):
+    return f"{voice_name}'s Children"
+
+
+def ensure_own_family_group(session_name, voice_name):
+    """v0.16.15 - idempotent. Guarantees every voice owns a group
+    containing itself the instant it exists, regardless of which of the
+    three ways a voice can come into being created it (fn_create_voice,
+    a brand-new session's first voice, or legacy-session migration) - see
+    Qualia/decisions.md item 4b. Family visibility is deliberately
+    one-generation-local: this only ever touches the given voice's own
+    group, never a parent's or child's, so a grandchild is never
+    automatically pulled into a grandparent's group by this function.
+    Also updates the voice's own family_group field and groups_in/out
+    mirror if it isn't set yet - callers that already hold a loaded
+    vstate should re-load or update their own copy after calling this."""
+    gname = family_group_name(voice_name)
+    meta = create_group_if_missing(
+        gname, owner=voice_name, kind="family", join_policy="private",
+        visibility="visible", initial_member=voice_name,
+    )
+    vstate = load_voice_state(session_name, voice_name)
+    changed = False
+    if not vstate.get("family_group"):
+        vstate["family_group"] = gname
+        changed = True
+    if gname not in vstate.get("groups_in", []):
+        vstate.setdefault("groups_in", []).append(gname)
+        changed = True
+    if gname not in vstate.get("groups_out", []):
+        vstate.setdefault("groups_out", []).append(gname)
+        changed = True
+    if changed:
+        save_voice_state(session_name, voice_name, vstate)
+    return meta
 
 
 def load_voice_history(session_name, voice_name):
@@ -1693,6 +1987,7 @@ class FenraApp:
         voice_state["max_tokens"] = self.max_tokens_var.get()
         save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
         open(voice_history_path(name, DEFAULT_VOICE_NAME), "a", encoding="utf-8").close()
+        ensure_own_family_group(name, DEFAULT_VOICE_NAME)
 
         session_state = default_session_state()
         session_state["host"] = self.host_var.get()
@@ -2005,6 +2300,7 @@ class FenraApp:
             if key in old_state:
                 voice_state[key] = old_state[key]
         save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
+        ensure_own_family_group(name, DEFAULT_VOICE_NAME)
 
         old_history = os.path.join(session_dir(name), HISTORY_FILENAME)
         if os.path.exists(old_history):
