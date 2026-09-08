@@ -12,3 +12,6 @@ venv/
 
 # Teddy's personal journals to Qualia - not for github.
 /Teddy's Journals/
+
+# Real Claude Code usage/cost data tied to Teddy's own account - not for github.
+/usage/

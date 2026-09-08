@@ -2,6 +2,12 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-08 (real usage-based qualia_allowance - a new standing practice)
+
+Teddy gave direct access to real numbers: `usage/usage.bat` runs `claude /cost`, writing `usage/usage.txt` - session (fixed 5h window) and week (fixed 168h window) usage percentages with reset timestamps. New standing practice, also in persistent memory as `qualia-allowance-policy.md`: run this on every Fenra ping, not just scheduled check-ins; compute an hours-to-75% runway for each measure (using a tracked delta between samples once two exist in the same window - `usage/usage_history.jsonl` - rather than just "average since window start," since usage reflects *all* Claude Code activity on the machine, not only Fenra work); set `qualia_allowance` off whichever measure is more binding, via a proposed (not Teddy-specified, flagged as my own mapping) tier: <1h to 75% or already past -> 1,000; 1-4h -> 10,000; 4-12h -> 25,000; 12h+ -> 50,000 (the original default).
+
+**First real application**: session was 14% (2.51h to 75%), week was 95% (already well past 75% on the average-rate math, resetting in <3h) - week was binding, set `tribe-2`'s allowance to **1,000**. Entirely Qualia-side (run a script, do math, write `qualia_allowance_set.txt` same as always) - never touches `fenra.py`/`fenra_functions.py`, not gated by the engage-gate rule at all.
+
 ## 2026-09-08 (create_voice: top/bottom renamed to behavior/identity, voice-facing only)
 
 Prompted by watching `tribe-1`/`tribe-2`'s seed genuinely struggle with `create_voice`'s params (`watcher="Fenra"|...` instead of a plain name) - Teddy's read: "top"/"bottom" are unhelpfully abstract labels for a voice trying to figure out what to write. Confirmed directly, not assumed: top (read first, every cycle) -> "behavior"; bottom (read last, right before generating, where a model's attention actually lands most - Teddy's own correction when I initially proposed the pairing backwards) -> "identity". Scope Teddy's own call: voice-facing text only (error messages, params spec, registry description, success message) - internal field names (`top`/`bottom` in state.json, GUI labels, existing docstrings) deliberately untouched. Example text in the error messages swapped to match the new labels, not just relabeled in place. Hot-reloadable, `tribe-2` picked it up live, no restart. Verified via scratch session.
