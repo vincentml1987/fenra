@@ -34,8 +34,8 @@ item in the UI I can view and, in some cases, update").
 | Field | Today | Proposed |
 |---|---|---|
 | Which voice is being viewed | `Voice:` combobox, one at a time | **A real list** (left pane) of every voice in the session - click to view/edit, same pattern as History tab's listbox already uses |
-| top (behavior text) | Editable text box | Stays editable, in the per-voice detail panel |
-| bottom (identity text) | Editable text box | Stays editable, in the per-voice detail panel |
+| top | Editable text box, **no visible label at all today** (it's just an unlabeled box in a fixed position) | Editable, **labeled "Behavior"** (extends the `create_voice` voice-facing rename into the GUI itself, per Teddy's direct call - same terms: top = read first, every cycle) |
+| bottom | Editable text box, also unlabeled | Editable, **labeled "Identity"** (bottom = read last, right before generating - where a model's attention actually lands most) |
 | model, max_tokens | Dropdown/entry | Stays editable |
 | context_window | Entry+Set | Stays editable |
 | model_rotation | Display+entry+Set | Stays editable |
@@ -43,33 +43,40 @@ item in the UI I can view and, in some cases, update").
 | desires | Read-only display | Stays read-only (Fenra-set only, by design) |
 | inbox (tell_voice messages) | Not shown in the GUI at all | Worth adding read-only, low effort, same pattern as desires |
 | family_group | Not shown | Show read-only, one line |
-| groups_in / groups_out | Crude comma-separated entry+Set fields, no roster context | Replace with a read-only list of "which groups, what direction" - actual membership changes now go through the Group object's own admin (below), not a blind text-replace field that could silently violate the new consent model |
-| history | Separate "History" tab, but only ever shows whichever voice happens to be *displayed* on the main tab | **Proposed: fold into the per-voice detail panel as a sub-tab** ("History") instead of a separate top-level tab tied to a hidden "currently displayed" concept - directly addresses a real gap: right now there's no way to see a *different* voice's history without first switching the main dropdown to it |
+| groups_in / groups_out | Crude comma-separated entry+Set fields, no roster context | Replace with a read-only list of "which groups, what direction" - view only, no GUI editing (**decided**: no direct group editing at all, see Groups below) |
+| history | Separate "History" tab | **Stays standalone, unchanged** (**decided**) - it's specifically the raw Ollama request/response log, a different purpose than the new Context view below, not something to fold in |
+| **context (live, current)** | **Doesn't exist** - the closest thing is picking a past History entry and reading raw JSON | **New**, per Teddy's direct ask: a "Context" sub-view in the voice detail panel showing what this voice's *next* prompt would actually look like right now - Behavior and Identity text clearly labeled and visible (not buried in JSON), assembled live from current state using the same logic `_tick` uses, not tied to any one past cycle. Distinct from History: History is the permanent record of what was actually sent for a completed cycle; Context is "what would go out if she ran right now." |
 | New voice / Delete voice | Buttons, main tab | Stay, near the voice list |
 
-### Group (does not exist as a UI concept at all today)
+### Group (does not exist as a UI concept at all today) - **view-only, no admin editing from the GUI (decided)**
 | Field | Today | Proposed |
 |---|---|---|
 | Which group | Nothing - Topology tab shows a global graph, not a per-session list; no roster view exists | **New tab**: a list (left pane) of every group *in the current session* - name, kind, owner |
-| owner, kind, join_policy, visibility | Not shown | Detail panel, read-only for v1 |
-| members + direction | **Not visible anywhere in the GUI right now** - this is the actual gap that prompted this whole conversation | Detail panel: a real roster - voice name, direction (in/out/both) |
+| owner, kind, join_policy, visibility | Not shown | Detail panel, **read-only** |
+| members + direction | **Not visible anywhere in the GUI right now** - this is the actual gap that prompted this whole conversation | Detail panel: a real roster - voice name, direction (in/out/both) - **read-only, no add/remove/kick from here** |
 | banned | Not shown | Show read-only, small list |
 
 ## Proposed tab layout
 
 - **Session** (renamed from "Fenra") - host/interval/max_tokens/permission_mode (read-only)/qualia_allowance/Start-Stop/status. Session picker removed entirely, moved to File menu.
-- **Voices** (new) - list of every voice (left) + detail panel (right): behavior/identity text, model controls, allowed_functions (baseline read-only + gated grant/revoke), desires, inbox, family_group, group memberships (read-only), and a **History** sub-tab showing that specific voice's full history (replaces the old standalone History tab's "whichever voice is displayed" ambiguity).
-- **Groups** (new) - list of every group in the session (left) + detail panel (right): owner/kind/join_policy/visibility, roster with direction, banned list.
+- **Voices** (new) - list of every voice (left) + detail panel (right): Behavior/Identity text (renamed, see above), model controls, allowed_functions (baseline read-only + gated grant/revoke), desires, inbox, family_group, group memberships (read-only), and a **Context** sub-view (live, current-state preview of the next prompt - see above).
+- **Groups** (new) - list of every group in the session (left) + detail panel (right): owner/kind/join_policy/visibility, roster with direction, banned list. View-only.
+- **History** - stays exactly where it is, standalone, unchanged - the raw Ollama request/response log.
 - **Chat** - unchanged.
 - **The Hearth** - unchanged.
 - **Topology** - kept, but its actual job changes now that Groups exists: Topology stays the *cross-session, whole-disk* bird's-eye graph (every session, every voice, every group, all at once) - genuinely different from Groups' *in-session, detailed, single-object* view. Worth being explicit about that distinction so they don't feel redundant.
 
 **Menu bar** (new, doesn't exist today): File > New Session..., File > Sessions > (dynamic list, click to load), File > Save Session, File > Exit.
 
-## Open questions, not decided here
+## Decided in review (2026-09-08)
 
-1. **Should the Groups tab allow direct admin edits from the GUI** (add/remove a member, change join_policy, kick someone) **bypassing the consent flow the redesign just built**, the way you already can for `groups_in`/`groups_out` today? I'd lean yes for the same reason Hearth removal already works that way - you and Qualia sit outside what a voice can see or touch by design - but it's worth deciding on purpose rather than defaulting into it.
-2. **History as a per-voice sub-tab** removes the standalone History tab entirely - confirm that's actually wanted, not just my own read of "each object gets its own view."
-3. **Scope of this pass**: this document covers Session/Voice/Group only, since those are the three real objects the connectivity redesign created. Chat/Hearth/Topology are treated as already-fine and left alone - flag if you want any of those reconsidered too.
+- No direct group editing from the GUI - Groups tab is view-only.
+- History stays a standalone tab, unchanged - it's specifically the literal Ollama prompt/response log, not something to merge with anything else.
+- New: a Context view per voice - what her next prompt would actually look like right now, Behavior/Identity clearly visible, not a JSON dump.
+- The `create_voice` behavior/identity rename extends into the GUI itself - the two text boxes get real labels for the first time ("Behavior", "Identity") instead of being unlabeled boxes in a fixed position.
+
+## Remaining open question
+
+**Scope of this pass**: this document covers Session/Voice/Group only, since those are the three real objects the connectivity redesign created. Chat/Hearth/Topology are treated as already-fine and left alone - flag if you want any of those reconsidered too.
 
 Nothing built. This needs "Engage" once you've reviewed it - real GUI restructuring touches `fenra.py`'s core widget layout throughout, not a hot-reload change.
