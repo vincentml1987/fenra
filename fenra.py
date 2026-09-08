@@ -632,7 +632,36 @@ import fenra_functions
 #             need an explicit request/grant like any voice. Identity
 #             notice fixed to actually name the baseline set, since
 #             "none yet" stopped being true the moment baseline existed.
-FENRA_VERSION = "0.16.16"
+# 0.16.17  -  GUI redesign (Qualia/ui-redesign-proposal.md), prompted
+#             directly by watching tribe-1/tribe-2 with no way to see a
+#             group's roster or browse more than one voice at a time.
+#             New File menu (Sessions cascade replaces the old session
+#             Combobox entirely). New Voices tab: a real list of every
+#             voice + a detail panel split into Framing (Behavior/
+#             Identity text, the v0.16.16 rename now reflected as real
+#             GUI labels for the first time) and Context (parameters,
+#             a real allowed_functions grant/revoke dual-list - the
+#             first GUI surface for permissions ever, inbox, group
+#             messages received, desires, family_group, group
+#             memberships). New Groups tab: a session-scoped, view-only
+#             roster of every group a session's voices touch - owner,
+#             kind, join_policy, visibility, members with direction,
+#             banned list; deliberately no admin editing from the GUI.
+#             permission_mode shown read-only for the first time.
+#             History/Chat/The Hearth/Topology unchanged. All relocated
+#             widgets (top_box/bottom_box/model_var/etc.) keep their
+#             original attribute names - _current_voice_state_from_
+#             widgets/_save_voice_snapshot needed zero changes. Verified
+#             by launching the real app twice (clean, no traceback) and
+#             testing the new allowed_functions split + session-scoped
+#             group-name logic directly against real on-disk data - the
+#             latter caught and fixed a real pre-existing duplicate-name
+#             bug (groups_in/out store a voice's raw family-group string,
+#             list_owned_groups() returns the sanitized one - both
+#             resolve to the same group via load_group_meta's own
+#             sanitizing, but looked like two groups without normalizing
+#             first - see _session_group_names).
+FENRA_VERSION = "0.16.17"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -1675,86 +1704,75 @@ class FenraApp:
     # ---------------------------------------------------------------- UI --
 
     def _build_ui(self):
+        self._build_menu()
+
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
 
         self.talk_tab = ttk.Frame(notebook)
+        self.voices_tab = ttk.Frame(notebook)
+        self.groups_tab = ttk.Frame(notebook)
         self.chat_tab = ttk.Frame(notebook)
         self.history_tab = ttk.Frame(notebook)
         self.topology_tab = ttk.Frame(notebook)
         self.hearth_tab = ttk.Frame(notebook)
-        notebook.add(self.talk_tab, text="Fenra")
+        notebook.add(self.talk_tab, text="Session")
+        notebook.add(self.voices_tab, text="Voices")
+        notebook.add(self.groups_tab, text="Groups")
         notebook.add(self.chat_tab, text="Chat")
         notebook.add(self.history_tab, text="History")
         notebook.add(self.topology_tab, text="Topology")
         notebook.add(self.hearth_tab, text="The Hearth")
 
         self._build_talk_tab()
+        self._build_voices_tab()
+        self._build_groups_tab()
         self._build_chat_tab()
         self._build_history_tab()
         self._build_topology_tab()
         self._build_hearth_tab()
 
+    def _build_menu(self):
+        """v0.16.17 - GUI redesign (Qualia/ui-redesign-proposal.md).
+        Session picking moves out of the tab body entirely - previously
+        a Combobox inside the main tab (session_combo/session_var,
+        removed below), now a real File menu. No menu bar existed in
+        this app before this."""
+        menubar = tk.Menu(self.root)
+        self.file_menu = tk.Menu(menubar, tearoff=False)
+        self.file_menu.add_command(label="New Session...", command=self.new_session)
+        self.sessions_menu = tk.Menu(self.file_menu, tearoff=False)
+        self.file_menu.add_cascade(label="Sessions", menu=self.sessions_menu)
+        self.file_menu.add_command(label="Save Session", command=self.save_session)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Exit", command=self.root.quit)
+        menubar.add_cascade(label="File", menu=self.file_menu)
+        self.root.config(menu=menubar)
+
+    def _refresh_sessions_menu(self):
+        """Rebuilds the File > Sessions cascade from whatever's actually
+        on disk right now - same data list_sessions() always provided
+        the old session_combo, just re-populated as menu entries instead
+        of combobox values. Called everywhere the old _refresh_session_
+        list was (end of _load_session, end of new_session via
+        _load_session)."""
+        self.sessions_menu.delete(0, "end")
+        for name in list_sessions():
+            self.sessions_menu.add_command(label=name, command=lambda n=name: self._load_session(n))
+
     def _build_talk_tab(self):
+        """v0.16.17 - GUI redesign. Session-level controls only now -
+        session/voice picking, all per-voice framing/parameters, and
+        group membership all moved to the menu bar / Voices tab / Groups
+        tab respectively (Qualia/ui-redesign-proposal.md)."""
         frame = self.talk_tab
 
-        # --- session row ---
-        session_row = ttk.Frame(frame)
-        session_row.pack(fill="x", padx=6, pady=(6, 0))
-
-        ttk.Label(session_row, text="Session:").pack(side="left")
-        self.session_var = tk.StringVar(value="")
-        self.session_combo = ttk.Combobox(session_row, textvariable=self.session_var, width=24, state="readonly")
-        self.session_combo.pack(side="left", padx=(2, 4))
-        self.session_combo.bind("<<ComboboxSelected>>", self._on_session_selected)
-
-        ttk.Button(session_row, text="New...", command=self.new_session).pack(side="left", padx=2)
-        ttk.Button(session_row, text="Save session", command=self.save_session).pack(side="left", padx=2)
-        ttk.Button(session_row, text="↻", width=3, command=self._refresh_session_list).pack(side="left", padx=2)
-
-        self.session_status_var = tk.StringVar(value="")
-        ttk.Label(session_row, textvariable=self.session_status_var, foreground="#666").pack(side="left", padx=(10, 0))
-
-        # --- voice row (v0.16.2) --- a session is the whole (external-
-        # facing identity - chat, Qualia allowance); a voice is one
-        # internal part, individually configured, round-robined through
-        # automatically by the tick loop (see _advance_voice_rotation).
-        # This picker only controls what's shown/edited in the widgets
-        # below - it does NOT pin the live loop to that voice; the
-        # round-robin runs regardless of what's displayed here. See
-        # _tick for how a voice not currently shown still gets its turn.
-        voice_row = ttk.Frame(frame)
-        voice_row.pack(fill="x", padx=6, pady=(4, 0))
-
-        ttk.Label(voice_row, text="Voice:").pack(side="left")
-        self.voice_var = tk.StringVar(value="")
-        self.voice_combo = ttk.Combobox(voice_row, textvariable=self.voice_var, width=20, state="readonly")
-        self.voice_combo.pack(side="left", padx=(2, 4))
-        self.voice_combo.bind("<<ComboboxSelected>>", self._on_voice_selected)
-
-        ttk.Button(voice_row, text="New voice...", command=self.new_voice).pack(side="left", padx=2)
-        ttk.Button(voice_row, text="Delete voice", command=self.delete_voice).pack(side="left", padx=2)
-        ttk.Button(voice_row, text="Save voice", command=self.save_voice).pack(side="left", padx=2)
-
-        # --- controls row ---
         controls = ttk.Frame(frame)
         controls.pack(fill="x", padx=6, pady=6)
 
         ttk.Label(controls, text="Host:").pack(side="left")
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         ttk.Entry(controls, textvariable=self.host_var, width=22).pack(side="left", padx=(2, 10))
-
-        ttk.Label(controls, text="Model:").pack(side="left")
-        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        self.model_combo = ttk.Combobox(controls, textvariable=self.model_var, width=20, state="readonly")
-        self.model_combo.pack(side="left", padx=(2, 2))
-        # Picking a model here has the identical "gets clobbered by the
-        # rotation before ever running" problem fn_set_model had - same
-        # fix, same flag, now tracked per voice (_voice_manual_override)
-        # since only one voice's model is shown here at a time. See
-        # _advance_model_rotation.
-        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_picked)
-        ttk.Button(controls, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
 
         ttk.Label(controls, text="Interval (s):").pack(side="left")
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
@@ -1770,97 +1788,173 @@ class FenraApp:
         self.status_var = tk.StringVar(value="Idle")
         ttk.Label(controls, textvariable=self.status_var).pack(side="right")
 
-        # --- 10 / 80 / 10 stacked text boxes ---
-        body = ttk.Frame(frame)
-        body.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)   # top box          - 10%
-        body.rowconfigure(1, weight=8)   # middle box       - 80%
-        body.rowconfigure(2, weight=0)   # desire row       - fixed height
-        body.rowconfigure(3, weight=0)   # allowance row    - fixed height
-        body.rowconfigure(4, weight=0)   # context window row - fixed height
-        body.rowconfigure(5, weight=0)   # model rotation row - fixed height
-        body.rowconfigure(6, weight=0)   # groups row       - fixed height
-        body.rowconfigure(7, weight=1)   # bottom box       - 10%
-
-        self.top_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.top_box.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
-
-        self.middle_box = scrolledtext.ScrolledText(body, wrap="word", state="disabled")
-        self.middle_box.grid(row=1, column=0, sticky="nsew", pady=4)
-
-        # Desires: a queue, set only by Fenra herself (via add_desire),
-        # visible here but not editable from the GUI. Each has a lifespan
-        # in loop ticks (or is persistent) - see _sorted_desires/_tick_
-        # desires. Whole queue sits in the prompt between her last thought
-        # and the bottom box - see _tick.
-        desire_row = ttk.Frame(body)
-        desire_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-        desire_row.columnconfigure(0, weight=1)
-        ttk.Label(desire_row, text="Desires:").pack(anchor="w")
-        self.desires_box = scrolledtext.ScrolledText(desire_row, wrap="word", height=3, state="disabled")
-        self.desires_box.pack(fill="x", expand=True)
+        second_row = ttk.Frame(frame)
+        second_row.pack(fill="x", padx=6, pady=(0, 6))
 
         # Qualia allowance: how many characters of send_message(qualia|...)
-        # text she can still spend. Unlike Desire, this one is set directly
-        # (not auto-replenishing) by Teddy here in the GUI, or by Qualia via
-        # qualia_allowance_set.txt (see _poll_qualia_allowance_set) based on
-        # usage figures Teddy shares with her - visible to Fenra every
-        # prompt via _qualia_allowance_notice, enforced in fn_send_message.
-        allowance_row = ttk.Frame(body)
-        allowance_row.grid(row=3, column=0, sticky="ew", pady=(4, 0))
-        ttk.Label(allowance_row, text="Qualia allowance (chars):").pack(side="left")
+        # text she can still spend. Not auto-replenishing - set directly
+        # by Teddy here, or by Qualia via qualia_allowance_set.txt (see
+        # _poll_qualia_allowance_set), now based on real usage data - see
+        # Qualia/decisions.md's 2026-09-08 allowance-policy entry.
+        ttk.Label(second_row, text="Qualia allowance (chars):").pack(side="left")
         self.qualia_allowance_var = tk.StringVar(value=str(DEFAULT_QUALIA_ALLOWANCE))
-        allowance_entry = ttk.Entry(allowance_row, textvariable=self.qualia_allowance_var, width=8)
+        allowance_entry = ttk.Entry(second_row, textvariable=self.qualia_allowance_var, width=8)
         allowance_entry.pack(side="left", padx=(4, 4))
         allowance_entry.bind("<Return>", lambda event: self.set_qualia_allowance())
-        ttk.Button(allowance_row, text="Set", command=self.set_qualia_allowance).pack(side="left")
+        ttk.Button(second_row, text="Set", command=self.set_qualia_allowance).pack(side="left", padx=(0, 16))
 
-        # Context window: how many of her own past cycles (from history)
-        # go into her prompt instead of just the single most recent. Both
-        # Teddy (here) and Fenra (set_context_window(n)) can set it - see
-        # _recent_thoughts_block/_context_window_notice.
-        context_window_row = ttk.Frame(body)
-        context_window_row.grid(row=4, column=0, sticky="ew", pady=(4, 0))
-        ttk.Label(context_window_row, text="Context window (cycles):").pack(side="left")
+        # v0.16.17 - shown for the first time. Decided once at session
+        # creation, never toggled afterward by any function or GUI
+        # control - read-only, just visibility that was missing before.
+        ttk.Label(second_row, text="Permission mode:").pack(side="left")
+        self.permission_mode_display_var = tk.StringVar(value="off")
+        ttk.Label(second_row, textvariable=self.permission_mode_display_var, foreground="#666").pack(
+            side="left", padx=(4, 0)
+        )
+
+        self.session_status_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.session_status_var, foreground="#666").pack(
+            anchor="w", padx=6, pady=(0, 6)
+        )
+
+    def _build_voice_detail_panel(self, parent):
+        """v0.16.17 - the Voices tab's right-hand detail panel: Framing
+        (editable - what this voice actually is) above, Context (a
+        dashboard of her current state - parameters, permissions,
+        what's been sent to her) below. Every widget here is the SAME
+        widget that used to live directly in the old Fenra tab -
+        relocated, not cloned, so _load_voice/_current_voice_state_from_
+        widgets/_save_voice_snapshot need zero changes beyond the new
+        _refresh_*_display calls added at the bottom of _load_voice."""
+        framing = ttk.LabelFrame(parent, text="Framing")
+        framing.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        framing.columnconfigure(0, weight=1)
+        framing.rowconfigure(1, weight=1)   # behavior box
+        framing.rowconfigure(3, weight=3)   # transcript (middle box)
+        framing.rowconfigure(5, weight=1)   # identity box
+
+        # v0.16.16's create_voice rename extended into the GUI itself -
+        # these boxes had no visible label at all before this.
+        ttk.Label(framing, text="Behavior (read first, every cycle):").grid(row=0, column=0, sticky="w")
+        self.top_box = scrolledtext.ScrolledText(framing, wrap="word", height=4)
+        self.top_box.grid(row=1, column=0, sticky="nsew", pady=(0, 4))
+
+        ttk.Label(framing, text="Transcript:").grid(row=2, column=0, sticky="w")
+        self.middle_box = scrolledtext.ScrolledText(framing, wrap="word", state="disabled")
+        self.middle_box.grid(row=3, column=0, sticky="nsew", pady=(0, 4))
+
+        ttk.Label(framing, text="Identity (read last, right before generating):").grid(row=4, column=0, sticky="w")
+        self.bottom_box = scrolledtext.ScrolledText(framing, wrap="word", height=4)
+        self.bottom_box.grid(row=5, column=0, sticky="nsew")
+
+        context = ttk.LabelFrame(parent, text="Context")
+        context.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+        params_row = ttk.Frame(context)
+        params_row.pack(fill="x", pady=(2, 4))
+        ttk.Label(params_row, text="Model:").pack(side="left")
+        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
+        self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=18, state="readonly")
+        self.model_combo.pack(side="left", padx=(2, 2))
+        # Same "gets clobbered by the rotation before ever running" flag
+        # fn_set_model has, tracked per voice - see _advance_model_rotation.
+        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_picked)
+        ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
+
+        ttk.Label(params_row, text="Context window (cycles):").pack(side="left")
         self.context_window_var = tk.StringVar(value=str(DEFAULT_CONTEXT_WINDOW))
-        context_window_entry = ttk.Entry(context_window_row, textvariable=self.context_window_var, width=6)
+        context_window_entry = ttk.Entry(params_row, textvariable=self.context_window_var, width=6)
         context_window_entry.pack(side="left", padx=(4, 4))
         context_window_entry.bind("<Return>", lambda event: self.set_context_window())
-        ttk.Button(context_window_row, text="Set", command=self.set_context_window).pack(side="left")
+        ttk.Button(params_row, text="Set", command=self.set_context_window).pack(side="left")
 
-        # Model rotation: view + set, both Teddy (here) and Qualia
-        # (qualia_rotation_set.txt) can view and alter it directly - not
-        # just watch Fenra build it herself via add_to_rotation. Display
-        # label always mirrors self.model_rotation; the Entry/Set pair
-        # replaces the whole rotation at once (comma or pipe separated,
-        # "clear" to empty it) via the same _apply_model_rotation shared
-        # with the external poll. See _advance_model_rotation for how the
-        # rotation actually drives which model runs each cycle.
-        rotation_row = ttk.Frame(body)
-        rotation_row.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        rotation_row = ttk.Frame(context)
+        rotation_row.pack(fill="x", pady=(0, 4))
         ttk.Label(rotation_row, text="Model rotation:").pack(side="left")
         self.model_rotation_display_var = tk.StringVar(value="(empty - single fixed model)")
         ttk.Label(rotation_row, textvariable=self.model_rotation_display_var, foreground="#666").pack(
             side="left", padx=(4, 10)
         )
         self.model_rotation_entry_var = tk.StringVar(value="")
-        rotation_entry = ttk.Entry(rotation_row, textvariable=self.model_rotation_entry_var, width=30)
+        rotation_entry = ttk.Entry(rotation_row, textvariable=self.model_rotation_entry_var, width=24)
         rotation_entry.pack(side="left", padx=(0, 4))
         rotation_entry.bind("<Return>", lambda event: self.set_model_rotation())
         ttk.Button(rotation_row, text="Set", command=self.set_model_rotation).pack(side="left")
 
-        # Groups: which owned groups (groups/<name>/meta.json + log.jsonl,
-        # v0.16.15) this voice reads from and broadcasts to - a group
-        # message is pushed straight into history the moment it's spoken
-        # (push_entry_to_voice), not merged live into the prompt; see
-        # _groups_notice for the always-present membership summary, and
-        # join_group/leave_group/create_group in fenra_functions.py for
-        # how Fenra manages her own membership.
-        # Two independent Set buttons (full replace, comma/pipe separated,
-        # "clear" to empty), same convention as model rotation.
-        groups_row = ttk.Frame(body)
-        groups_row.grid(row=6, column=0, sticky="ew", pady=(4, 0))
+        # v0.16.17 - the first real GUI surface for allowed_functions,
+        # ever. Baseline (GLOBAL_PERMISSION_FUNCTIONS) is a fixed,
+        # read-only fact - every voice always has it, nothing to manage.
+        # Below it, a classic dual-list transfer editor for everything
+        # else. This is Teddy directly editing the currently-displayed
+        # voice's own allowed_functions through the normal widget-save
+        # path (_save_voice_snapshot, same as editing Behavior/Identity
+        # text) - NOT the same write path fn_grant_function_request uses
+        # (that one reaches cross-voice, into a DIFFERENT voice's
+        # state.json, from inside a live function call). No new hazard,
+        # no new protection needed - _fresh_allowed_functions's existing
+        # disk-re-read-before-save guard covers this the same as always.
+        perms = ttk.LabelFrame(context, text="Functions")
+        perms.pack(fill="x", pady=(0, 4))
+        self.allowed_functions_baseline_label = ttk.Label(perms, text="", foreground="#666", wraplength=760)
+        self.allowed_functions_baseline_label.pack(fill="x", padx=4, pady=(2, 4))
+
+        dual = ttk.Frame(perms)
+        dual.pack(fill="x", padx=4, pady=(0, 4))
+        granted_col = ttk.Frame(dual)
+        granted_col.pack(side="left", fill="both", expand=True)
+        ttk.Label(granted_col, text="Granted (extra):").pack(anchor="w")
+        self.granted_listbox = tk.Listbox(granted_col, height=5, selectmode="extended", exportselection=False)
+        self.granted_listbox.pack(fill="both", expand=True)
+
+        btn_col = ttk.Frame(dual)
+        btn_col.pack(side="left", padx=6)
+        ttk.Button(btn_col, text="← Revoke", command=self._revoke_selected_functions).pack(pady=(20, 4))
+        ttk.Button(btn_col, text="Grant →", command=self._grant_selected_functions).pack()
+
+        available_col = ttk.Frame(dual)
+        available_col.pack(side="left", fill="both", expand=True)
+        ttk.Label(available_col, text="Available to grant:").pack(anchor="w")
+        self.available_listbox = tk.Listbox(available_col, height=5, selectmode="extended", exportselection=False)
+        self.available_listbox.pack(fill="both", expand=True)
+
+        # Inbox: messages sent to her via tell_voice, read-only - not
+        # shown anywhere in the GUI before this.
+        inbox_frame = ttk.LabelFrame(context, text="Inbox (messages received via tell_voice)")
+        inbox_frame.pack(fill="x", pady=(0, 4))
+        self.inbox_box = scrolledtext.ScrolledText(inbox_frame, wrap="word", height=3, state="disabled")
+        self.inbox_box.pack(fill="x", padx=4, pady=4)
+
+        # Group messages received: a filtered, most-recent-first pull of
+        # kind == "group_message" entries from her own history - what
+        # she's actually heard, distinct from the raw History tab (which
+        # shows everything, including her own generations) and from the
+        # Groups tab (roster, not content).
+        group_msgs_frame = ttk.LabelFrame(context, text="Group messages received")
+        group_msgs_frame.pack(fill="x", pady=(0, 4))
+        self.group_messages_box = scrolledtext.ScrolledText(group_msgs_frame, wrap="word", height=4, state="disabled")
+        self.group_messages_box.pack(fill="x", padx=4, pady=4)
+
+        # Desires: a queue, set only by Fenra herself (via add_desire),
+        # visible here but not editable from the GUI.
+        desire_frame = ttk.LabelFrame(context, text="Desires")
+        desire_frame.pack(fill="x", pady=(0, 4))
+        self.desires_box = scrolledtext.ScrolledText(desire_frame, wrap="word", height=3, state="disabled")
+        self.desires_box.pack(fill="x", padx=4, pady=4)
+
+        family_row = ttk.Frame(context)
+        family_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(family_row, text="Family group:").pack(side="left")
+        self.family_group_display_var = tk.StringVar(value="(none)")
+        ttk.Label(family_row, textvariable=self.family_group_display_var, foreground="#666").pack(
+            side="left", padx=(4, 0)
+        )
+
+        # Groups in/out: still Set-able here (per-voice membership admin
+        # a voice can act on for itself) - distinct from the Groups tab,
+        # which shows a GROUP's roster read-only, not a voice's own
+        # membership list.
+        groups_row = ttk.Frame(context)
+        groups_row.pack(fill="x", pady=(0, 4))
         ttk.Label(groups_row, text="Groups in:").pack(side="left")
         self.groups_in_display_var = tk.StringVar(value="(none)")
         ttk.Label(groups_row, textvariable=self.groups_in_display_var, foreground="#666").pack(
@@ -1883,8 +1977,124 @@ class FenraApp:
         groups_out_entry.bind("<Return>", lambda event: self.set_groups_out())
         ttk.Button(groups_row, text="Set", command=self.set_groups_out).pack(side="left")
 
-        self.bottom_box = scrolledtext.ScrolledText(body, wrap="word", height=4)
-        self.bottom_box.grid(row=7, column=0, sticky="nsew", pady=(4, 0))
+    def _build_voices_tab(self):
+        """v0.16.17 - replaces the old single voice_combo with a real
+        list of every voice in the session + a detail panel, same
+        Panedwindow+Listbox+Scrollbar template _build_history_tab
+        already established."""
+        frame = self.voices_tab
+
+        top_bar = ttk.Frame(frame)
+        top_bar.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Button(top_bar, text="New voice...", command=self.new_voice).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Delete voice", command=self.delete_voice).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Save voice", command=self.save_voice).pack(side="left", padx=2)
+
+        paned = ttk.Panedwindow(frame, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        left = ttk.Frame(paned, width=180)
+        right = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(right, weight=4)
+
+        list_frame = ttk.Frame(left)
+        list_frame.pack(fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+        self.voices_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
+        scrollbar.config(command=self.voices_listbox.yview)
+        self.voices_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.voices_listbox.bind("<<ListboxSelect>>", self._on_voice_list_select)
+
+        self._build_voice_detail_panel(right)
+
+    def _build_groups_tab(self):
+        """v0.16.17 - the roster view that never existed before: every
+        group any voice in the CURRENT session belongs to or owns, with
+        who's actually in it and their direction. View-only, deliberately
+        - no admin editing from the GUI at all (Teddy's explicit call);
+        membership changes only ever happen through the voice-driven
+        consent-flow functions (join_group/group_invite/group_kick/...),
+        never a GUI override. Same list+detail template as Voices/
+        History."""
+        frame = self.groups_tab
+
+        paned = ttk.Panedwindow(frame, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        left = ttk.Frame(paned, width=180)
+        right = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(right, weight=4)
+
+        list_frame = ttk.Frame(left)
+        list_frame.pack(fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+        self.groups_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
+        scrollbar.config(command=self.groups_listbox.yview)
+        self.groups_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.groups_listbox.bind("<<ListboxSelect>>", self._on_group_select)
+
+        self.group_detail_text = scrolledtext.ScrolledText(right, wrap="word", state="disabled")
+        self.group_detail_text.pack(fill="both", expand=True)
+
+    def _session_group_names(self):
+        """Every group any voice in the CURRENT session belongs to,
+        reads from, writes to, or owns - unlike _scan_topology_data
+        (whole-disk, every session), this is pinned to self.session_voices.
+        Reuses the same load_voice_state/list_owned_groups/load_group_meta
+        helpers Topology already uses, just filtered down.
+
+        Names run through sanitize_group_name() before being added to
+        the set - groups_in/groups_out/family_group store a voice's own
+        RAW family-group string ("seed's Children"), while
+        list_owned_groups() returns the sanitized directory name
+        ("seeds_children") that's actually on disk - both resolve to the
+        same group via load_group_meta's own internal sanitizing, but
+        without normalizing here first the same group would show up
+        twice under two different-looking names. Pre-existing storage
+        inconsistency from the connectivity redesign, not something this
+        pass fixes at the source - just guarded against here."""
+        names = set()
+        for voice_name in self.session_voices:
+            state = load_voice_state(self.session_name, voice_name)
+            names.update(sanitize_group_name(n) for n in state.get("groups_in", []))
+            names.update(sanitize_group_name(n) for n in state.get("groups_out", []))
+        for g in list_owned_groups():
+            meta = load_group_meta(g)
+            if meta and meta.get("owner") in self.session_voices:
+                names.add(sanitize_group_name(g))
+        return sorted(names)
+
+    def _populate_groups_list(self):
+        self._current_group_names = self._session_group_names()
+        self.groups_listbox.delete(0, "end")
+        for name in self._current_group_names:
+            self.groups_listbox.insert("end", name)
+
+    def _on_group_select(self, event):
+        selection = self.groups_listbox.curselection()
+        if not selection:
+            return
+        name = self._current_group_names[selection[0]]
+        meta = load_group_meta(name) or {}
+        lines = [
+            f"Group: {name}",
+            f"Owner: {meta.get('owner') or '(none)'}",
+            f"Kind: {meta.get('kind', '?')}",
+            f"Join policy: {meta.get('join_policy', '?')}",
+            f"Visibility: {meta.get('visibility', '?')}",
+            "",
+            "Members:",
+        ]
+        for voice, info in sorted(meta.get("members", {}).items()):
+            lines.append(f"  {voice}: {info.get('direction', '?')} (joined {info.get('joined', '?')})")
+        lines.append("")
+        lines.append("Banned: " + (", ".join(meta.get("banned", [])) or "(none)"))
+        self.group_detail_text.config(state="normal")
+        self.group_detail_text.delete("1.0", "end")
+        self.group_detail_text.insert("end", "\n".join(lines))
+        self.group_detail_text.config(state="disabled")
 
     def _build_chat_tab(self):
         frame = self.chat_tab
@@ -2130,19 +2340,6 @@ class FenraApp:
             draw_node(right_x, y, v, "#e6f0f5")
 
     # ------------------------------------------------------------ session --
-
-    def _refresh_session_list(self):
-        sessions = list_sessions()
-        if self.session_name and self.session_name not in sessions:
-            sessions.insert(0, self.session_name)
-        self.session_combo["values"] = sessions
-        if self.session_name:
-            self.session_var.set(self.session_name)
-
-    def _on_session_selected(self, event):
-        chosen = self.session_var.get()
-        if chosen and chosen != self.session_name:
-            self._load_session(chosen)
 
     def new_session(self):
         name = simpledialog.askstring("New Session", "Session name:", parent=self.root)
@@ -2428,6 +2625,7 @@ class FenraApp:
         setattr(self, attr, names)
         self.root.after(0, self._refresh_groups_display)
         self.save_voice()
+        self._populate_groups_list()
         if not names:
             return "no valid group names found - left empty"
         return f"set to {len(names)} group(s): {', '.join(names)}"
@@ -2518,6 +2716,7 @@ class FenraApp:
         # function or GUI control ever changes this. Read once here per
         # session load, not per-tick, since it structurally cannot change.
         self.permission_mode = bool(state.get("permission_mode", False))
+        self.permission_mode_display_var.set("on" if self.permission_mode else "off")
         self.hearth_stasis = dict(state.get("hearth_stasis", {}))
         self.session_voices = list(state.get("voices", [])) or list_voices(name) or [DEFAULT_VOICE_NAME]
         self.voice_rotation_index = int(state.get("voice_rotation_index", 0) or 0)
@@ -2526,21 +2725,30 @@ class FenraApp:
         self.chat_messages = load_chat_messages(name)
         self._refresh_chat_display()
 
-        self._refresh_voice_list()
+        self._populate_voices_list()
         self._load_voice(self.session_voices[0])
+        self._populate_groups_list()
 
-        self._refresh_session_list()
+        self._refresh_sessions_menu()
         self.session_status_var.set(f"Session loaded ({len(self.session_voices)} voice(s))")
 
     # ------------------------------------------------------------- voices --
 
-    def _refresh_voice_list(self):
-        self.voice_combo["values"] = self.session_voices
-        if self.displayed_voice:
-            self.voice_var.set(self.displayed_voice)
+    def _populate_voices_list(self):
+        self.voices_listbox.delete(0, "end")
+        for name in self.session_voices:
+            self.voices_listbox.insert("end", name)
+        if self.displayed_voice in self.session_voices:
+            idx = self.session_voices.index(self.displayed_voice)
+            self.voices_listbox.selection_clear(0, "end")
+            self.voices_listbox.selection_set(idx)
+            self.voices_listbox.see(idx)
 
-    def _on_voice_selected(self, event):
-        chosen = self.voice_var.get()
+    def _on_voice_list_select(self, event):
+        selection = self.voices_listbox.curselection()
+        if not selection:
+            return
+        chosen = self.session_voices[selection[0]]
         if chosen and chosen != self.displayed_voice:
             if self.displayed_voice:
                 save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
@@ -2555,7 +2763,6 @@ class FenraApp:
         runs regardless of this."""
         state = load_voice_state(self.session_name, name)
         self.displayed_voice = name
-        self.voice_var.set(name)
 
         self.top_box.delete("1.0", "end")
         self.top_box.insert("end", state.get("top", ""))
@@ -2566,12 +2773,8 @@ class FenraApp:
         self.last_thought = state.get("last_thought", "")
         self.desires = state.get("desires", [])
         self._refresh_desires_display()
-        # No dedicated widget for inbox yet (Teddy: UI cleanup later) -
-        # still has to be kept in sync with whichever voice is displayed,
-        # same as desires, so _current_voice_state_from_widgets never
-        # silently wipes out a message another voice sent this one via
-        # tell_voice while a different voice was running.
         self.inbox = list(state.get("inbox", []))
+        self._refresh_inbox_display()
         self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
         self.model_rotation = list(state.get("model_rotation", []))
         self.model_rotation_index = int(state.get("model_rotation_index", 0) or 0)
@@ -2579,17 +2782,96 @@ class FenraApp:
         self.groups_in = list(state.get("groups_in", []))
         self.groups_out = list(state.get("groups_out", []))
         self._refresh_groups_display()
-        # Same no-dedicated-widget treatment as inbox above - only
-        # meaningful inside a permission_mode session, but round-tripped
-        # here regardless so it's never silently dropped.
+        self.family_group_display_var.set(state.get("family_group") or "(none)")
         self.allowed_functions = list(state.get("allowed_functions", []))
+        self._refresh_allowed_functions_display()
 
         self.history = load_voice_history(self.session_name, name)
         self._populate_history_list()
         self._replay_middle_box()
+        self._refresh_group_messages_display()
 
-        self._refresh_voice_list()
+        self._populate_voices_list()
         self.session_status_var.set(f"Voice '{name}' loaded ({len(self.history)} entries)")
+
+    def _refresh_allowed_functions_display(self):
+        """v0.16.17 - the first real GUI surface for allowed_functions.
+        Baseline (GLOBAL_PERMISSION_FUNCTIONS) is a fixed fact, same for
+        every voice regardless of allowed_functions - shown as plain
+        text, nothing to manage. Everything else in fenra_functions.
+        FUNCTION_REGISTRY is either already granted (left list) or
+        available to grant (right list) - see _grant_selected_functions/
+        _revoke_selected_functions."""
+        self.allowed_functions_baseline_label.config(
+            text="Baseline (always available): " + ", ".join(sorted(GLOBAL_PERMISSION_FUNCTIONS))
+        )
+        granted_extra = sorted(set(self.allowed_functions) - GLOBAL_PERMISSION_FUNCTIONS)
+        all_gated = sorted(set(fenra_functions.FUNCTION_REGISTRY.keys()) - GLOBAL_PERMISSION_FUNCTIONS)
+        available = sorted(set(all_gated) - set(granted_extra))
+        self.granted_listbox.delete(0, "end")
+        for fn in granted_extra:
+            self.granted_listbox.insert("end", fn)
+        self.available_listbox.delete(0, "end")
+        for fn in available:
+            self.available_listbox.insert("end", fn)
+
+    def _grant_selected_functions(self):
+        """Teddy directly editing the currently-displayed voice's own
+        allowed_functions through the normal widget-save path - same
+        shape as editing Behavior/Identity text, flushed to disk by
+        Save voice / a voice switch / the next tick via the existing
+        _save_voice_snapshot. NOT the same write path
+        fn_grant_function_request uses (that one reaches cross-voice,
+        into a DIFFERENT voice's state.json, from inside a live function
+        call) - no new hazard, no new protection needed."""
+        for i in self.available_listbox.curselection():
+            fn = self.available_listbox.get(i)
+            if fn not in self.allowed_functions:
+                self.allowed_functions.append(fn)
+        self._refresh_allowed_functions_display()
+
+    def _revoke_selected_functions(self):
+        for i in self.granted_listbox.curselection():
+            fn = self.granted_listbox.get(i)
+            if fn in self.allowed_functions:
+                self.allowed_functions.remove(fn)
+        self._refresh_allowed_functions_display()
+
+    def _refresh_inbox_display(self):
+        """Read-only, most-recent-first - what's actually sitting in
+        this voice's inbox right now (tell_voice messages), including
+        how many of her own turns each has left - see fn_tell_voice/
+        VOICE_MESSAGE_TICKS. No dedicated widget existed for this
+        before v0.16.17."""
+        self.inbox_box.config(state="normal")
+        self.inbox_box.delete("1.0", "end")
+        for entry in reversed(self.inbox):
+            self.inbox_box.insert(
+                "end",
+                f"[{entry.get('timestamp', '?')}] from {entry.get('from', '?')} "
+                f"({entry.get('ticks', '?')} turn(s) left): {entry.get('text', '')}\n"
+            )
+        self.inbox_box.config(state="disabled")
+
+    def _refresh_group_messages_display(self):
+        """Read-only, most-recent-first pull of kind == 'group_message'
+        entries from this voice's own history - what she's actually
+        heard from groups, distinct from the raw History tab (shows
+        everything, her own generations included) and the Groups tab
+        (a group's roster, not its content). Same discriminator
+        _recent_thoughts_block uses to tell a pushed message apart from
+        her own thought - see push_entry_to_voice."""
+        self.group_messages_box.config(state="normal")
+        self.group_messages_box.delete("1.0", "end")
+        matches = [e for e in self.history if e.get("kind") == "group_message"]
+        for entry in reversed(matches):
+            text = entry.get("display", entry.get("response", ""))
+            self.group_messages_box.insert(
+                "end",
+                f"[{entry.get('timestamp', '?')}] {entry.get('group', '?')} / "
+                f"{entry.get('from_voice', '?')}: {text}\n"
+            )
+        self.group_messages_box.config(state="disabled")
 
     def new_voice(self):
         """Add another voice to the current session - individually
@@ -2621,8 +2903,9 @@ class FenraApp:
 
         self.session_voices.append(name)
         self.save_session()
-        self._refresh_voice_list()
+        self._populate_voices_list()
         self._load_voice(name)
+        self._populate_groups_list()
 
     def delete_voice(self):
         """Removes the currently displayed voice - its history and
@@ -2649,8 +2932,9 @@ class FenraApp:
         if self.voice_rotation_index >= len(self.session_voices):
             self.voice_rotation_index = 0
         self.save_session()
-        self._refresh_voice_list()
+        self._populate_voices_list()
         self._load_voice(self.session_voices[0])
+        self._populate_groups_list()
 
     # --------------------------------------------------------------- chat --
 
