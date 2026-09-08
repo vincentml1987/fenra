@@ -1154,16 +1154,22 @@ def fn_create_voice(app, args):
     - but top and bottom (the child's actual framing - who it is, what
     it's told) do NOT. You have to write them yourself, every time.
 
-    v0.16.15 - connectivity redesign: allowed_functions is now a
-    snapshot copy of the parent's own list at the moment of creation
-    (list-copied, independent afterward - changing the parent's own
-    access later never reaches an already-created child). This is what
-    makes create_voice genuinely universal rather than seed-only - any
-    voice holding it passes on whatever it itself currently holds, not
-    just the original five permission-admin functions. The child also
-    joins your own family group automatically and gets its own new one
-    - the one deliberate exception to the consent-on-entry rule, see
-    Qualia/decisions.md item 4b.
+    v0.16.15 - connectivity redesign: the child joins your own family
+    group automatically and gets its own new one - the one deliberate
+    exception to the consent-on-entry rule, see Qualia/decisions.md item
+    4b. v0.16.16 - allowed_functions deliberately does NOT inherit from
+    the parent (reverted from v0.16.15's snapshot-copy, Teddy's own
+    catch): a child starts with the same genuinely empty allowed_functions
+    every voice always has, same as before the redesign. Baseline
+    functions (Qualia/permissions-proposal.md - self-only actions like
+    add_desire, or ones whose own logic already gates them like
+    join_group) cover it regardless of this list, for free. Everything
+    else - including create_voice itself - has to be requested and
+    granted after the fact, same as any other gated function, so a long
+    lineage doesn't end up with every extra power any ancestor ever
+    accumulated. Whoever holds check/approve/deny/grant_function_request
+    (seed, to start) stays the actual keeper of gated access - that part
+    is unchanged.
 
     This changed (2026-09-02) after a real, confirmed bias: the original
     version copied top/bottom automatically, which meant Teddy and
@@ -1182,10 +1188,10 @@ def fn_create_voice(app, args):
     deliberately passing its own current top and bottom - but that's a
     choice made fresh every time, not something that happens on its own.
 
-    The new voice's own history/desires/function_usage/inbox still start
-    genuinely blank either way, unchanged from before - only
-    allowed_functions and family-group membership are inherited/
-    established automatically, per the redesign above.
+    The new voice's own history/desires/function_usage/inbox/
+    allowed_functions all still start genuinely blank either way,
+    unchanged from before - only family-group membership is established
+    automatically, per the redesign above.
 
     Local import of fenra (not at module level) - this module is
     otherwise careful to avoid importing fenra.py to sidestep a real
@@ -1244,13 +1250,15 @@ def fn_create_voice(app, args):
     child_state["bottom"] = bottom
     for key in ("model", "model_rotation", "context_window"):
         child_state[key] = parent_state.get(key, child_state[key])
-    # v0.16.15 - connectivity redesign: allowed_functions is now a
-    # snapshot copy of the parent's at this moment (list-copied, not
-    # referenced, so a later change to the parent's own list never
-    # reaches back into an already-created child). This is what makes
-    # create_voice genuinely universal rather than seed-only - any voice
-    # holding it passes on whatever it itself currently holds.
-    child_state["allowed_functions"] = list(parent_state.get("allowed_functions", []))
+    # v0.16.16 - deliberately NOT copying allowed_functions (reverted
+    # from v0.16.15's snapshot-copy) - stays default_voice_state()'s
+    # genuinely empty list. See the docstring above and
+    # Qualia/permissions-proposal.md: inheriting gated access here meant
+    # every descendant ended up holding whatever any ancestor ever
+    # accumulated, defeating the point of deliberate, function-by-
+    # function gating. Baseline functions cover ordinary self-directed
+    # capability regardless of this list; anything gated has to be
+    # requested and granted after the fact like any other voice.
     child_state["family_group"] = _fenra.family_group_name(name)
     _fenra.save_voice_state(app.session_name, name, child_state)
     open(_fenra.voice_history_path(app.session_name, name), "a", encoding="utf-8").close()
@@ -1294,7 +1302,9 @@ def fn_create_voice(app, args):
     app.root.after(0, app._refresh_voice_list)
     return (
         f"'{name}' created with the top/bottom you wrote for it - your model, model rotation, "
-        f"context window, and allowed_functions all carried over. It's in your family group "
+        f"and context window carried over, but not allowed_functions: it starts with only the "
+        f"baseline functions everyone has, nothing extra of yours - it can request_function_access "
+        f"for anything gated it wants, same as you did. It's in your family group "
         f"'{parent_family}' now, and has its own new one, '{_fenra.family_group_name(name)}'. "
         f"Its own separate history starts now. It's in the rotation and will start getting "
         f"its own turns soon ({len(app.session_voices)} voice(s) total now)."
@@ -1808,7 +1818,7 @@ FUNCTION_REGISTRY = {
     "create_voice": {
         "fn": fn_create_voice,
         "params": "name|top|bottom",
-        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window/allowed_functions all carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. It joins your own family group and gets its own new one. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
+        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. It does NOT inherit your allowed_functions - it starts with only the baseline functions everyone has and has to request anything gated, same as you did. It joins your own family group and gets its own new one. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
     },
     "list_voices": {
         "fn": fn_list_voices,

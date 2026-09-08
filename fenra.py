@@ -756,6 +756,16 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 GLOBAL_PERMISSION_FUNCTIONS = {
     "functions", "request_function_access",
     "list_voices", "list_groups", "tell_voice", "request_group_join",
+    # v0.16.16 - Qualia/permissions-proposal.md, reviewed and confirmed by
+    # Teddy: a function is baseline if it only ever affects the calling
+    # voice's own state, or if its own internal logic already provides
+    # the real safety check (join_group's public/private branch). Real
+    # trigger: tribe-1's seed got blocked from add_desire and stuck on a
+    # request she couldn't self-grant - exactly the friction this exists
+    # to remove.
+    "now", "add_desire", "set_context_window", "current_model", "set_model",
+    "add_to_rotation", "join_group", "leave_group", "group_accept_invite",
+    "qualia_allowance", "list_models",
 }
 
 # Fallback for a real, observed generation quirk (gemma3:4b especially, but
@@ -2993,13 +3003,23 @@ class FenraApp:
         Takes current_model explicitly, same reasoning as
         _model_rotation_notice - the voice actually running this cycle
         isn't always the one currently displayed in the GUI."""
-        functions_note = (
-            f"Functions allowed: {', '.join(self.allowed_functions)}."
+        # v0.16.16 - "none yet" stopped being true the moment baseline
+        # functions existed (Qualia/permissions-proposal.md): every
+        # voice, regardless of allowed_functions, always has the
+        # baseline set - a voice with a genuinely empty allowed_functions
+        # is not actually powerless, and the old wording risked reading
+        # that way to a fresh, never-granted-anything voice.
+        extra_note = (
+            f"Beyond that, extra: {', '.join(self.allowed_functions)}."
             if self.allowed_functions
-            else "Functions allowed: none yet - see request_function_access()."
+            else "Nothing extra granted yet - see request_function_access() to ask."
         ) if self.permission_mode else (
             "Functions allowed: unrestricted - every function in the registry is "
             "available to you (this session doesn't use function permissions)."
+        )
+        functions_note = (
+            f"Baseline (always yours): {', '.join(sorted(GLOBAL_PERMISSION_FUNCTIONS))}. {extra_note}"
+            if self.permission_mode else extra_note
         )
         return f"[You are: {self.current_voice_name}. Model: {current_model}. {functions_note}]"
 
