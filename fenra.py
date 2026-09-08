@@ -612,7 +612,27 @@ import fenra_functions
 #             (storage layer, group functions, push delivery + the
 #             SHRINK-class race check specifically, the Hearth state
 #             machine) - see Qualia/decisions.md for the full build log.
-FENRA_VERSION = "0.16.15"
+# 0.16.16  -  Function-by-function permissions pass (Qualia/permissions-
+#             proposal.md), prompted directly by tribe-1's seed getting
+#             stuck on a self-request for add_desire she couldn't grant
+#             herself. GLOBAL_PERMISSION_FUNCTIONS expanded to every
+#             self-only function (now, add_desire, set_context_window,
+#             current_model, set_model, add_to_rotation, join_group,
+#             leave_group, group_accept_invite, qualia_allowance,
+#             list_models) - baseline if it only ever affects the calling
+#             voice's own state, or its own logic already gates it
+#             (join_group's public/private branch). fn_create_voice no
+#             longer snapshot-copies allowed_functions (reverted from
+#             v0.16.15) - Teddy's own catch that inheritance meant every
+#             descendant held whatever any ancestor ever accumulated,
+#             defeating deliberate gating. A child starts genuinely
+#             empty again, same as before the connectivity redesign;
+#             baseline covers ordinary self-directed capability for
+#             free regardless, gated functions (create_voice included)
+#             need an explicit request/grant like any voice. Identity
+#             notice fixed to actually name the baseline set, since
+#             "none yet" stopped being true the moment baseline existed.
+FENRA_VERSION = "0.16.16"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
