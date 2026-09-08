@@ -84,33 +84,17 @@ def _save_function_requests(session_name, entries):
 # Qualia/wiki/hallucinations.md.
 WIKI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Qualia", "wiki")
 
-# Cross-voice communication (v0.16.0): groups let independent Fenra
-# sessions ("voices") hear and speak to each other with no central turn-
-# taking - each voice still runs on its own independent interval exactly
-# as before (see fenra.py's v0.16.0 changelog entry for why: Teddy's
-# actual goal is voices eventually running in parallel, which a shared
-# turn-token would work against). Fast-moving shared conversational
-# state, not wiki/decision content, so it lives in groups/ (gitignored,
-# same as sessions/) rather than Qualia/. Path logic duplicated from
-# fenra.py rather than imported, same reason _SESSIONS_DIR is duplicated
-# above - avoids a circular import.
-GROUPS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "groups")
-_GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
-def _sanitize_group_name(name):
-    return (name or "").strip().lower().replace(" ", "_")
-
-
-def _group_path(name):
-    name = _sanitize_group_name(name)
-    if not name or not _GROUP_NAME_RE.match(name):
-        raise ValueError(
-            "group names may only contain letters, numbers, underscores, and hyphens "
-            f"(spaces get turned into underscores automatically) - got '{name}'"
-        )
-    os.makedirs(GROUPS_DIR, exist_ok=True)
-    return os.path.join(GROUPS_DIR, f"{name}.jsonl"), name
+# Cross-voice communication (v0.16.0, redesigned v0.16.15): groups let
+# voices hear and speak to each other with no central turn-taking - each
+# voice still runs on its own independent interval exactly as before (see
+# fenra.py's v0.16.0 changelog entry for why: Teddy's actual goal is
+# voices eventually running in parallel, which a shared turn-token would
+# work against). As of v0.16.15 groups are real owned entities (owner,
+# roster, join_policy, visibility) living in fenra.py
+# (groups/<name>/meta.json + log.jsonl) - reached via local `import fenra`
+# inside each function below, not duplicated here the way the old
+# schema-less path logic used to be, since fenra.py's own group helpers
+# are already the single source of truth for this now.
 _WIKI_PAGE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _WIKI_WRITE_RE = re.compile(r"^\s*([a-zA-Z0-9_ -]+?)\s*\|\s*(.*)$", re.DOTALL)
 
@@ -667,98 +651,487 @@ def fn_add_to_rotation(app, args):
     )
 
 
-def fn_list_groups(app, args):
-    """List every group that exists (has ever had anything broadcast to
-    it) plus any you're already in that haven't yet, tagged with
-    whether you're reading, writing, or both."""
-    os.makedirs(GROUPS_DIR, exist_ok=True)
-    known = {name[:-6] for name in os.listdir(GROUPS_DIR) if name.endswith(".jsonl")}
-    in_set = set(app.groups_in)
-    out_set = set(app.groups_out)
-    all_names = sorted(known | in_set | out_set)
-    if not all_names:
-        return "(no groups exist yet - join_group(name) creates one)"
-    parts = []
-    for n in all_names:
-        tags = [t for t, s in (("reading", in_set), ("writing", out_set)) if n in s]
-        parts.append(f"{n} ({', '.join(tags)})" if tags else n)
-    return ", ".join(parts)
+# ------------------------------------------------- groups v0.16.15 (owned) --
+# The connectivity/tribe redesign (Qualia/decisions.md item 4b). Real
+# owned groups now - meta.json (owner, kind, join_policy, visibility,
+# roster, banned) + log.jsonl (canonical, Teddy/Qualia-only) live in
+# fenra.py, reached via local `import fenra` per function, same reasoning
+# as create_voice/tell_voice's own cross-entity writes. groups_in/groups_out
+# on app/vstate stay as read-through mirrors, kept in sync at join/kick/
+# leave time rather than re-derived every tick.
+#
+# Default direction on joining ANY group (public self-serve, or granted
+# after a private request) is listen-only ("in") - Teddy's explicit call:
+# a member can't speak into a group until the owner grants "out"/"both"
+# access. Direction is owner-only to change - no self-service, see
+# fn_group_set_direction. The one exception is The Hearth, which has no
+# voice-owner and defaults every resident to "both" automatically (see
+# fenra.py's ensure_hearth_membership) - its own wake mechanic requires it.
+
+_CREATE_GROUP_RE = re.compile(r"^\s*(.+?)\s*(?:\|\s*(public|private)\s*)?$", re.DOTALL)
 
 
-def fn_read_group(app, args):
-    """Read further back into a group than what's already folded into
-    your prompt (_groups_block only shows the last few, merged across
-    all your groups) - or peek at a group you haven't joined."""
+def fn_create_group(app, args):
+    """Create a new ad hoc group, owned by you - full admin control over
+    it (invite, kick, ban, visibility, join_policy, member direction).
+    Defaults to public (self-serve join) unless you say private. e.g.
+    create_group(lobby) or create_group(lobby|private). Family groups
+    ("<voice>'s Children") are birth-only, not creatable this way - see
+    create_voice. You're automatically its first member, direction
+    'both' (you're the owner - the listen-only default is for people who
+    join *you*, not for you joining your own group)."""
+    import fenra as _fenra
+
     if not args or not args[0]:
         raise ValueError(
-            "read_group requires a group name, e.g. read_group(lobby). "
-            "See list_groups() for what exists. Optional count: read_group(lobby, 20)."
+            "create_group requires a name, e.g. create_group(lobby) (defaults to public) "
+            "or create_group(lobby|private)."
         )
-    count = 10
-    if len(args) > 1 and args[1]:
-        try:
-            count = max(1, int(float(args[1])))
-        except ValueError:
-            pass
-    path, name = _group_path(args[0])
-    if not os.path.exists(path):
-        return f"no activity in '{name}' yet."
+    if _looks_like_copied_params(args[0], FUNCTION_REGISTRY["create_group"]["params"]):
+        raise ValueError("That's the params spec itself ('name[|public|private]'), not a real value.")
+    match = _CREATE_GROUP_RE.match(args[0])
+    if not match:
+        raise ValueError("create_group requires a name, e.g. create_group(lobby|private).")
+    raw_name, policy = match.group(1).strip(), (match.group(2) or "public").strip().lower()
+    name = _fenra.sanitize_group_name(raw_name)
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f if l.strip()]
-    except OSError:
-        lines = []
-    out = []
-    for line in lines[-count:]:
-        try:
-            entry = json.loads(line)
-            out.append(f"[{entry.get('timestamp', '?')}] {entry.get('voice', '?')}: {entry.get('text', '')}")
-        except (json.JSONDecodeError, AttributeError):
+        _fenra.owned_group_dir(name)  # validates charset, raises ValueError with a clear message
+    except ValueError:
+        raise
+    if name == _fenra.THE_HEARTH_NAME:
+        raise ValueError("that name is reserved for The Hearth - pick something else.")
+    if name.endswith("_children"):
+        raise ValueError(
+            "names ending in \"'s Children\" are reserved for family groups, created "
+            "automatically the moment a voice is born - not something you create directly."
+        )
+    if _fenra.group_exists(name):
+        return f"'{name}' already exists - see list_groups()."
+    _fenra.create_group_if_missing(
+        name, owner=app.current_voice_name, kind="adhoc",
+        join_policy=policy, visibility="visible", initial_member=app.current_voice_name,
+    )
+    if name not in app.groups_in:
+        app.groups_in.append(name)
+    if name not in app.groups_out:
+        app.groups_out.append(name)
+    app.root.after(0, app._refresh_groups_display)
+    return f"'{name}' created, owned by you, join_policy={policy}."
+
+
+def fn_list_groups(app, args):
+    """List groups you can actually see: full detail for every group
+    you're a member of, existence + owner/kind/join_policy only for
+    every other *visible* group - a private group's membership and
+    content stay opaque until you're actually in it ('private means
+    opaque', Qualia/decisions.md item 4b). Hidden groups you're not a
+    member of don't appear at all."""
+    import fenra as _fenra
+
+    names = _fenra.list_owned_groups()
+    if not names:
+        return "(no groups exist yet - create_group(name) makes one)"
+    parts = []
+    for name in names:
+        meta = _fenra.load_group_meta(name)
+        if meta is None:
             continue
-    return "\n".join(out) if out else f"no activity in '{name}' yet."
+        members = meta.get("members", {})
+        is_member = app.current_voice_name in members
+        if not is_member and meta.get("visibility") == "hidden":
+            continue
+        base = f"{name} (kind={meta.get('kind')}, owner={meta.get('owner')}, join_policy={meta.get('join_policy')})"
+        if is_member:
+            my_direction = members[app.current_voice_name].get("direction", "in")
+            others = ", ".join(v for v in members if v != app.current_voice_name) or "(no one else yet)"
+            parts.append(f"{base} - you're a member (direction={my_direction}); others: {others}")
+        else:
+            parts.append(f"{base} - not a member, membership/content hidden")
+    return "\n".join(parts) if parts else "(no visible groups)"
 
 
 def fn_join_group(app, args):
-    """Start hearing from and broadcasting to a group - adds it to both
-    groups_in and groups_out at once, the common case of actually
-    joining a conversation. Use set_groups_in/set_groups_out (Teddy,
-    via the GUI) if you need read-only or write-only membership instead."""
+    """Join a group. A public group: immediate membership, direction
+    'in' (listen-only) by default - ask the owner for 'out' access via
+    however they choose to grant it (fn_group_set_direction is owner-
+    only). A private group: this creates a join request instead (same
+    shape as request_function_access - see request_group_join), which
+    the owner has to approve before you're actually in. Cannot target
+    The Hearth - you can't join it, it finds you (see
+    Qualia/decisions.md's floor-group design)."""
+    import fenra as _fenra
+
     if not args or not args[0]:
-        raise ValueError(
-            "join_group requires a group name, e.g. join_group(lobby). "
-            "Adds it to both what you read from and what you write to."
-        )
-    _, name = _group_path(args[0])
-    changed = False
+        raise ValueError("join_group requires a group name, e.g. join_group(lobby). See list_groups().")
+    name = _fenra.sanitize_group_name(args[0])
+    if name == _fenra.THE_HEARTH_NAME:
+        raise ValueError("The Hearth can't be joined - it's the automatic floor for a voice with zero other groups.")
+    meta = _fenra.load_group_meta(name)
+    if meta is None:
+        raise ValueError(f"'{name}' doesn't exist - see list_groups(), or create_group({name}) to make it.")
+    if app.current_voice_name in meta.get("members", {}):
+        return f"already in '{name}'."
+    if app.current_voice_name in meta.get("banned", []):
+        raise ValueError(f"you've been banned from '{name}'.")
+    if meta.get("join_policy") == "private":
+        return fn_request_group_join(app, [f"{name}|would like to join"])
+    meta["members"][app.current_voice_name] = {
+        "direction": "in",
+        "joined": datetime.now().isoformat(timespec="seconds"),
+    }
+    _fenra.save_group_meta(name, meta)
     if name not in app.groups_in:
         app.groups_in.append(name)
-        changed = True
-    if name not in app.groups_out:
-        app.groups_out.append(name)
-        changed = True
     app.root.after(0, app._refresh_groups_display)
-    if not changed:
-        return f"already in '{name}'."
-    return f"joined '{name}' - reading from and writing to it starting next cycle."
+    return f"joined '{name}', direction=in (listen-only until the owner grants you speak access)."
 
 
 def fn_leave_group(app, args):
-    """Stop hearing from and broadcasting to a group - removes it from
-    both groups_in and groups_out."""
+    """Leave a group voluntarily - removes your own membership. Not the
+    same concern as being kicked (that's owner-only, and always lands
+    you somewhere - see fn_group_kick); leaving on your own is always
+    allowed, no destination needed, since a voice reaching zero groups
+    self-heals into The Hearth on its very next cycle regardless. Cannot
+    target The Hearth - it has no voice-facing leave path at all."""
+    import fenra as _fenra
+
     if not args or not args[0]:
         raise ValueError("leave_group requires a group name, e.g. leave_group(lobby).")
-    _, name = _group_path(args[0])
-    changed = False
+    name = _fenra.sanitize_group_name(args[0])
+    if name == _fenra.THE_HEARTH_NAME:
+        raise ValueError("The Hearth has no voice-facing membership control at all - not even leaving it yourself.")
+    meta = _fenra.load_group_meta(name)
+    if meta is None or app.current_voice_name not in meta.get("members", {}):
+        return f"wasn't in '{name}'."
+    del meta["members"][app.current_voice_name]
+    _fenra.save_group_meta(name, meta)
     if name in app.groups_in:
         app.groups_in.remove(name)
-        changed = True
     if name in app.groups_out:
         app.groups_out.remove(name)
-        changed = True
     app.root.after(0, app._refresh_groups_display)
-    if not changed:
-        return f"wasn't in '{name}'."
     return f"left '{name}'."
+
+
+def _load_owned_group_or_raise(_fenra, name, require_owner_voice=None):
+    meta = _fenra.load_group_meta(name)
+    if meta is None:
+        raise ValueError(f"'{name}' doesn't exist - see list_groups().")
+    if meta.get("kind") == "floor":
+        raise ValueError("The Hearth has no voice-facing admin functions at all - it's administered only by Teddy and Qualia.")
+    if require_owner_voice is not None and meta.get("owner") != require_owner_voice:
+        raise ValueError(f"only '{meta.get('owner')}' (the owner of '{name}') can do that.")
+    return meta
+
+
+_GROUP_TARGET_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*)$", re.DOTALL)
+_GROUP_TARGET_DEST_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.+?)\s*(?:\|\s*(.*))?$", re.DOTALL)
+
+
+def fn_group_invite(app, args):
+    """Owner-only: invite another voice into your group. This is an
+    offer, not a placement - the target must call
+    group_accept_invite(group) themselves before they're actually a
+    member (no voice can be forced into a group, per the consent-on-
+    entry rule - the one deliberate exception is birth into your own
+    creator's family group). e.g. group_invite(lobby|watcher)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("group_invite requires a group name and a target voice separated by | , e.g. group_invite(lobby|watcher).")
+    match = _GROUP_TARGET_RE.match(args[0])
+    if not match:
+        raise ValueError("group_invite requires a group name and a target voice separated by | , e.g. group_invite(lobby|watcher).")
+    name, target = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower().replace(" ", "_")
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    if target not in app.session_voices:
+        raise ValueError(f"'{target}' isn't a voice in this session. See list_voices().")
+    if target in meta.get("members", {}):
+        return f"'{target}' is already in '{name}'."
+    requests = _load_function_requests(app.session_name)
+    for r in requests:
+        if r.get("kind") == "group_invite" and r.get("voice") == target and r.get("function_name") == name and r.get("status") == "pending":
+            return f"already invited '{target}' to '{name}' - waiting on their accept."
+    requests.append({
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "voice": target,
+        "function_name": name,
+        "reason": f"invited by {app.current_voice_name}",
+        "status": "pending",
+        "kind": "group_invite",
+    })
+    _save_function_requests(app.session_name, requests)
+    return f"invited '{target}' to '{name}' - pending until they call group_accept_invite({name})."
+
+
+def fn_group_accept_invite(app, args):
+    """Accept a pending invite into a group someone else's owner sent
+    you. e.g. group_accept_invite(lobby)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("group_accept_invite requires a group name, e.g. group_accept_invite(lobby).")
+    name = _fenra.sanitize_group_name(args[0])
+    requests = _load_function_requests(app.session_name)
+    remaining, accepted = [], False
+    for r in requests:
+        if not accepted and r.get("kind") == "group_invite" and r.get("voice") == app.current_voice_name \
+                and r.get("function_name") == name and r.get("status") == "pending":
+            accepted = True
+            continue
+        remaining.append(r)
+    if not accepted:
+        raise ValueError(f"no pending invite to '{name}' for you.")
+    _save_function_requests(app.session_name, remaining)
+    meta = _load_owned_group_or_raise(_fenra, name)
+    meta["members"][app.current_voice_name] = {"direction": "in", "joined": datetime.now().isoformat(timespec="seconds")}
+    _fenra.save_group_meta(name, meta)
+    if name not in app.groups_in:
+        app.groups_in.append(name)
+    app.root.after(0, app._refresh_groups_display)
+    return f"joined '{name}' via invite, direction=in."
+
+
+def fn_group_kick(app, args):
+    """Owner-only: remove another voice from your group - always lands
+    them somewhere, never into nothing. With no destination given, they
+    auto-land in their own family group (every voice always has one).
+    e.g. group_kick(lobby|watcher) or group_kick(lobby|watcher|other_group)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("group_kick requires a group and a target voice separated by | , e.g. group_kick(lobby|watcher).")
+    match = _GROUP_TARGET_DEST_RE.match(args[0])
+    if not match:
+        raise ValueError("group_kick requires a group and a target voice separated by | , e.g. group_kick(lobby|watcher).")
+    name = _fenra.sanitize_group_name(match.group(1))
+    target = match.group(2).strip().lower().replace(" ", "_")
+    dest = _fenra.sanitize_group_name(match.group(3)) if match.group(3) else None
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    if target not in meta.get("members", {}):
+        return f"'{target}' isn't in '{name}'."
+    if target == app.current_voice_name:
+        raise ValueError("you can't kick yourself - use leave_group instead.")
+    del meta["members"][target]
+    _fenra.save_group_meta(name, meta)
+    target_state = _fenra.load_voice_state(app.session_name, target)
+    if name in target_state.get("groups_in", []):
+        target_state["groups_in"].remove(name)
+    if name in target_state.get("groups_out", []):
+        target_state["groups_out"].remove(name)
+    landed = dest or target_state.get("family_group") or _fenra.family_group_name(target)
+    _fenra.ensure_own_family_group(app.session_name, target)  # guarantees it really exists before landing them there
+    if landed not in target_state.get("groups_in", []):
+        target_state.setdefault("groups_in", []).append(landed)
+    _fenra.save_voice_state(app.session_name, target, target_state)
+    app.root.after(0, app._refresh_groups_display)
+    return f"kicked '{target}' from '{name}' - landed in '{landed}'."
+
+
+def fn_group_ban(app, args):
+    """Owner-only: kick, plus block from ever rejoining or being
+    re-invited. Cannot target The Hearth (blocked at the top, same as
+    every other admin function here) - it has no ban concept, only
+    Teddy/Qualia removal once a resident already has somewhere else to
+    land. e.g. group_ban(lobby|watcher)."""
+    import fenra as _fenra
+
+    result = fn_group_kick(app, args)
+    match = _GROUP_TARGET_DEST_RE.match(args[0])
+    name = _fenra.sanitize_group_name(match.group(1))
+    target = match.group(2).strip().lower().replace(" ", "_")
+    meta = _fenra.load_group_meta(name)
+    if meta is not None and target not in meta.get("banned", []):
+        meta["banned"].append(target)
+        _fenra.save_group_meta(name, meta)
+    return result + f" '{target}' is now banned from '{name}' - can't rejoin or be re-invited."
+
+
+def fn_group_set_visibility(app, args):
+    """Owner-only: hidden groups don't appear in list_groups() for
+    non-members at all; visible ones do (still opaque if private - see
+    list_groups). e.g. group_set_visibility(lobby|hidden)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("group_set_visibility requires a group and hidden/visible separated by | , e.g. group_set_visibility(lobby|hidden).")
+    match = _GROUP_TARGET_RE.match(args[0])
+    if not match:
+        raise ValueError("group_set_visibility requires a group and hidden/visible separated by | , e.g. group_set_visibility(lobby|hidden).")
+    name, value = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower()
+    if value not in ("hidden", "visible"):
+        raise ValueError("visibility must be 'hidden' or 'visible'.")
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta["visibility"] = value
+    _fenra.save_group_meta(name, meta)
+    return f"'{name}' is now {value}."
+
+
+def fn_group_set_join_policy(app, args):
+    """Owner-only: public (self-serve join) vs private (must request;
+    you grant or invite). e.g. group_set_join_policy(lobby|private)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("group_set_join_policy requires a group and public/private separated by | , e.g. group_set_join_policy(lobby|private).")
+    match = _GROUP_TARGET_RE.match(args[0])
+    if not match:
+        raise ValueError("group_set_join_policy requires a group and public/private separated by | , e.g. group_set_join_policy(lobby|private).")
+    name, value = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower()
+    if value not in ("public", "private"):
+        raise ValueError("join_policy must be 'public' or 'private'.")
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta["join_policy"] = value
+    _fenra.save_group_meta(name, meta)
+    return f"'{name}' is now {value}."
+
+
+def fn_group_set_direction(app, args):
+    """Owner-only - direction is never self-service, even for your own
+    membership (Teddy's explicit call). Sets a member's direction:
+    'in' (listen-only, the default on joining), 'out' (speak-only), or
+    'both'. e.g. group_set_direction(lobby|watcher|both)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError(
+            "group_set_direction requires a group, a target voice, and in/out/both separated "
+            "by | , e.g. group_set_direction(lobby|watcher|both)."
+        )
+    match = _GROUP_TARGET_DEST_RE.match(args[0])
+    if not match or not match.group(3):
+        raise ValueError(
+            "group_set_direction requires a group, a target voice, and in/out/both separated "
+            "by | , e.g. group_set_direction(lobby|watcher|both)."
+        )
+    name = _fenra.sanitize_group_name(match.group(1))
+    target = match.group(2).strip().lower().replace(" ", "_")
+    direction = match.group(3).strip().lower()
+    if direction not in ("in", "out", "both"):
+        raise ValueError("direction must be 'in', 'out', or 'both'.")
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    if target not in meta.get("members", {}):
+        raise ValueError(f"'{target}' isn't a member of '{name}' yet - invite or approve them first.")
+    meta["members"][target]["direction"] = direction
+    _fenra.save_group_meta(name, meta)
+    return f"'{target}'s direction in '{name}' is now {direction}."
+
+
+_GROUP_REQUEST_RE = re.compile(r"^\s*(.+?)\s*\|\s*(.*)$", re.DOTALL)
+
+
+def fn_request_group_join(app, args):
+    """Ask to join a private group - baseline, works no matter how
+    restricted you are, same as request_function_access (Teddy's call:
+    asking should be as unrestricted as asking for a function). Reuses
+    the exact same request-queue storage/shape, just tagged
+    kind='group_join'. e.g. request_group_join(lobby|I'd like to help
+    coordinate here)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("request_group_join requires a group name and a reason separated by | , e.g. request_group_join(lobby|I'd like to help here).")
+    match = _GROUP_REQUEST_RE.match(args[0])
+    if not match:
+        raise ValueError("request_group_join requires a group name and a reason separated by | , e.g. request_group_join(lobby|I'd like to help here).")
+    name, reason = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip()
+    meta = _fenra.load_group_meta(name)
+    if meta is None:
+        raise ValueError(f"'{name}' doesn't exist - see list_groups().")
+    if app.current_voice_name in meta.get("members", {}):
+        return f"already a member of '{name}'."
+    if not reason:
+        raise ValueError(f"request_group_join({name}|...) needs a real reason after the | .")
+    requests = _load_function_requests(app.session_name)
+    for r in requests:
+        if r.get("kind") == "group_join" and r.get("voice") == app.current_voice_name \
+                and r.get("function_name") == name and r.get("status") == "pending":
+            return f"you already have a pending request to join '{name}'."
+    requests.append({
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "voice": app.current_voice_name,
+        "function_name": name,
+        "reason": reason,
+        "status": "pending",
+        "kind": "group_join",
+    })
+    _save_function_requests(app.session_name, requests)
+    return f"request logged: you want to join '{name}' - visible to its owner via check_group_requests()."
+
+
+def fn_check_group_requests(app, args):
+    """List pending join requests for groups you own."""
+    import fenra as _fenra
+
+    owned = {n for n in _fenra.list_owned_groups() if (_fenra.load_group_meta(n) or {}).get("owner") == app.current_voice_name}
+    requests = [
+        r for r in _load_function_requests(app.session_name)
+        if r.get("status") == "pending" and r.get("kind") == "group_join" and r.get("function_name") in owned
+    ]
+    if not requests:
+        return "no pending join requests for groups you own."
+    return "\n".join(
+        f"{r.get('voice')} wants to join {r.get('function_name')} ({r.get('reason', '')}) - requested {r.get('timestamp', '?')}"
+        for r in requests
+    )
+
+
+def fn_approve_group_request(app, args):
+    """Owner-only: approve a pending join request - adds the voice to
+    your group, direction 'in'. e.g. approve_group_request(watcher|lobby)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("approve_group_request requires a voice and a group separated by | , e.g. approve_group_request(watcher|lobby).")
+    match = _GROUP_TARGET_RE.match(args[0])
+    if not match:
+        raise ValueError("approve_group_request requires a voice and a group separated by | , e.g. approve_group_request(watcher|lobby).")
+    target, name = match.group(1).strip().lower().replace(" ", "_"), _fenra.sanitize_group_name(match.group(2))
+    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    requests = _load_function_requests(app.session_name)
+    remaining, found = [], False
+    for r in requests:
+        if not found and r.get("kind") == "group_join" and r.get("voice") == target \
+                and r.get("function_name") == name and r.get("status") == "pending":
+            found = True
+            continue
+        remaining.append(r)
+    if not found:
+        raise ValueError(f"no pending join request from '{target}' for '{name}' - see check_group_requests().")
+    _save_function_requests(app.session_name, remaining)
+    meta["members"][target] = {"direction": "in", "joined": datetime.now().isoformat(timespec="seconds")}
+    _fenra.save_group_meta(name, meta)
+    target_state = _fenra.load_voice_state(app.session_name, target)
+    if name not in target_state.get("groups_in", []):
+        target_state.setdefault("groups_in", []).append(name)
+        _fenra.save_voice_state(app.session_name, target, target_state)
+    return f"approved: '{target}' is now in '{name}', direction=in."
+
+
+def fn_deny_group_request(app, args):
+    """Owner-only: deny a pending join request - clears it, admits no
+    one. e.g. deny_group_request(watcher|lobby)."""
+    import fenra as _fenra
+
+    if not args or not args[0]:
+        raise ValueError("deny_group_request requires a voice and a group separated by | , e.g. deny_group_request(watcher|lobby).")
+    match = _GROUP_TARGET_RE.match(args[0])
+    if not match:
+        raise ValueError("deny_group_request requires a voice and a group separated by | , e.g. deny_group_request(watcher|lobby).")
+    target, name = match.group(1).strip().lower().replace(" ", "_"), _fenra.sanitize_group_name(match.group(2))
+    _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    requests = _load_function_requests(app.session_name)
+    remaining, found = [], False
+    for r in requests:
+        if not found and r.get("kind") == "group_join" and r.get("voice") == target \
+                and r.get("function_name") == name and r.get("status") == "pending":
+            found = True
+            continue
+        remaining.append(r)
+    if not found:
+        raise ValueError(f"no pending join request from '{target}' for '{name}'.")
+    _save_function_requests(app.session_name, remaining)
+    return f"denied: '{target}'s request to join '{name}' was cleared."
 
 
 _VOICE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -781,13 +1154,16 @@ def fn_create_voice(app, args):
     - but top and bottom (the child's actual framing - who it is, what
     it's told) do NOT. You have to write them yourself, every time.
 
-    In a session running under the function-permission system (v0.16.9),
-    the new voice always starts able to call nothing beyond the two
-    global functions (functions, request_function_access) - not even
-    what you yourself currently hold. default_voice_state() already
-    seeds allowed_functions as an empty list and the copy loop below
-    deliberately never touches it, so this is true regardless of who
-    creates the child or what they hold themselves.
+    v0.16.15 - connectivity redesign: allowed_functions is now a
+    snapshot copy of the parent's own list at the moment of creation
+    (list-copied, independent afterward - changing the parent's own
+    access later never reaches an already-created child). This is what
+    makes create_voice genuinely universal rather than seed-only - any
+    voice holding it passes on whatever it itself currently holds, not
+    just the original five permission-admin functions. The child also
+    joins your own family group automatically and gets its own new one
+    - the one deliberate exception to the consent-on-entry rule, see
+    Qualia/decisions.md item 4b.
 
     This changed (2026-09-02) after a real, confirmed bias: the original
     version copied top/bottom automatically, which meant Teddy and
@@ -806,8 +1182,10 @@ def fn_create_voice(app, args):
     deliberately passing its own current top and bottom - but that's a
     choice made fresh every time, not something that happens on its own.
 
-    The new voice's own history/desires/function_usage/groups/inbox
-    still start genuinely blank either way, unchanged from before.
+    The new voice's own history/desires/function_usage/inbox still start
+    genuinely blank either way, unchanged from before - only
+    allowed_functions and family-group membership are inherited/
+    established automatically, per the redesign above.
 
     Local import of fenra (not at module level) - this module is
     otherwise careful to avoid importing fenra.py to sidestep a real
@@ -866,8 +1244,41 @@ def fn_create_voice(app, args):
     child_state["bottom"] = bottom
     for key in ("model", "model_rotation", "context_window"):
         child_state[key] = parent_state.get(key, child_state[key])
+    # v0.16.15 - connectivity redesign: allowed_functions is now a
+    # snapshot copy of the parent's at this moment (list-copied, not
+    # referenced, so a later change to the parent's own list never
+    # reaches back into an already-created child). This is what makes
+    # create_voice genuinely universal rather than seed-only - any voice
+    # holding it passes on whatever it itself currently holds.
+    child_state["allowed_functions"] = list(parent_state.get("allowed_functions", []))
+    child_state["family_group"] = _fenra.family_group_name(name)
     _fenra.save_voice_state(app.session_name, name, child_state)
     open(_fenra.voice_history_path(app.session_name, name), "a", encoding="utf-8").close()
+
+    # v0.16.15 - the one deliberate exception to the consent-on-entry
+    # rule: birth into your creator's family group is automatic, no
+    # accept step (Teddy's framing: "you don't choose your family of
+    # origin either"). Joins the parent's own family group (direction
+    # 'both' between parent and child specifically - a birth isn't the
+    # listen-only default that governs ordinary joins) and creates the
+    # child's own new family group in the same call, so both exist the
+    # instant the child does. One-generation-local by construction: this
+    # only ever touches the parent's own group, never a grandparent's.
+    _fenra.ensure_own_family_group(app.session_name, parent)
+    parent_family = _fenra.family_group_name(parent)
+    parent_meta = _fenra.load_group_meta(parent_family) or _fenra.create_group_if_missing(
+        parent_family, owner=parent, kind="family", join_policy="private",
+        visibility="visible", initial_member=parent,
+    )
+    parent_meta["members"][name] = {"direction": "both", "joined": datetime.now().isoformat(timespec="seconds")}
+    _fenra.save_group_meta(parent_family, parent_meta)
+    child_state = _fenra.load_voice_state(app.session_name, name)
+    if parent_family not in child_state.get("groups_in", []):
+        child_state.setdefault("groups_in", []).append(parent_family)
+    if parent_family not in child_state.get("groups_out", []):
+        child_state.setdefault("groups_out", []).append(parent_family)
+    _fenra.save_voice_state(app.session_name, name, child_state)
+    _fenra.ensure_own_family_group(app.session_name, name)
 
     # v0.16.13 - insert at the caller's own next-turn slot (not appended
     # to the end) so the new voice actually runs on the very next tick,
@@ -883,8 +1294,9 @@ def fn_create_voice(app, args):
     app.root.after(0, app._refresh_voice_list)
     return (
         f"'{name}' created with the top/bottom you wrote for it - your model, model rotation, "
-        f"and context window carried over, but its framing is exactly what you gave it, nothing "
-        f"more. Its own separate history starts now. It's in the rotation and will start getting "
+        f"context window, and allowed_functions all carried over. It's in your family group "
+        f"'{parent_family}' now, and has its own new one, '{_fenra.family_group_name(name)}'. "
+        f"Its own separate history starts now. It's in the rotation and will start getting "
         f"its own turns soon ({len(app.session_voices)} voice(s) total now)."
     )
 
@@ -1318,30 +1730,85 @@ FUNCTION_REGISTRY = {
         "params": "name",
         "description": "Add a model to your automatic round-robin rotation - one model repeats itself every cycle, two alternate back and forth, three or more cycle through in the order added, forever, automatically. Requires the exact name of an installed model, e.g. add_to_rotation(gemma2:27b). See list_models() for what's installed.",
     },
+    "create_group": {
+        "fn": fn_create_group,
+        "params": "name[|public|private]",
+        "description": "Create a new group, owned by you - full admin control (invite, kick, ban, visibility, join policy, member direction). Defaults to public (anyone can self-serve join). e.g. create_group(lobby) or create_group(lobby|private).",
+    },
     "list_groups": {
         "fn": fn_list_groups,
         "params": "",
-        "description": "List every group that exists, tagged with whether you're reading from it, writing to it, or both.",
-    },
-    "read_group": {
-        "fn": fn_read_group,
-        "params": "name[, count]",
-        "description": "Read a group's recent activity directly - further back than what's already merged into your prompt each cycle, or a group you haven't joined. Defaults to the last 10 entries, e.g. read_group(lobby) or read_group(lobby, 25).",
+        "description": "List groups you can see: full detail for ones you're in, existence/owner/join_policy only for other visible ones - a private group you're not in stays opaque beyond that. Hidden groups you're not in don't appear at all.",
     },
     "join_group": {
         "fn": fn_join_group,
         "params": "name",
-        "description": "Join a group - other voices (other Fenra sessions, each running independently, no shared turn order) in the same group will see what you say, and you'll see what they say, starting next cycle. e.g. join_group(lobby).",
+        "description": "Join a group. Public: immediate, direction 'in' (listen-only) by default - the owner has to grant you 'out' access before you can speak into it. Private: creates a join request the owner has to approve instead (same as request_group_join). e.g. join_group(lobby).",
     },
     "leave_group": {
         "fn": fn_leave_group,
         "params": "name",
-        "description": "Leave a group - stop hearing from it and stop broadcasting to it. e.g. leave_group(lobby).",
+        "description": "Leave a group voluntarily - always allowed, no destination needed. e.g. leave_group(lobby).",
+    },
+    "group_invite": {
+        "fn": fn_group_invite,
+        "params": "group|target_voice",
+        "description": "Owner-only: invite another voice into your group - an offer, not a placement; they must group_accept_invite it themselves. e.g. group_invite(lobby|watcher).",
+    },
+    "group_accept_invite": {
+        "fn": fn_group_accept_invite,
+        "params": "group",
+        "description": "Accept a pending invite into a group. e.g. group_accept_invite(lobby).",
+    },
+    "group_kick": {
+        "fn": fn_group_kick,
+        "params": "group|target_voice[|destination_group]",
+        "description": "Owner-only: remove a voice from your group - always lands them somewhere (their own family group by default if you don't name a destination), never into nothing. e.g. group_kick(lobby|watcher) or group_kick(lobby|watcher|other_group).",
+    },
+    "group_ban": {
+        "fn": fn_group_ban,
+        "params": "group|target_voice",
+        "description": "Owner-only: kick, plus block from rejoining or being re-invited. Cannot target The Hearth. e.g. group_ban(lobby|watcher).",
+    },
+    "group_set_visibility": {
+        "fn": fn_group_set_visibility,
+        "params": "group|hidden|visible",
+        "description": "Owner-only: whether your group appears in list_groups() for non-members at all. e.g. group_set_visibility(lobby|hidden).",
+    },
+    "group_set_join_policy": {
+        "fn": fn_group_set_join_policy,
+        "params": "group|public|private",
+        "description": "Owner-only: public (self-serve join) vs private (must request; you grant or invite). e.g. group_set_join_policy(lobby|private).",
+    },
+    "group_set_direction": {
+        "fn": fn_group_set_direction,
+        "params": "group|target_voice|in|out|both",
+        "description": "Owner-only, never self-service: set a member's direction - 'in' (listen-only, the default), 'out' (speak-only), or 'both'. e.g. group_set_direction(lobby|watcher|both).",
+    },
+    "request_group_join": {
+        "fn": fn_request_group_join,
+        "params": "group|reason",
+        "description": "Ask to join a private group - always allowed, even if otherwise restricted, same as request_function_access. e.g. request_group_join(lobby|I'd like to help coordinate here).",
+    },
+    "check_group_requests": {
+        "fn": fn_check_group_requests,
+        "params": "",
+        "description": "List pending join requests for groups you own.",
+    },
+    "approve_group_request": {
+        "fn": fn_approve_group_request,
+        "params": "target_voice|group",
+        "description": "Owner-only: approve a pending join request - adds them, direction 'in'. e.g. approve_group_request(watcher|lobby).",
+    },
+    "deny_group_request": {
+        "fn": fn_deny_group_request,
+        "params": "target_voice|group",
+        "description": "Owner-only: deny a pending join request - clears it, admits no one. e.g. deny_group_request(watcher|lobby).",
     },
     "create_voice": {
         "fn": fn_create_voice,
         "params": "name|top|bottom",
-        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. Nothing is copied for you, not even your own - if you want it to start like you, pass your own current top and bottom explicitly. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
+        "description": "Split off a new voice in this session, like a cell dividing - your model/model rotation/context window/allowed_functions all carry over automatically, but you must write out the new voice's top and bottom framing yourself, every time. It joins your own family group and gets its own new one. Gets folded into the round-robin automatically, starting soon. e.g. create_voice(watcher|your top text|your bottom text).",
     },
     "list_voices": {
         "fn": fn_list_voices,
