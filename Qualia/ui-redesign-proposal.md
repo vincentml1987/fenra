@@ -53,6 +53,7 @@ she can do, not a re-derivation of prompt-assembly logic).
 | model, max_tokens, context_window, model_rotation | Editable entries scattered across the main tab | Shown together as this voice's current parameters. **Still editable here too** (not view-only) - Context isn't a separate read-only mode for these, just a better place to see and set them than the current scattered rows |
 | **allowed_functions** | **Not shown anywhere in the GUI at all today** - only visible by reading state.json directly or asking the voice herself via `functions()` | **New**: baseline set shown read-only (same for everyone, nothing to manage), gated/extra functions shown as a checklist or add/remove list you can actually grant or revoke directly. This is the "permissions object... managed from outside what Fenra herself can see or touch" item 5 already called for. |
 | **inbox (messages sent to them via tell_voice)** | **Not shown in the GUI at all** | **New** - what's actually sitting in her inbox right now, who it's from, how many ticks it has left. This was the specific example Teddy gave. |
+| **group messages received** | **Not surfaced anywhere as its own thing** - technically visible today only by scrolling the full raw History tab and eyeballing which entries happen to be `kind: "group_message"`, mixed in with everything she's thought herself | **New** - a filtered pull from her own `history.jsonl`: every pushed group message she's actually received, who said it and in which group, most recent first. Distinct from History (unfiltered, includes her own generations too) and from Groups' roster view (who's in a group, not what's actually been said there) - this is specifically "what has this voice heard." |
 | desires | Read-only display | Stays read-only (Fenra-set only, by design) |
 | family_group | Not shown | Show read-only, one line |
 | groups_in / groups_out | Crude comma-separated entry+Set fields, no roster context | Read-only list of "which groups, what direction" - no GUI editing (**decided**: no direct group editing at all, see Groups below) |
@@ -70,7 +71,7 @@ she can do, not a re-derivation of prompt-assembly logic).
 ## Proposed tab layout
 
 - **Session** (renamed from "Fenra") - host/interval/max_tokens/permission_mode (read-only)/qualia_allowance/Start-Stop/status. Session picker removed entirely, moved to File menu.
-- **Voices** (new) - list of every voice (left) + detail panel (right), two sections: **Framing** (Behavior/Identity text, renamed per above) and **Context** (model/context_window/model_rotation, allowed_functions with baseline read-only + gated grant/revoke, inbox, desires, family_group, group memberships read-only).
+- **Voices** (new) - list of every voice (left) + detail panel (right), two sections: **Framing** (Behavior/Identity text, renamed per above) and **Context** (model/context_window/model_rotation, allowed_functions with baseline read-only + gated grant/revoke, inbox, group messages received, desires, family_group, group memberships read-only).
 - **Groups** (new) - list of every group in the session (left) + detail panel (right): owner/kind/join_policy/visibility, roster with direction, banned list. View-only.
 - **History** - stays exactly where it is, standalone, unchanged - the raw Ollama request/response log.
 - **Chat** - unchanged.
