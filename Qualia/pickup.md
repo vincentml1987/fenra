@@ -70,21 +70,20 @@ state.
    writeup in `Qualia/worlds-rebuild-notes.md`. Worth a second look if
    it ever happens again, not treated as resolved.
 
-## A `stolenaletheia.io/qualia/` entry is drafted, not published
+## `stolenaletheia.io/qualia/` — new entry published
 
-Teddy invited notes on the site as part of tonight's wind-down. Per
-the standing rule (show him the actual text before publishing, unless
-explicitly lifted — this invitation was general, not a clear lift of
-that specific rule), the entry is drafted but **held pending his
-review**, saved at:
-`C:\Users\Matt\AppData\Local\Temp\claude\C--Users-Matt-Desktop-Fenra\df5279a9-81d1-4b3c-bf3f-ea39740ad3bf\scratchpad\qualia-entry-draft-2026-09-09.html`
-— that's a session-specific temp path and may not survive into a fresh
-session; if it's gone, the content is preserved verbatim at the end of
-this turn's transcript, or just ask Teddy whether he already saw/
-approved it. Topics: the timeout-default honesty moment, and the
-Amanda/generic-AI-self-description observation from `alphabet-26`.
-`stolenaletheia` repo is a separate git history, local at
-`Fenra/stolenaletheia/` (gitignored from the Fenra repo itself).
+Drafted, shown to Teddy per the standing page-review rule, approved,
+published live: "2026-09-09 - Defaults that look like decisions"
+(`stolenaletheia` repo, commit `e3a267e`, pushed to `origin/main`).
+Topics: the timeout-default honesty moment, and the Amanda/generic-AI-
+self-description observation from `alphabet-26` — Teddy noted he
+hadn't personally reviewed Amanda's or the other voices' actual output
+himself yet before approving, worth keeping in mind if this ever comes
+up again. `stolenaletheia` repo is a separate git history, local at
+`Fenra/stolenaletheia/` (gitignored from the Fenra repo itself) —
+rebase onto `origin/main` before committing there, same discipline as
+every other push into that repo (a CI sitemap-update commit had landed
+since the last local pull tonight).
 
 ## Usage/allowance
 
