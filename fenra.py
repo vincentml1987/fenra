@@ -14,27 +14,36 @@ THE MODEL, exactly as specified:
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - exactly four fields: model, behavior, identity, context.
-  context is a single free-text field, fully editable by Teddy at any
-  time ("even context," his words) - not a fixed-size window, not a
-  separate history file. It grows by plain string append: every time a
-  voice thinks, and every time a fellow group member's thought lands,
-  one line gets appended: "[timestamp] name: text" - the SAME format
-  whether it's the voice's own thought or an incoming one, no special
-  case for self vs. other.
+- Voice - exactly three fields: model, identity, context. `behavior`
+  existed in the first pass and is gone (2026-09-09) - it was the same
+  boilerplate for every voice, and the HUD below (ending in identity)
+  replaces what it was doing. context is a single free-text field,
+  fully editable by Teddy at any time ("even context," his words) - not
+  a fixed-size window, not a separate history file. It grows by plain
+  string append: every time a voice thinks, and every time a fellow
+  group member's thought lands, one line gets appended: "[timestamp]
+  name: text" - the SAME format whether it's the voice's own thought or
+  an incoming one, no special case for self vs. other.
 - Group - exactly two fields: name, members (a list of voice names).
   No owner, no join_policy, no visibility, no direction - manually
   managed only, entirely from the GUI. No voice-driven join/invite/kick
   since there are no functions yet for a voice to call at all.
 
 THE LOOP: one voice per tick, simple round-robin across the world's
-voice list. Build the prompt as behavior + context + identity (behavior
-read first, identity read last - the same ordering confirmed correct
-on fenras-aletheosis, kept here on purpose), call Ollama, get the raw
-response - no ⟦...⟧ parsing, no function dispatch, the whole response
-IS the thought. Append it to the speaker's own context, then to every
-OTHER member's context for every group the speaker belongs to (deduped
-across overlapping groups).
+voice list. Build the prompt as context + HUD (`build_hud()`), call
+Ollama, get the raw response - no ⟦...⟧ parsing, no function dispatch,
+the whole response IS the thought. Append it to the speaker's own
+context, then to every OTHER member's context for every group the
+speaker belongs to (deduped across overlapping groups).
+
+THE HUD: the last thing in every prompt, computed fresh every tick and
+never persisted to context (Teddy's call, 2026-09-09 - it reflects live
+world state and shouldn't compound the same context-bloat problem a
+silently-timing-out voice can already produce). Tells a voice its own
+name/model, its own groups, every group that exists in the world, who
+it can currently see (shares a group with), and who exists but isn't
+visible to it - ending with its own identity line as the literal last
+line of the entire prompt.
 """
 
 import json
@@ -162,7 +171,6 @@ def list_voices(world_name):
 def default_voice_state():
     return {
         "model": DEFAULT_MODEL,
-        "behavior": "",
         "identity": "",
         "context": "",
     }
@@ -277,6 +285,37 @@ def groups_containing(world_name, voice_name):
         if state and voice_name in state.get("members", []):
             out.append(name)
     return out
+
+
+def build_hud(world_name, voice_name):
+    """The last thing in a voice's prompt (see module docstring) -
+    computed fresh every tick, never written to state.json. Own
+    name/model, own groups, every group in the world, who's currently
+    seen (shares a group), who exists but isn't seen, then the voice's
+    own identity line as the literal last line."""
+    state = load_voice_state(world_name, voice_name)
+    own_groups = groups_containing(world_name, voice_name)
+    all_groups = list_groups(world_name)
+
+    seen = set()
+    for gname in own_groups:
+        gstate = load_group_state(world_name, gname) or {}
+        seen.update(gstate.get("members", []))
+    seen.discard(voice_name)
+
+    unseen = [v for v in list_voices(world_name) if v != voice_name and v not in seen]
+
+    lines = [
+        "Everything above this line is your thoughts. Everything below is your HUD.",
+        f"Name: {voice_name}",
+        f"Model: {state.get('model', DEFAULT_MODEL)}",
+        f"Your groups: {', '.join(own_groups) if own_groups else 'none'}",
+        f"All groups in this world: {', '.join(all_groups) if all_groups else 'none'}",
+        f"Voices you can see: {', '.join(sorted(seen)) if seen else 'none'}",
+        f"Voices that exist but you cannot see: {', '.join(unseen) if unseen else 'none'}",
+        state.get("identity", ""),
+    ]
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ model --
@@ -430,11 +469,7 @@ class FenraApp:
         self.model_combo.pack(side="left", padx=(2, 4))
         ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left")
 
-        ttk.Label(right, text="Behavior (read first, every cycle):").pack(anchor="w", padx=2)
-        self.behavior_box = scrolledtext.ScrolledText(right, wrap="word", height=6)
-        self.behavior_box.pack(fill="x", padx=2, pady=(0, 4))
-
-        ttk.Label(right, text="Identity (read last, right before generating):").pack(anchor="w", padx=2)
+        ttk.Label(right, text="Identity (last line of the HUD, every cycle):").pack(anchor="w", padx=2)
         self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=6)
         self.identity_box.pack(fill="x", padx=2, pady=(0, 4))
 
@@ -461,8 +496,6 @@ class FenraApp:
         state = load_voice_state(self.world_name, name)
         self.displayed_voice = name
         self.model_var.set(state.get("model", DEFAULT_MODEL))
-        self.behavior_box.delete("1.0", "end")
-        self.behavior_box.insert("end", state.get("behavior", ""))
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
         self.context_box.delete("1.0", "end")
@@ -471,7 +504,6 @@ class FenraApp:
     def _save_voice_snapshot(self, name):
         state = {
             "model": self.model_var.get(),
-            "behavior": self.behavior_box.get("1.0", "end-1c"),
             "identity": self.identity_box.get("1.0", "end-1c"),
             "context": self.context_box.get("1.0", "end-1c"),
         }
@@ -709,7 +741,6 @@ class FenraApp:
         self._populate_groups_list()
         self.group_name_var.set("")
         self.group_members_listbox.delete(0, "end")
-        self.behavior_box.delete("1.0", "end")
         self.identity_box.delete("1.0", "end")
         self.context_box.delete("1.0", "end")
         self.status_var.set("Idle")
@@ -820,7 +851,7 @@ class FenraApp:
 
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
-        prompt = f"{state.get('behavior', '')}\n\n{state.get('context', '')}\n\n{state.get('identity', '')}"
+        prompt = f"{state.get('context', '')}\n\n{build_hud(self.world_name, active_voice)}"
         try:
             response = call_ollama(self.host_var.get(), model, prompt)
         except requests.RequestException as exc:
