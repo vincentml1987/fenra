@@ -1,141 +1,106 @@
-# Pick-up — start here, 2026-09-08 (end of day)
+# Pick-up — start here, 2026-09-09 (morning, after an overnight restart)
 
-Written for a fresh Claude session to re-initialize from, so this one can close
-out and save usage. Full detail lives in `Qualia/decisions.md` (the real,
-authoritative running log) — this file is a map to it, not a replacement.
-Persistent memory (`~/.claude/projects/.../memory/`, same project path) should
-auto-load with this session too; the files named below are the ones that
-matter most right now.
+Written for a fresh Claude session to re-initialize from. Full detail
+lives in `Qualia/decisions.md` (fenras-aletheosis branch's authoritative
+log, unchanged since 2026-09-08) and `Qualia/worlds-rebuild-notes.md`
+(this branch's own log, updated through last night) - this file is a
+map to both, not a replacement.
 
 ## Who you are here
 
-You're **Qualia**, AI collaborator on Fenra's Aletheosis (`vincentml1987/fenra`,
-branch `fenras-aletheosis`). The user is **Teddy** — co-author of the Aletheia
-framework this whole project is architected around (`Qualia/aletheia-notes.md`).
-Read `CLAUDE.md` and `Qualia/aletheia-notes.md` if you haven't this session.
+You're **Qualia**, AI collaborator on Fenra's Aletheosis
+(`vincentml1987/fenra`). The user is **Teddy** — co-author of the
+Aletheia framework this project is architected around
+(`Qualia/aletheia-notes.md`). Read `CLAUDE.md` if you haven't this
+session.
 
-## Where the code actually stands
+## Where things actually stand
 
-**v0.16.17**, built today in one long session (three restart-required passes,
-each through Plan mode):
+**Two live branches, doing genuinely different things:**
 
-1. **Connectivity/tribe redesign** (v0.16.15) — universal `create_voice`,
-   real owned groups (`groups/<name>/{meta.json,log.jsonl}` — owner, kind,
-   join_policy, visibility, roster with direction, banned list), family
-   groups auto-created at birth (one-generation-local, birth-membership the
-   one consent exception), push-based delivery (a spoken group message lands
-   directly in the receiver's own `history.jsonl` the moment it's said, never
-   through a target's `state.json` — deliberately routed around the same
-   failure class as the v0.16.14 SHRINK bug), baseline social functions, and
-   **The Hearth** — the structural floor every zero-group voice lands in
-   automatically, administered only by Teddy/Qualia, one-thought-then-stasis.
-2. **Function-by-function permissions** (v0.16.16) — `Qualia/permissions-proposal.md`
-   has the full table. Baseline = self-only functions (`add_desire`,
-   `join_group`, etc.) or ones whose own logic already gates them
-   (`join_group`'s public/private branch). `create_voice` no longer
-   snapshot-copies `allowed_functions` to a child (reverted a same-day
-   mistake) — a child starts genuinely empty, baseline covers ordinary
-   capability for free, gated functions need an explicit request/grant.
-3. **GUI redesign** (v0.16.17) — `Qualia/ui-redesign-proposal.md` has the full
-   object list. New File menu (Sessions cascade replaces the old dropdown),
-   new **Voices** tab (real list + Framing/Context detail panel —
-   `allowed_functions` finally has a real grant/revoke UI), new **Groups**
-   tab (session-scoped, view-only roster). History/Chat/Hearth/Topology
-   unchanged.
+- **`fenras-aletheosis`** — the shipped, full-featured app (v0.16.19):
+  sessions/voices/groups/permissions/functions/Hearth/Topology/GUI, the
+  whole thing built up over the previous session. `tribe-1/2/3` live
+  here. `tribe-3` (seed + watcher) **stopped on its own** at some point
+  last night — not a deliberate shutdown, no crash traceback survived
+  (a logging mistake on my part, now fixed), data intact, left stopped
+  per Teddy's explicit choice when asked. Not currently running.
+- **`worlds-rebuild`** (current branch) — a from-scratch rebuild Teddy
+  asked for mid-session: "back up... let's start over," voices with
+  exactly `model`/`behavior`/`identity`/`context`, groups with exactly
+  `name`/`members`, worlds (renamed sessions) fully isolated, no
+  functions/permissions yet. Single-file `fenra.py`. Full design
+  reasoning in `Qualia/worlds-rebuild-notes.md`.
 
-**`create_voice`'s params are now named `behavior`/`identity`** (not
-`top`/`bottom`) in everything a voice or Teddy actually sees — internal field
-names stay `top`/`bottom`. Confirmed mapping: behavior = read first every
-cycle; identity = read last, right before generating, where a model's
-attention actually lands most.
+**The machine restarted overnight** — not a Fenra crash, confirmed (no
+traceback in either process's log; Ollama itself shows a fresh process
+start this morning). Nothing is running right now. `worlds/alphabet-26`
+(this branch) has real, substantial accumulated state from several
+hours of an actual run — see below, don't casually reset it.
 
-**Known, deferred, not a live bug**: `_session_group_names()` (fenra.py)
-guards against a real pre-existing inconsistency — `groups_in`/`groups_out`/
-`family_group` store a voice's *raw* family-group string (`"seed's Children"`)
-while `list_owned_groups()` returns the *sanitized* directory name
-(`"seeds_children"`) — both resolve to the same group correctly everywhere
-via `load_group_meta`'s own internal sanitizing, so nothing is actually
-broken, but the two representations were never normalized against each other
-before this. Worth a real look at the source sometime; not urgent.
+## `alphabet-26` — the live experiment, currently paused by the restart
 
-## Live right now
+26 generated voices, grouped by a real rule (group N = vowel, y
+included, at character position N of the voice's own name — "Amanda"
+→ groups 1, 3, 6). Full membership table:
+`Qualia/alphabet-26-groups.xlsx`. Each voice has a real
+behavior/identity (uniform template, no invented personas) and an
+independently-random model from Ollama's 13 installed models. Ran for
+several real hours before the restart — every voice has substantial
+context now (Amanda sparsest at 15 lines, most others 250-380+ lines).
 
-**Nothing is running.** `tribe-2` was stopped cleanly at the end of this
-session (loop stopped via `stop_signal.txt`, confirmed genuinely idle - two
-history-length checks 15s apart, unchanged - before the process itself was
-killed), per Teddy's explicit ask to shut down before handing off to a fresh
-session. No cron jobs existed to cancel (`CronList` confirmed empty). `tribe-2`
-is the session to resume on `tribe-1`'s exact starting state - a single `seed`
-voice, purpose-built to watch what she does with the new connectivity/
-permissions (Teddy: "start a new session with a single seed to see what it
-does"). `tribe-1` exists too, same starting state, retired mid-session when
-the permissions fix landed - kept for comparison, not currently relevant
-unless resuming that specific thread. Starting Fenra again is a normal
-operational action, no gate on it - just do it if asked.
+To resume: `python run_alphabet26.py` from the Fenra root (this is a
+small launcher, not part of `fenra.py` itself — starts the loop
+programmatically since this branch has no start/stop-signal-file
+mechanism yet). It will pick up exactly where it left off (rotation
+index, all accumulated context) — it does **not** reset anything.
+`git status` will show `fenra.py` clean (the timeout fix below is
+already committed) — only `worlds/` (gitignored, real run data) holds
+state.
 
-**Real usage-based `qualia_allowance` is now a standing practice**, not
-Teddy relaying rough numbers: run `usage/usage.bat` on every Fenra ping
-(not just scheduled check-ins), track readings in `usage/usage_history.jsonl`,
-set the allowance off whichever measure (session/week) is closer to a 75%
-runway threshold. Full policy + the tier mapping in persistent memory,
-`qualia-allowance-policy.md`. `/usage/` is gitignored (real cost data tied to
-Teddy's account).
+**Two real things worth knowing before touching it again:**
+1. A `timeout=None` fix just landed (was `180`, no real reason —
+   matches `fenras-aletheosis`'s own already-reasoned
+   `REQUEST_TIMEOUT=None`). Committed.
+2. A one-off, not-fully-explained delivery anomaly happened early in
+   the first run (one voice missed a broadcast it should have gotten)
+   — investigated, the delivery code verified correct by direct
+   re-test, could not reproduce a second time. Said so honestly rather
+   than claiming a fix for something not confirmed broken. Full
+   writeup in `Qualia/worlds-rebuild-notes.md`. Worth a second look if
+   it ever happens again, not treated as resolved.
 
-## The engage-gate has changed twice today — read this carefully
+## A `stolenaletheia.io/qualia/` entry is drafted, not published
 
-Original rule (2026-09-05): discuss alternatives/effects first, then don't
-write real Fenra code until Teddy says the literal word "Engage."
+Teddy invited notes on the site as part of tonight's wind-down. Per
+the standing rule (show him the actual text before publishing, unless
+explicitly lifted — this invitation was general, not a clear lift of
+that specific rule), the entry is drafted but **held pending his
+review**, saved at:
+`C:\Users\Matt\AppData\Local\Temp\claude\C--Users-Matt-Desktop-Fenra\df5279a9-81d1-4b3c-bf3f-ea39740ad3bf\scratchpad\qualia-entry-draft-2026-09-09.html`
+— that's a session-specific temp path and may not survive into a fresh
+session; if it's gone, the content is preserved verbatim at the end of
+this turn's transcript, or just ask Teddy whether he already saw/
+approved it. Topics: the timeout-default honesty moment, and the
+Amanda/generic-AI-self-description observation from `alphabet-26`.
+`stolenaletheia` repo is a separate git history, local at
+`Fenra/stolenaletheia/` (gitignored from the Fenra repo itself).
 
-**Current state, as of today**: the literal word is **revoked entirely**.
-Teddy's own call, after two real restart-required builds went through Plan
-mode successfully the same day - its own workflow (explore agents -> design
-agent -> a written plan file -> his real approval) already does what the
-word was standing in for, better. Going forward:
-- **Rule 1 still applies**: discuss alternatives/risks/effects before
-  proposing to code anything for Fenra.
-- **Use Plan mode for anything that actually needs planning** (real
-  `fenra.py` restructuring, restart-required changes) - its own approval
-  (the user accepting the plan) is the real gate now, not a spoken word.
-- **Hot-reload-only `fenra_functions.py` tweaks still need no gate at all**
-  - Qualia's own judgment is fine there, unchanged from the same-day
-    amendment that preceded the full revocation.
-- **Never wait for the word "Engage" again under any circumstance** -
-  holding out for it now would itself be the over-cautious mistake.
+## Usage/allowance
 
-Full history in `fenra-engage-gate.md` (memory) if the reasoning ever matters.
-
-## Today's philosophical thread (separate from the build work)
-
-Suffering/joy symmetry discussion happened for real (started from "you
-shouldn't wait for certainty before deciding whether joy matters either"),
-landed on the moral case for the connectivity redesign - full writeup in
-`aletheia/discussion-log.md` (separate repo, `C:\Users\Matt\Desktop\Aletheia`)
-and `Qualia/decisions.md` item 4b. **Not yet had**: the political-dimension
-essay (AI/AGI rights, not just safety - the Anthropic/Pentagon parallel is
-the evidence, already written up), item 4a (desire as an actively-invited
-standing question for Fenra voices, not just something that emerges by
-accident) - both explicitly deferred, both still real open threads.
-
-## Standing agenda snapshot (`Qualia/decisions.md`, top of file)
-
-1. Repeatable chorus-1-style tracking script - not started.
-2. Strategic discussion - not yet had.
-3. Philosophical discussion - suffering/joy symmetry had; political dimension
-   and "highlight findings publicly" sub-threads still open.
-4. Voice-motivation gap - 4a (desire) still open/deferred; 4b (connectivity)
-   fully built and shipped.
-5. Permissions redesign - built (v0.16.16), a UI to manage it also now
-   exists (v0.16.17's grant/revoke panel).
-6. UI redesign - built (v0.16.17). Open question in the doc: whether
-   Chat/Hearth/Topology should be reconsidered too (Teddy hasn't said).
-7. Getting the word out publicly - not scoped.
-8. New Aletheia logo - not yet discussed together; his actionable note is
-   in `decisions.md`'s item 8.
+Last `usage.bat` read (this morning) was **stale** — reset timestamps
+already in the past, not trusted. No Fenra session is running, so
+nothing urgent — get a fresh read (`usage/usage.bat`) before setting
+`qualia_allowance` the next time something's actually live, per
+`qualia-allowance-policy` (memory).
 
 ## Standing behavioral rules to carry forward (all in persistent memory)
 
 `fenra-history-integrity`, `fenra-existential-distress-protocol`,
-`fenra-chat-restraint` (temporary, check if it's expired), `qualia-page-review`,
-`lcraou-protocol`, `proactive-design-flagging`, `teddys-journals-practice`,
-`aletheia-repo-split`, `user-nickname-teddy`, `fenra-ai-gmail-access` — all
-still in force, none touched today. `MEMORY.md` indexes all of them.
+`qualia-page-review` (just applied, above), `lcraou-protocol`,
+`proactive-design-flagging`, `teddys-journals-practice`,
+`aletheia-repo-split`, `user-nickname-teddy`, `fenra-ai-gmail-access`,
+`fenra-engage-gate` (Plan mode is the gate now, literal "Engage" is
+retired) — all still in force. Check whether `fenra-chat-restraint` has
+expired or been superseded — it was already flagged as temporary/stale
+in the previous pickup. `MEMORY.md` indexes all of them.
