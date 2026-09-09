@@ -2255,6 +2255,14 @@ class FenraApp:
         session or group file mid-write by another process just gets
         skipped for this pass, picked up again next refresh rather than
         raising."""
+        if not self.session_name:
+            # v0.16.18 - the Topology tab schedules its first refresh
+            # synchronously during _build_ui(), before _startup_session()
+            # has set self.session_name - harmless no-op scan wasn't
+            # possible to hit before this function depended on a session
+            # name (the old whole-disk scan needed none). Real bug, caught
+            # by the first live smoke test of this change.
+            return {}, [], {}
         voices = {}
         voice_names = list_voices(self.session_name)
         if voice_names:
@@ -3766,7 +3774,17 @@ class FenraApp:
 
         # v0.16.15 - checked every cycle, for whoever's actually about to
         # run, before anything else - see ensure_hearth_membership.
+        # v0.16.18 - ensure_own_family_group added alongside it: a voice
+        # created before groups became session-scoped still lists its own
+        # family group in groups_in/out, but that group no longer exists
+        # under the new per-session path (fresh-empty was the deliberate
+        # call for existing sessions, not a copy of the old global data -
+        # see Qualia/decisions.md). Without this, the group would just
+        # stay silently missing forever - a push to it finds no meta,
+        # no-ops, and nothing ever recreates it. Idempotent, same as
+        # ensure_hearth_membership, so a no-op once the group is real.
         ensure_hearth_membership(self.session_name, active_voice)
+        ensure_own_family_group(self.session_name, active_voice)
 
         if active_voice == displayed:
             vstate = self._save_voice_snapshot(active_voice)
