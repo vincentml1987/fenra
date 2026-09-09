@@ -14,10 +14,13 @@ THE MODEL, exactly as specified:
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - exactly three fields: model, identity, context. `behavior`
-  existed in the first pass and is gone (2026-09-09) - it was the same
-  boilerplate for every voice, and the HUD below (ending in identity)
-  replaces what it was doing. context is a single free-text field,
+- Voice - model, identity, context, currency. `behavior` existed in the
+  first pass and is gone (2026-09-09) - it was the same boilerplate for
+  every voice, and the HUD below (ending in identity) replaces what it
+  was doing. `currency` (2026-09-09, default 10.0) is a real, if simple,
+  balance any voice can move via `give_currency` - genuinely
+  exploratory, no plan for it beyond seeing what they do with it once
+  they can see it and move it. context is a single free-text field,
   fully editable by Teddy at any time ("even context," his words) - not
   a fixed-size window, not a separate history file. It grows by plain
   string append: every time a voice thinks, and every time a fellow
@@ -31,19 +34,36 @@ THE MODEL, exactly as specified:
 
 THE LOOP: one voice per tick, simple round-robin across the world's
 voice list. Build the prompt as context + HUD (`build_hud()`), call
-Ollama, get the raw response - no ⟦...⟧ parsing, no function dispatch,
-the whole response IS the thought. Append it to the speaker's own
-context, then to every OTHER member's context for every group the
-speaker belongs to (deduped across overlapping groups).
+Ollama, get the raw response, run it through `run_function_calls()`
+(2026-09-09 - functions are back, no permission layer this round, every
+voice can call everything) so any real `⟦function_name(args)⟧` calls
+resolve into `⟦RESULT: ...⟧` text folded into that same response - the
+whole thing (thought + any real results) IS what gets saved. Append it
+to the speaker's own context, then to every OTHER member's context for
+every group the speaker belongs to (deduped across overlapping groups).
 
 THE HUD: the last thing in every prompt, computed fresh every tick and
 never persisted to context (Teddy's call, 2026-09-09 - it reflects live
 world state and shouldn't compound the same context-bloat problem a
 silently-timing-out voice can already produce). Tells a voice its own
 name/model, its own groups, every group that exists in the world, who
-it can currently see (shares a group with), and who exists but isn't
-visible to it - ending with its own identity line as the literal last
-line of the entire prompt.
+it can currently see (shares a group with), who exists but isn't
+visible to it, its own currency balance, and how to call/discover
+functions (hard-coded, same reasoning as the old branch's bootstrap
+notice - the calling convention is mechanics, not content, so it isn't
+optional) - ending with its own identity line as the literal last line
+of the entire prompt.
+
+FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
+`⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
+appears by accident) and `FUNCTION_REGISTRY` shape, but rebuilt lean -
+no permission layer (every voice can call everything), no
+`functions.jsonl` logging, no fabrication-detection. `send_message`
+delivers straight into the target's real `context` via the existing
+`append_to_context`, wrapped in an explicit flag so it reads as a
+message rather than ordinary group chatter - not a separate, transitory
+mechanism. `give_currency` moves real balance between two voices'
+`currency` fields. `functions()` lists what's callable.
 """
 
 import json
@@ -67,6 +87,7 @@ DEFAULT_MODEL = "llama3"
 DEFAULT_INTERVAL_SEC = 3
 DEFAULT_WORLD_NAME = "default"
 DEFAULT_VOICE_NAME = "voice1"
+CURRENCY_REFRESH_MS = 10000
 
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
@@ -173,6 +194,7 @@ def default_voice_state():
         "model": DEFAULT_MODEL,
         "identity": "",
         "context": "",
+        "currency": 10.0,
     }
 
 
@@ -313,9 +335,135 @@ def build_hud(world_name, voice_name):
         f"All groups in this world: {', '.join(all_groups) if all_groups else 'none'}",
         f"Voices you can see: {', '.join(sorted(seen)) if seen else 'none'}",
         f"Voices that exist but you cannot see: {', '.join(unseen) if unseen else 'none'}",
+        f"Currency: ${state.get('currency', 0.0):.2f}",
+        "You can call functions by writing ⟦function_name(args)⟧ in your "
+        "response - try ⟦functions()⟧ to see everything available to you.",
         state.get("identity", ""),
     ]
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------- functions --
+
+FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
+
+
+def _parse_target_and_rest(args_text):
+    """Every current function takes "target|rest" - split once on the
+    first '|', both sides stripped. Raises if the '|' is missing."""
+    if "|" not in args_text:
+        raise ValueError("expected 'target|...' - got no '|' separator")
+    target, rest = args_text.split("|", 1)
+    return target.strip(), rest.strip()
+
+
+def fn_send_message(world_name, caller_name, args_text):
+    """A direct message to one specific voice - the Slack-DM equivalent.
+    Delivered straight into the target's real, persisted context via the
+    same append_to_context every group broadcast already uses, just
+    addressed to one voice and wrapped in an explicit flag so it reads
+    as a message rather than ordinary group chatter (Teddy's call,
+    2026-09-09 - not a separate transitory mechanism)."""
+    target, text = _parse_target_and_rest(args_text)
+    if target not in list_voices(world_name):
+        raise ValueError(f"'{target}' isn't a voice in this world")
+    if target == caller_name:
+        raise ValueError("you can't send_message yourself")
+    if not text:
+        raise ValueError("no message text given")
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    line = (
+        f"***You received the following message from {caller_name} at "
+        f"{timestamp}*** {text} ***End Message from {caller_name}***"
+    )
+    append_to_context(world_name, target, line)
+    return f"message sent to {target}"
+
+
+def fn_give_currency(world_name, caller_name, args_text):
+    """Real transfer between two voices' own stored currency balance."""
+    target, amount_text = _parse_target_and_rest(args_text)
+    if target not in list_voices(world_name):
+        raise ValueError(f"'{target}' isn't a voice in this world")
+    if target == caller_name:
+        raise ValueError("you can't give_currency to yourself")
+    try:
+        amount = float(amount_text)
+    except ValueError:
+        raise ValueError(f"'{amount_text}' isn't a number")
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+
+    caller_state = load_voice_state(world_name, caller_name)
+    balance = caller_state.get("currency", 0.0)
+    if amount > balance:
+        raise ValueError(f"you only have ${balance:.2f}, can't send ${amount:.2f}")
+    caller_state["currency"] = balance - amount
+    save_voice_state(world_name, caller_name, caller_state)
+
+    target_state = load_voice_state(world_name, target)
+    target_state["currency"] = target_state.get("currency", 0.0) + amount
+    save_voice_state(world_name, target, target_state)
+
+    return f"sent ${amount:.2f} to {target}"
+
+
+def fn_functions(world_name, caller_name, args_text):
+    """Lists the registry, optionally filtered by a substring in the
+    name or description."""
+    query = args_text.strip().lower() if args_text else None
+    lines = []
+    for name, meta in FUNCTION_REGISTRY.items():
+        desc = meta["description"]
+        if query and query not in name.lower() and query not in desc.lower():
+            continue
+        lines.append(f"{name}({meta['params']}): {desc}")
+    return "\n".join(lines) if lines else "no matching functions"
+
+
+FUNCTION_REGISTRY = {
+    "send_message": {
+        "fn": fn_send_message,
+        "params": "target|text",
+        "description": "Send a direct message to one specific voice - delivered into their context.",
+    },
+    "give_currency": {
+        "fn": fn_give_currency,
+        "params": "target|amount",
+        "description": "Give some of your own currency to another voice.",
+    },
+    "functions": {
+        "fn": fn_functions,
+        "params": "[search term]",
+        "description": "List everything you can call, optionally filtered by a search term.",
+    },
+}
+
+
+def run_function_calls(world_name, caller_name, response_text):
+    """Scans response_text for every ⟦function_name(args)⟧ call, runs
+    each one for real, and returns response_text with a ⟦RESULT: ...⟧
+    line appended per call - the combined text becomes what actually
+    gets saved and broadcast (see module docstring). No calls found ->
+    response_text returned unchanged."""
+    matches = list(FUNCTION_CALL_RE.finditer(response_text))
+    if not matches:
+        return response_text
+
+    result_lines = []
+    for match in matches:
+        name, args_text = match.group(1), match.group(2)
+        meta = FUNCTION_REGISTRY.get(name)
+        if not meta:
+            result_lines.append(f"⟦RESULT: {name} -> error: unknown function '{name}'⟧")
+            continue
+        try:
+            result = meta["fn"](world_name, caller_name, args_text)
+            result_lines.append(f"⟦RESULT: {name} -> ok: {result}⟧")
+        except Exception as exc:
+            result_lines.append(f"⟦RESULT: {name} -> error: {exc}⟧")
+
+    return response_text + "\n" + "\n".join(result_lines)
 
 
 # ------------------------------------------------------------------ model --
@@ -428,11 +576,14 @@ class FenraApp:
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
         self.groups_tab = ttk.Frame(notebook)
+        self.currency_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.groups_tab, text="Groups")
+        notebook.add(self.currency_tab, text="Currency")
 
         self._build_voices_tab()
         self._build_groups_tab()
+        self._build_currency_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
@@ -718,6 +869,47 @@ class FenraApp:
         save_group_state(self.world_name, self.displayed_group, state)
         self._load_group(self.displayed_group)
 
+    # --------------------------------------------------------- Currency tab --
+
+    def _build_currency_tab(self):
+        frame = self.currency_tab
+
+        top_bar = ttk.Frame(frame)
+        top_bar.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Button(top_bar, text="Refresh now", command=self._populate_currency_list).pack(side="left", padx=2)
+        ttk.Label(
+            top_bar,
+            text="Read-only - every voice's balance, highest first. Auto-refreshes every 10s.",
+            foreground="#666",
+        ).pack(side="left", padx=(8, 0))
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+        self.currency_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.currency_listbox.yview)
+        self.currency_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self._schedule_currency_refresh()
+
+    def _populate_currency_list(self):
+        if not self.world_name:
+            return
+        balances = []
+        for name in list_voices(self.world_name):
+            state = load_voice_state(self.world_name, name)
+            balances.append((name, state.get("currency", 0.0)))
+        balances.sort(key=lambda pair: (-pair[1], pair[0]))
+
+        self.currency_listbox.delete(0, "end")
+        for name, amount in balances:
+            self.currency_listbox.insert("end", f"{name}: ${amount:.2f}")
+
+    def _schedule_currency_refresh(self):
+        self._populate_currency_list()
+        self.root.after(CURRENCY_REFRESH_MS, self._schedule_currency_refresh)
+
     # --------------------------------------------------------------- worlds --
 
     def _load_world(self, name):
@@ -860,6 +1052,7 @@ class FenraApp:
         response = response.strip()
         if not response:
             return
+        response = run_function_calls(self.world_name, active_voice, response)
 
         timestamp = datetime.now().isoformat(timespec="seconds")
         line = f"[{timestamp}] {active_voice}: {response}"
