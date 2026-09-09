@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 sessions/
 groups/
+worlds/
 .venv/
 venv/
 /_*.txt

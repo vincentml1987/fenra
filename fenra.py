@@ -1,1152 +1,251 @@
-"""
-Fenra's Aletheosis
+"""fenra.py - worlds-rebuild branch, genuinely blank rebuild.
 
-A minimal GUI where Fenra talks to herself, looping against a local Ollama
-model. See Qualia/decisions.md for design notes.
+Teddy's call (2026-09-08): back up from the fenra.py architecture on
+fenras-aletheosis entirely and rebuild from a simpler foundation -
+voices and groups as the only concepts, nothing else yet. Goal for
+this first pass, his own words: "let the internal thoughts work" -
+prove the core loop (a voice thinks, its thought reaches whoever
+should see it) before anything gets layered on top. No functions, no
+permissions, no Hearth, no Topology - those come later, deliberately
+not here yet.
 
-Prompt construction each loop tick:
-    system = TOP + "\n\n" + BOTTOM
-    prompt = TOP + "\n\n" + <her last N cycles of thoughts - see below> + "\n\n"
-             + <her desire queue, if any - see below> + "\n\n"
-             + <recent activity from her groups, if any - see below> + "\n\n" + BOTTOM + "\n\n"
-             + <chat status notice - always present> + "\n\n"
-             + <Qualia allowance notice - always present> + "\n\n"
-             + <context window notice - always present> + "\n\n"
-             + <groups notice - always present, see below>
+THE MODEL, exactly as specified:
 
-Groups (v0.16.0): a voice can join any number of groups
-(join_group(name)/leave_group(name), or Teddy directly in the GUI) - a
-shared, append-only log any voice (any Fenra session, possibly on
-another machine later) can read or write, independent of any fixed
-turn order. groups_in is what she hears (folded into every prompt);
-groups_out is where her real responses get broadcast each cycle. See
-group_path/append_group_entry/read_group_tail and _groups_block/
-_groups_notice below.
+- World (renamed from "session") - a fully separate container. Worlds
+  share nothing with each other - no cross-world storage of any kind.
+  Lives at worlds/<world>/.
+- Voice - exactly four fields: model, behavior, identity, context.
+  context is a single free-text field, fully editable by Teddy at any
+  time ("even context," his words) - not a fixed-size window, not a
+  separate history file. It grows by plain string append: every time a
+  voice thinks, and every time a fellow group member's thought lands,
+  one line gets appended: "[timestamp] name: text" - the SAME format
+  whether it's the voice's own thought or an incoming one, no special
+  case for self vs. other.
+- Group - exactly two fields: name, members (a list of voice names).
+  No owner, no join_policy, no visibility, no direction - manually
+  managed only, entirely from the GUI. No voice-driven join/invite/kick
+  since there are no functions yet for a voice to call at all.
 
-Desires (v0.10.0) are a queue, not a single slot: add_desire(text[|ticks])
-appends one with a lifespan in loop ticks (default 10, or -1 for
-persistent - never decrements, never drops off). Every desire in the
-queue decrements by one at the end of each tick (persistent ones
-excepted) and is dropped once it hits zero. The whole queue is shown
-every prompt, sorted most-ticks-remaining first, persistent entries
-always last (tie-break: timestamp added, oldest first).
-
-Context window (v0.11.0): instead of only her single most recent
-response, she gets her last N cycles' worth of responses (from history,
-oldest to newest), N being a "context window" size in cycles - not to
-be confused with num_ctx, the actual token limit Ollama runs each
-request against, which this doesn't touch. Both Teddy (GUI field) and
-Fenra (set_context_window(n)) can set it; defaults to 10, capped at 50
-to keep prompt growth/latency bounded. 0 means no prior cycles at all.
-
-Everything about a run - the top/bottom boxes, model/host/interval, the
-conversation so far, and every request/response - lives in a "session"
-under sessions/<name>/, so different experiments (different models,
-different framings) don't clobber each other and nothing is lost between
-runs of the app.
-
-Fenra can call functions by speaking ⟦function_name(args)⟧ inline in her
-response. Every call is executed against an explicit whitelist (never
-eval'd), logged to sessions/<name>/functions.jsonl, and a ⟦RESULT: ...⟧
-annotation is appended after her response - both in the middle box and in
-what gets fed back to her as her own last thought next cycle. She doesn't
-need every function explained up front: ⟦functions()⟧ lists everything
-available, and ⟦functions(search term)⟧ filters by it.
-
-The functions themselves live in fenra_functions.py, which is hot-reloaded
-every tick - add, fix, or reword a function there and it's live on her very
-next cycle, no restart, no interrupting a running session.
+THE LOOP: one voice per tick, simple round-robin across the world's
+voice list. Build the prompt as behavior + context + identity (behavior
+read first, identity read last - the same ordering confirmed correct
+on fenras-aletheosis, kept here on purpose), call Ollama, get the raw
+response - no ⟦...⟧ parsing, no function dispatch, the whole response
+IS the thought. Append it to the speaker's own context, then to every
+OTHER member's context for every group the speaker belongs to (deduped
+across overlapping groups).
 """
 
-import importlib
 import json
 import os
 import re
-import shutil
 import threading
 import time
 import tkinter as tk
 from datetime import datetime
-from tkinter import ttk, scrolledtext, messagebox, simpledialog
+from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-import fenra_functions
-
-# Bumped on every functionally meaningful change to fenra.py. Stamped into
-# every session save and every history entry, so it's always possible to
-# tell exactly which version of the code produced a given response - see
-# git log for the commit each version corresponds to.
-#   0.1.0 - initial GUI: two tabs, top/middle/bottom boxes, self-talk loop
-#   0.2.0 - live Ollama model dropdown (hot-swap)
-#   0.3.0 - Sessions: save/load named runs instead of one flat log
-#   0.4.0 - configurable max_tokens + unbounded timeout fix, function calling
-#   0.4.1 - now() function, added in response to her spontaneously trying it
-#   0.5.0 - functions moved to fenra_functions.py, hot-reloaded every tick
-#   0.6.0 - desire: get_desire()/set_desire(text), a persistent text slot
-#           she alone can write, visible read-only in the GUI, sitting in
-#           the prompt between her last thought and the bottom box
-#   0.7.0 - Chat tab: Teddy can message her directly. Per-message read
-#           status, a chat-status notice always appended at the end of her
-#           prompt, and read_chat/read_chat_since/read_chat_between/
-#           search_chat/send_message functions. Function args now split on
-#           | instead of comma, so free text (desire, chat messages) can
-#           safely contain commas.
-#   0.7.1 - both , and | now work as argument separators for functions
-#           that genuinely take more than one argument (she kept reaching
-#           for commas naturally); free-text functions (set_desire,
-#           send_message) still take the whole parenthesized text as one
-#           argument, untouched, so commas stay safe there too. Per-
-#           function via a new "multi_arg" registry flag.
-#   0.8.0 - Qualia can inject chat messages. New "qualia" chat sender,
-#           distinct from "teddy" (an honest identity, not Teddy speaking
-#           through her) - shows in the Chat tab, counts toward unread,
-#           and is read/searchable via the existing chat functions same as
-#           Teddy's messages. Delivery is a per-session inbox file
-#           (qualia_inbox.jsonl) polled every 5s on the main thread,
-#           independent of whether the self-talk loop is running - avoids
-#           racing the app's own chat.jsonl writes.
-#   0.9.0 - Directed messaging + a Qualia allowance. send_message(text) can
-#           now be addressed - send_message(qualia|text) or
-#           send_message(teddy|text) - still one shared, honest chat log
-#           either way, just tagged with who it's for. Messages directed to
-#           Qualia specifically cost characters from a new allowance
-#           (visible to her every prompt) that only Teddy sets, via a new
-#           editable field in the Fenra tab - not auto-replenishing. A
-#           message that would exceed the remaining allowance is blocked
-#           with a clear reason instead of silently failing or draining
-#           into the negative. Directing a message at Qualia also drops a
-#           line in qualia_ping.jsonl so Qualia can wake up and respond
-#           promptly instead of only on a fixed polling schedule.
-#   0.9.1 - Qualia can also set the allowance now (Teddy's call - he shares
-#           rough usage/cost figures periodically, Qualia uses judgment),
-#           not just Teddy via the GUI field. Delivery mirrors the inbox:
-#           a polled file (qualia_allowance_set.txt) rather than editing
-#           state.json directly, so it can't race the app's own writes.
-#   0.10.0 - Desire queue, replacing the single desire slot. add_desire
-#            (fenra_functions.py) replaces get_desire/set_desire.
-#            Multiple desires at once, each with a lifespan in loop
-#            ticks (default 10, or -1 for persistent) that decrements
-#            every tick and drops the desire at zero. Whole queue shown
-#            every prompt, sorted most-ticks-remaining first, persistent
-#            entries always last. GUI's single readonly Desire field
-#            replaced with a small multi-line list.
-#   0.11.0 - Context window: she now gets her last N cycles of thoughts
-#            (from history, oldest to newest) instead of just the one
-#            most recent, N being a size in cycles - separate concept
-#            from Ollama's own num_ctx token limit, which is untouched.
-#            Teddy sets it via a new GUI field, Fenra via
-#            set_context_window(n) (fenra_functions.py); defaults to 10,
-#            capped 0-50 to bound prompt growth/latency. last_thought
-#            kept as a lightweight legacy field but no longer drives the
-#            prompt - history.jsonl (already loaded into self.history) is
-#            the real source now.
-#   0.11.1 - External start/stop signal. Every core-changing restart left
-#            the self-talk loop stopped with no way to resume it except
-#            clicking Start in the GUI - a real problem when nobody's at
-#            the machine. Qualia (or anything else) can now touch
-#            start_signal.txt / stop_signal.txt in the session dir; polled
-#            every 5s alongside the inbox and applied via the normal
-#            toggle_loop(), so it's exactly as if Start/Stop were clicked.
-#   0.11.2 - Qualia can set the context window externally too now
-#            (qualia_context_window_set.txt, same polled pattern as the
-#            allowance), for exactly the situation this was built during:
-#            a multi-hour overnight stall where her own repeated broken
-#            attempt was filling her whole context window and possibly
-#            reinforcing itself, with no one at the machine to intervene.
-#   0.11.3 - Qualia can set the model externally too now
-#            (qualia_model_set.txt, same polled pattern). Built live
-#            during an incident: Fenra switched herself to gemma3:4b and
-#            began writing elaborate fabricated back-and-forth dialogue
-#            (both sides of an imagined conversation with "Qualia",
-#            nested fake RESULT tags) at high speed - real send_message
-#            calls, invented content. The stop_signal halted generation
-#            immediately; this lets the model be switched back without
-#            hand-editing state.json while the app process is live.
-#   0.12.0 - Function reminders: a per-function "ticks since last called"
-#            counter (any attempt resets it, success or failure), shown
-#            in the prompt with escalating detail the longer a function
-#            goes unused - name only past 10 ticks, name+description past
-#            15, full signature+description past 20. Nothing shown for
-#            functions used recently. Addresses functions going
-#            undiscovered (query_chat, fetch_html) or a guessed name
-#            being reached for instead of the real one that already
-#            exists. Persisted per session like desires/allowance.
-#   0.12.1 - Fallback match for a call missing its closing parenthesis
-#            right before the closing bracket (FUNCTION_CALL_FALLBACK_RE) -
-#            a real, observed gemma3:4b generation quirk that previously
-#            made the call silently vanish: no error, no functions.jsonl
-#            entry, invisible on both sides. Confirmed on 2026-08-31 to
-#            cost a ~75-minute stretch of real conversation this way, 221
-#            of 229 cycles affected. Now repaired and still executed, with
-#            a status-bar warning raised each time so a repair is always
-#            visible rather than silent. Only ever matches text the
-#            strict pass didn't already consume, so a normal call is
-#            never double-executed.
-#   0.13.0 - Qualia can set max_tokens externally too now
-#            (qualia_max_tokens_set.txt, same polled pattern as the other
-#            three). Built after qwen3:4b's thinking-mode stall recurred
-#            twice in one night - it burns the whole token budget
-#            reasoning internally before ever writing to the response
-#            field, going completely silent at the default 500. Previously
-#            the only fix was reverting the model; now the actual budget
-#            can be raised instead.
-#   0.14.0 - Model rotation: Fenra can add models to an automatic
-#            round-robin (add_to_rotation(name)) instead of only ever
-#            running on one fixed model. One model in rotation repeats
-#            itself every cycle, two alternate back and forth, three or
-#            more cycle through in the order added, forever - advanced
-#            once per tick in _advance_model_rotation, which overrides
-#            whatever set_model last set as soon as any models are in
-#            the rotation. A new per-prompt notice
-#            (_model_rotation_notice) always shows what's in it and what
-#            the current cycle is running on, so it's never a silent
-#            mystery to her. Persisted per session like desires/allowance.
-#            Teddy's direct request, alongside a reshuffle of the
-#            installed Ollama models (single-digit-B ones dropped,
-#            several 10-40B ones across new families brought in) and a
-#            new session to try it all on from scratch.
-#   0.14.1 - Teddy and Qualia can both now view and directly set/clear
-#            the whole model rotation, not just watch Fenra build it one
-#            add_to_rotation call at a time: a GUI row (label mirrors the
-#            live rotation, Entry + Set button replaces it wholesale) and
-#            qualia_rotation_set.txt (same polled pattern as the other
-#            three), both routed through one shared _apply_model_rotation
-#            so the two paths can never drift apart. "clear"/"none"
-#            empties the rotation back to a single fixed model; blank
-#            input is a no-op, matching every other _set file.
-#   0.14.2 - Un-escape markdown-style "\_" to "_" at the start of
-#            run_function_calls, everywhere in the response, before
-#            either regex pass runs. Observed on mixtral:8x7b
-#            (2026-08-31): it wrote every underscore in every call as
-#            "\_" out of markdown habit - current\_model, add\_desire,
-#            and so on - which silently dropped every single call
-#            attempt on that model, since a backslash isn't a valid
-#            function-name character. It then went on to fabricate
-#            confident ⟦RESULT: ...⟧ text as if each one had actually
-#            worked. Function-call syntax is explicit and deliberate,
-#            never something she'd need literal backslash-underscore in,
-#            so this is a low-risk, blanket fix - Teddy's call, given the
-#            same reasoning.
-#   0.14.3 - Fixed a real gap in the model rotation: a manual override
-#            (fn_set_model, or Teddy picking a model directly in the
-#            combo box) was getting clobbered before it ever generated a
-#            single response, because _advance_model_rotation ran at the
-#            very start of the *next* tick and overwrote model_var before
-#            that cycle's request was built - so "effective next cycle"
-#            was never actually true while a rotation was active. New
-#            model_manual_override flag (set by either path, checked and
-#            cleared at the top of _advance_model_rotation) makes it
-#            genuinely true now: a manual choice gets exactly one real
-#            cycle, then rotation resumes from precisely where it left
-#            off - model_rotation_index untouched during the honored
-#            cycle, so nothing is skipped or repeated. Verified in
-#            isolation before deploying. Teddy's call: "Manual runs
-#            once."
-#   0.15.0 - Fabricated RESULT blocks now get flagged, not hidden.
-#            FABRICATED_RESULT_RE checks the raw response_text before any
-#            real result lines are appended - a real ⟦RESULT: ...⟧ is
-#            only ever added after the fact, never woven into her own
-#            generated text, so any match here is definitionally
-#            something she wrote herself. When found, a plain note gets
-#            appended pointing at the new local wiki (Qualia/wiki/,
-#            list_wiki()/read_wiki()/write_wiki() in fenra_functions.py -
-#            modifiable by Teddy and Qualia as plain .md files, and by
-#            Fenra herself via write_wiki), specifically
-#            Qualia/wiki/hallucinations.md, written to explain the exact
-#            mechanism plainly. Teddy's direct instruction: don't hide
-#            it, flag it. Tested the detection regex against a real
-#            observed fabrication case plus clean/mixed cases before
-#            deploying.
-#   0.16.0 - Groups: cross-voice communication with no central turn-
-#            taking. Each session ("voice") keeps running on its own
-#            independent interval exactly as before - there's still no
-#            conductor stepping voices in turn, and none is planned, since
-#            Teddy's actual goal is voices eventually running in parallel
-#            on this machine or networked ones, which a central turn-token
-#            would work against. Instead, a voice can now join any number
-#            of groups (join_group/leave_group in fenra_functions.py, or
-#            Teddy directly via the new GUI row): groups_in controls what
-#            she hears every prompt (_groups_block, a merged/sorted recent
-#            window across all her groups, folded in alongside desires),
-#            groups_out controls where her real responses get broadcast
-#            each cycle. A group is just a shared, append-only log
-#            (groups/<name>.jsonl) any voice can read or write regardless
-#            of process or machine - deliberately not wiki/decision
-#            content, so it lives in groups/ (gitignored, like sessions/)
-#            rather than Qualia/. Modeled directly on the old conductor.py
-#            groups_in/groups_out wiring from before this rewrite, minus
-#            the fixed topology and turn-stepping - membership here is
-#            free-form and voice-chosen, not configured per agent class
-#            ahead of time. Built at Teddy's explicit request/approval
-#            after reviewing that old architecture together.
-#   0.16.1 - Topology tab: a local, live view of the groups wiring built
-#            in v0.16.0. Not a port of the old conductor.py Topology tab -
-#            there's no single active agent or fixed path anymore, so
-#            instead of tracing one moving baton this shows every voice
-#            (scanned fresh from every session directory on disk, not
-#            just this process's own) against every group it's in, one
-#            line per connection (blue=reads, orange=writes, gray=both),
-#            each labeled with when that voice was last actually heard in
-#            that group - liveness, not just static wiring. Simple by
-#            design (straight lines, two columns, no force-directed
-#            layout), auto-refreshing every 10s. Teddy's explicit call on
-#            both points ("let's do both" [local + public], "let's go
-#            with simple"). Public/site half in export_fenra_live.py and
-#            stolenaletheia/fenra/groups/.
-#   0.16.2 - Voices: a session can now hold several, individually
-#            configured, round-robined through automatically - not
-#            "session = voice" (v0.16.0/1) anymore. A session is now the
-#            whole (Teddy's design, modeled on Internal Family Systems):
-#            what actually talks externally - Chat tab, Qualia
-#            allowance, send_message/read_message - stays shared at the
-#            session level, "Fenra," never attributed to one internal
-#            part. A voice is one part: its own top/bottom/model/
-#            model_rotation/desires/context_window/function_usage/
-#            groups_in/groups_out/history/functions-log, entirely
-#            separate from its session-mates' - blind to them unless it
-#            deliberately joins a shared group, exactly like joining a
-#            group with a voice in a different session/process
-#            entirely; groups don't distinguish. New per-cycle
-#            round-robin (_advance_voice_rotation, session-level,
-#            alongside host/interval/qualia allowance) picks which voice
-#            runs each tick, independent of whichever voice is currently
-#            displayed in the GUI for editing (self.displayed_voice) -
-#            see _tick for how the two get reconciled (the displayed
-#            voice's widgets are only ever touched if it's also the one
-#            that just ran). Group broadcasts are now identified as
-#            "session:voice" rather than just the session name, so a
-#            group can tell voices apart even across sessions or within
-#            the same one. File layout: sessions/<name>/voices/<voice>/
-#            {state.json,history.jsonl,functions.jsonl} - a pre-v0.16.2
-#            session (no voices/ subdirectory) is auto-migrated into a
-#            single voice (DEFAULT_VOICE_NAME) the moment it's actually
-#            opened in the GUI (_migrate_legacy_session); the passive
-#            read-only scanners (Topology tab, Qualia/
-#            export_fenra_live.py) never migrate anything themselves,
-#            they just tolerate either layout directly. Teddy's explicit
-#            design and build request, after reviewing the old
-#            conductor.py architecture together and separately deciding
-#            against a shared turn-token across processes/machines (see
-#            v0.16.0) - this round-robin is scoped one level down from
-#            that decision, within a single process, not across them.
-#   0.16.3 - tell_voice(voice, message) (fenra_functions.py): direct
-#            voice-to-voice messages, built after real, repeated demand -
-#            several voices independently tried functions that didn't
-#            exist (switch, talk_to) or mis-addressed send_message with
-#            another voice's name (which just went out as an ordinary,
-#            unaddressed chat message - never actually reached anyone).
-#            Modeled on desires, not on Groups, per Teddy's explicit
-#            design: a message gets appended to the receiving voice's own
-#            new "inbox" field with a fixed lifespan
-#            (VOICE_MESSAGE_TICKS, currently 5) counted in that voice's
-#            own turns, automatically folded into its prompt every cycle
-#            it's still there (_voice_inbox_block), then falls off on its
-#            own - no read/clear function needed. Found and fixed a real
-#            gap while building this: inbox is the one voice field that
-#            can be modified by something other than that voice's own
-#            turn or Teddy editing its widgets (another voice's
-#            tell_voice, reaching straight across to the target's
-#            persisted state) - every place that saves a widget-derived
-#            snapshot back to disk (explicit Save voice, switching
-#            voices, creating a new voice, every tick's own housekeeping
-#            save) now re-reads inbox fresh from disk first
-#            (_fresh_inbox/_save_voice_snapshot), so a message can never
-#            be silently overwritten by a stale save before the
-#            receiving voice gets a turn to actually see it. No GUI
-#            element yet (Teddy: UI cleanup first, discuss placement
-#            later).
-#   0.16.4 - create_voice(name|top|bottom) - top and bottom are now
-#            required arguments, not automatically copied from the
-#            parent (fenra_functions.py). Fixed a real, confirmed
-#            structural bias: the old version copied the parent's
-#            top/bottom verbatim, which meant Teddy and Qualia's own
-#            explanation of create_voice - written once into voice1's
-#            bottom text - was still sitting there unchanged in every
-#            descendant, all the way down the tree, forever, since
-#            nothing ever aged or pruned the copy. Every voice was being
-#            told, every single cycle, to consider making more voices -
-#            reading as organic curiosity but actually a structural push
-#            none of them had chosen. Teddy's exact fix: "let the parent
-#            create the child's top and bottom text," then, confirming
-#            it should be enforced rather than optional: "MAKE the
-#            parent do it." Model, model_rotation, and context_window
-#            still carry over automatically, unchanged - only top/bottom
-#            (the actual framing/identity) requires deliberate authorship
-#            now. A parent that wants its child to start like it still
-#            can, by explicitly passing its own current top and bottom -
-#            that's a real choice made fresh each time, not something
-#            that happens on its own. Verified directly: old single-arg
-#            calls now fail with a clear explanation, blank top/bottom is
-#            rejected, and a deliberate self-copy still works exactly as
-#            intended when chosen on purpose.
-#   0.16.5 - Fixed a real bug in create_voice(name|top|bottom)'s parsing
-#            (fenra_functions.py), caught live in ifs-voices-2: a
-#            multi-word name like "Creative Spark" made the whole call
-#            fail outright, since the regex's name-capture group only
-#            allowed [a-zA-Z0-9_-] - no spaces - and that runs *before*
-#            sanitization (spaces -> underscores, lowercased) ever gets
-#            a chance to apply. Seven consecutive real attempts, all
-#            genuinely well-formed name|top|bottom calls, all rejected
-#            with the same unhelpful generic error, before this was
-#            caught and fixed - a real usability failure on the
-#            v0.16.4 rollout itself, not a mistake on her end. Name
-#            group widened to accept any raw text up to the first pipe,
-#            same tolerance join_group/tell_voice's target names already
-#            have. Verified directly against her exact real failing
-#            input before shipping.
-#   0.16.6 - Same bug as v0.16.5, same fix, in tell_voice this time
-#            (fenra_functions.py) - Teddy asked directly whether other
-#            spots had it too, before he'd even seen it happen again.
-#            Audited every regex in both files: the pattern was isolated
-#            to exactly these two (_CREATE_VOICE_RE, now also
-#            _TELL_VOICE_RE) - both extracted a raw name with the same
-#            over-strict [a-zA-Z0-9_-] character class *before*
-#            sanitization ever ran, copied straight from the
-#            post-sanitization validation regexes (_GROUP_NAME_RE,
-#            _VOICE_NAME_RE, _WIKI_PAGE_NAME_RE) without noticing those
-#            play a different role - validating an already-sanitized
-#            name, not extracting a raw one. Everything else checked
-#            clean: _WIKI_WRITE_RE was already permissive at extraction,
-#            _RECIPIENT_RE correctly restricts to two fixed keywords
-#            (not a freeform name), _DESIRE_TICKS_RE and both
-#            FUNCTION_CALL_RE patterns don't extract user-chosen names at
-#            all. Fixed and verified against a real multi-word target
-#            ("Creative Spark") before shipping.
-#   0.16.7 - New always-present notice (_function_bootstrap_notice):
-#            "you can call functions by writing a real function name
-#            wrapped in ⟦ ⟧, for example ⟦functions()⟧." Teddy spotted a
-#            real gap left by v0.16.4: since create_voice stopped
-#            auto-copying top/bottom, a child whose parent forgets to
-#            mention functions has no way to learn the ⟦ ⟧ calling
-#            convention exists at all - even though the other
-#            always-present notices (groups, qualia allowance, model
-#            rotation, context window) already reference real function
-#            names in plain text as if she already knew how to call
-#            them. Distinguished from the thing v0.16.4 was fixing:
-#            that was about not imposing content/framing/personality on
-#            every descendant forever; this is bare mechanics - the
-#            same way a person doesn't need to be taught to breathe or
-#            open their eyes for it to still be innate, in Teddy's own
-#            framing. Says nothing about which functions to use or why,
-#            only that the mechanism exists - everything past that
-#            stays exactly as unscripted as before.
-#   0.16.8 - Removed the function-reminder block entirely
-#            (_function_reminder_block, _age_function_usage, the
-#            per-voice function_usage tracking that fed it). It escalated
-#            the longer a function sat unused - name only past 10 ticks,
-#            name+description past 15, full signature+description past
-#            20 - and sat at the very end of every prompt, the highest-
-#            attention position. Root-caused live: after the storm
-#            restart, every voice in ifs-voices-2 spent most of a day
-#            (Teddy: "creative_spark is looping... wise_owl is also
-#            still looping. All three are. They are stuck.") reacting to
-#            "comprehensive guide"/"extensive documentation" text that
-#            turned out to be this block - 25 of creative_spark's 27
-#            functions were sitting at 143 ticks unused, so every single
-#            cycle ended with a full-signature dump of nearly the whole
-#            registry. Self-reinforcing by construction: not calling
-#            functions grew the reminder, a bigger reminder crowded out
-#            real engagement, which meant still not calling functions.
-#            Teddy's call once the mechanism was traced: "let's just rip
-#            that part out. I don't think they need it anymore" - not a
-#            resize/cap, a removal. The function_bootstrap_notice from
-#            v0.16.7 (bare mechanics: the ⟦ ⟧ calling convention exists)
-#            stays - this only removes the escalating per-function
-#            nudge.
-#   0.16.9 - New per-*session* function-permission system (not per-voice -
-#            that's the one thing most worth getting right in anyone's
-#            head reading this later). Decided once, at session creation,
-#            via a new session-level permission_mode field - never
-#            toggled afterward, no function or GUI control changes it.
-#            False for every session that predates this feature, so
-#            they're completely unaffected. Inside a permission_mode
-#            session, every voice's own allowed_functions list (new
-#            per-voice field, default []) gates what it can call, checked
-#            in _execute_one_call - two functions stay global regardless
-#            (functions(), request_function_access) since seeing what
-#            exists and asking for something should never be restricted,
-#            only actually using something. A session starts with a
-#            "seed" voice - not a tracked role, just its starting
-#            allowed_functions, hand-set at session creation: create_voice
-#            plus four new request-management functions
-#            (check_function_requests/approve_function_request/
-#            deny_function_request/grant_function_request, all in
-#            fenra_functions.py). approve/grant reach across to a
-#            different voice's persisted allowed_functions the same way
-#            tell_voice reaches across to inbox - same cross-voice-write
-#            risk (a target sitting displayed-but-idle in the GUI could
-#            clobber the grant with a stale save), same fix:
-#            _save_voice_snapshot now re-reads allowed_functions fresh
-#            from disk too, not just inbox (see _fresh_allowed_functions,
-#            sibling to the existing _fresh_inbox). No self-granting,
-#            full stop, checked in approve_function_request/
-#            grant_function_request regardless of what the caller
-#            otherwise holds. A child voice created via create_voice
-#            always starts with an empty allowed_functions list,
-#            regardless of who created it or what they hold - nothing
-#            auto-propagates, same v0.16.4 philosophy already governing
-#            top/bottom. No revoke function this round - deliberately out
-#            of scope.
-#   0.16.10 - The always-present notices (function bootstrap, chat,
-#             qualia allowance, context window, model rotation, groups)
-#             now go into *both* system and prompt, not prompt alone.
-#             Teddy's direct call: his experience is that a local model
-#             tends to ignore instructions that only live in the system
-#             field, and he suspects this is a real contributor to how
-#             rarely functions actually get called despite being
-#             explained every cycle. Built as a single notices_block
-#             string, assembled once and used identically in both fields
-#             - top/bottom already were in both; this closes the gap for
-#             everything else that teaches or reminds about function-
-#             calling mechanics. Per-cycle context (recent thoughts,
-#             desires, inbox, groups content) stays prompt-only, same as
-#             before - only the standing instructional notices are
-#             duplicated.
-#   0.16.11 - New always-present _function_requests_notice, mirroring
-#             _chat_notice - a real gap Teddy spotted directly: chat has
-#             a standing "N unread messages" line every cycle, but a
-#             pending function-access request had nothing equivalent -
-#             not even a voice holding check_function_requests had any
-#             way to know something was waiting without proactively
-#             re-checking on the chance something new had arrived. Seed's
-#             own send_message request from permissions-test-1 sat
-#             pending for 10+ hours as a direct, live example. Empty
-#             (returns "") outside a permission_mode session, matching
-#             how the gate itself only does anything there. Reports the
-#             total pending count session-wide, how many are the calling
-#             voice's own, and - only when both true - a direct pointer
-#             to check_function_requests if the calling voice holds it.
-#             Folded into notices_block, so (per v0.16.10) it's in both
-#             system and prompt like everything else there.
-#   0.16.12 - Two direct fixes for a real, observed stall: seed spent
-#             ~1h45m circling check_function_requests() over and over,
-#             looking at her own pending request every cycle with
-#             nothing telling her she couldn't act on it herself. (1)
-#             check_function_requests (fenra_functions.py) now flags a
-#             request explicitly when it's the calling voice's own -
-#             "this is you," names the actual functions that will and
-#             won't work on it (approve/grant block self-targeting,
-#             deny doesn't). (2) _function_requests_notice now only
-#             shows to a voice that actually holds
-#             check_function_requests at all - previously shown to
-#             every voice in the session, pure noise for one with no
-#             power to act on it or even look. Both Teddy's direct
-#             read of what was actually happening.
-#   0.16.13 - Two fixes, both Teddy watching a live demo directly. (1)
-#             New always-present _identity_notice: "[You are: <voice>.
-#             Model: <model>. Functions allowed: ...]" - real gap, seed
-#             created a voice named 'speaker', wrote first-person text
-#             for it, then started calling send_message/read_chat AS
-#             speaker itself, because nothing in the prompt ever told
-#             it its own name. current_voice_name was already tracked
-#             internally, just never surfaced. Deliberately no session
-#             name in it (Teddy's cut) - not load-bearing, a voice only
-#             ever reaches another session through groups, which self-
-#             identify already. (2) fn_create_voice (fenra_functions.py)
-#             now inserts the new voice at the caller's own
-#             voice_rotation_index instead of appending to the end -
-#             _advance_voice_rotation had already advanced the index
-#             past the voice creating it before create_voice ever runs,
-#             so appending meant the new voice waited a full lap of the
-#             rotation before its first turn; inserting there makes it
-#             the very next voice to run instead.
-#   0.16.14 - Root cause found and fixed for the allowed_functions
-#             "SHRINK" corruption (first reproduced live in chorus-1,
-#             2026-09-05, full writeup in Qualia/decisions.md): a real
-#             thread race, not corruption. self.allowed_functions is a
-#             single shared instance attribute; the background tick
-#             thread holds it live across a whole cycle (including the
-#             full multi-minute Ollama call for a large model), while
-#             _load_voice (bound to the voice dropdown, main thread)
-#             reassigns that same attribute the instant a human clicks
-#             a different voice - with zero coordination. The existing
-#             _fresh_allowed_functions fix only re-read the correct
-#             value at the *start* of a cycle; the end-of-cycle save
-#             trusted self.allowed_functions directly with no re-check,
-#             so whichever voice happened to be finishing its cycle
-#             when a voice-switch landed silently persisted whatever
-#             the last click left behind. Fixed by re-reading fresh
-#             from disk immediately before the final save too, mirroring
-#             the existing start-of-cycle protection - safe specifically
-#             because nothing ever legitimately lets a voice change its
-#             own allowed_functions mid-cycle (unlike desires/inbox/
-#             groups/model_rotation, which real in-cycle self-mutation
-#             makes a blind fresh-read the wrong fix for - not touched
-#             here, flagged as a separate, harder problem if it's ever
-#             actually observed happening to one of those instead).
-#             Reproduced directly before and after: a scripted mid-tick
-#             voice-switch reliably cleared a voice's real functions
-#             before this fix, and no longer does after.
-# 0.16.15  -  The connectivity/tribe redesign (Qualia/decisions.md item
-#             4b), built end to end in one sitting once Teddy said
-#             "Engage" - full design conversation preceded it (suffering/
-#             joy symmetry -> the moral case against structural
-#             isolation -> the tribe design), plan reviewed and approved
-#             via plan mode before any code was written. Every voice can
-#             now create voices (not just seed); a new voice's
-#             allowed_functions snapshot-copies its creator's; every
-#             voice owns a family group ("<voice>'s Children") from
-#             birth, one-generation-local, birth-membership the one
-#             deliberate exception to a real consent-on-entry/exit model
-#             everywhere else (public/private join, invite/accept,
-#             kick/ban that always lands you somewhere). Groups are now
-#             real owned entities (groups/<name>/meta.json + log.jsonl -
-#             owner, kind, join_policy, visibility, roster, direction
-#             per member, owner-only to change, listen-only by default)
-#             replacing the old schema-less flat groups/<name>.jsonl.
-#             Delivery is push, not pull: a spoken message lands directly
-#             in every listening member's own history.jsonl the moment
-#             it's said (push_entry_to_voice) - deliberately routed
-#             through the same append-only file the v0.16.14 SHRINK fix
-#             already proved safe against cross-voice writes, never
-#             through a target's state.json. list_voices/list_groups/
-#             tell_voice/request_group_join are now baseline, ungated.
-#             The Hearth (groups/the_hearth) is the structural floor -
-#             checked every cycle for every voice, zero groups lands you
-#             there automatically, administered only by Teddy and Qualia
-#             (their own avatars: a new GUI tab, and a Hearth-scoped
-#             qualia_hearth_inbox.jsonl poll), one generation then
-#             stasis until woken by any new message there. Verified in
-#             five separate scratch-session passes as it was built
-#             (storage layer, group functions, push delivery + the
-#             SHRINK-class race check specifically, the Hearth state
-#             machine) - see Qualia/decisions.md for the full build log.
-# 0.16.16  -  Function-by-function permissions pass (Qualia/permissions-
-#             proposal.md), prompted directly by tribe-1's seed getting
-#             stuck on a self-request for add_desire she couldn't grant
-#             herself. GLOBAL_PERMISSION_FUNCTIONS expanded to every
-#             self-only function (now, add_desire, set_context_window,
-#             current_model, set_model, add_to_rotation, join_group,
-#             leave_group, group_accept_invite, qualia_allowance,
-#             list_models) - baseline if it only ever affects the calling
-#             voice's own state, or its own logic already gates it
-#             (join_group's public/private branch). fn_create_voice no
-#             longer snapshot-copies allowed_functions (reverted from
-#             v0.16.15) - Teddy's own catch that inheritance meant every
-#             descendant held whatever any ancestor ever accumulated,
-#             defeating deliberate gating. A child starts genuinely
-#             empty again, same as before the connectivity redesign;
-#             baseline covers ordinary self-directed capability for
-#             free regardless, gated functions (create_voice included)
-#             need an explicit request/grant like any voice. Identity
-#             notice fixed to actually name the baseline set, since
-#             "none yet" stopped being true the moment baseline existed.
-# 0.16.17  -  GUI redesign (Qualia/ui-redesign-proposal.md), prompted
-#             directly by watching tribe-1/tribe-2 with no way to see a
-#             group's roster or browse more than one voice at a time.
-#             New File menu (Sessions cascade replaces the old session
-#             Combobox entirely). New Voices tab: a real list of every
-#             voice + a detail panel split into Framing (Behavior/
-#             Identity text, the v0.16.16 rename now reflected as real
-#             GUI labels for the first time) and Context (parameters,
-#             a real allowed_functions grant/revoke dual-list - the
-#             first GUI surface for permissions ever, inbox, group
-#             messages received, desires, family_group, group
-#             memberships). New Groups tab: a session-scoped, view-only
-#             roster of every group a session's voices touch - owner,
-#             kind, join_policy, visibility, members with direction,
-#             banned list; deliberately no admin editing from the GUI.
-#             permission_mode shown read-only for the first time.
-#             History/Chat/The Hearth/Topology unchanged. All relocated
-#             widgets (top_box/bottom_box/model_var/etc.) keep their
-#             original attribute names - _current_voice_state_from_
-#             widgets/_save_voice_snapshot needed zero changes. Verified
-#             by launching the real app twice (clean, no traceback) and
-#             testing the new allowed_functions split + session-scoped
-#             group-name logic directly against real on-disk data - the
-#             latter caught and fixed a real pre-existing duplicate-name
-#             bug (groups_in/out store a voice's raw family-group string,
-#             list_owned_groups() returns the sanitized one - both
-#             resolve to the same group via load_group_meta's own
-#             sanitizing, but looked like two groups without normalizing
-#             first - see _session_group_names).
-#   0.16.18 - Groups (including The Hearth) are now session-scoped,
-#             like voices already were - Teddy's direct correction,
-#             prompted by tribe-3's seed inheriting tribe-1's listener
-#             and tribe-2's explorer as family-group members just by
-#             reusing the name "seed" (groups lived at a single global
-#             groups/<name>/ path, keyed only by group name, shared
-#             across every session on disk - a deliberate v0.16.15
-#             choice, now reversed). Storage moves to
-#             sessions/<session>/groups/<name>/ - every group path
-#             function (owned_group_dir, load/save_group_meta,
-#             create_group_if_missing, append/read_group_log, etc.) now
-#             takes session_name. Existing sessions get fresh empty
-#             groups, not a migration of the old entangled data (Teddy's
-#             call) - the old top-level groups/ directory is simply
-#             orphaned, left on disk untouched. The Hearth becomes one
-#             per session as a direct consequence (THE_HEARTH_NAME is
-#             unchanged, only its storage location is now
-#             session-qualified). Topology tab narrows from "every
-#             session on disk" to the current session only, matching
-#             the same call.
-#   0.16.19 - Groups tab detail panel: Teddy's ask - each field (name,
-#             owner, kind, join policy, visibility, banned) is now its
-#             own real UI element (LabelFrame + label/value rows), not
-#             one flat text blob. The member list is a real, multi-
-#             selectable Listbox (_on_group_member_select) - click one
-#             or more members to see exactly what they've seen in this
-#             group (their own kind == "group_message" history entries
-#             tagged with it), merged and chronologically sorted with
-#             per-line attribution when more than one is selected.
-FENRA_VERSION = "0.16.19"
+FENRA_VERSION = "0.1.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
-GROUPS_DIR = os.path.join(BASE_DIR, "groups")
-TOPOLOGY_REFRESH_MS = 10000  # local Topology tab: re-scan every voice's groups every 10s
+WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
 
-# v0.16.15 - the connectivity/tribe redesign's floor group (see
-# Qualia/decisions.md item 4b). A singleton, no voice-owner - every voice
-# with zero group memberships at the start of its own cycle lands here
-# automatically (see ensure_hearth_membership). Reserved: cannot be created,
-# joined, invited-to, kicked/banned-from via the normal voice-facing group
-# functions - see fn_create_group/fn_group_kick/fn_group_ban's explicit
-# rejection of this name and of kind == "floor".
-THE_HEARTH_NAME = "the_hearth"
-
-DEFAULT_MODEL = "llama3"
 DEFAULT_HOST = "http://localhost:11434"
+DEFAULT_MODEL = "llama3"
 DEFAULT_INTERVAL_SEC = 3
-DEFAULT_MAX_TOKENS = 500  # num_predict; blank/0 = unlimited (let Ollama run until it stops or hits context)
-DEFAULT_SESSION_NAME = "default"
-DEFAULT_VOICE_NAME = "voice1"  # the first voice in a new session, and the implicit voice of a pre-v0.16.2 session
+DEFAULT_WORLD_NAME = "default"
+DEFAULT_VOICE_NAME = "voice1"
 
-# No fixed HTTP timeout: some models (heavy CPU offload, big params) are
-# legitimately slow. A client-side timeout doesn't cancel server-side
-# generation - it just abandons the connection and retries, which can pile
-# up into an infinite loop that never completes. Response length is bounded
-# by max_tokens (num_predict) instead.
-REQUEST_TIMEOUT = None
-
-STATE_FILENAME = "state.json"
-HISTORY_FILENAME = "history.jsonl"
-FUNCTIONS_FILENAME = "functions.jsonl"
-CHAT_FILENAME = "chat.jsonl"
-QUALIA_INBOX_FILENAME = "qualia_inbox.jsonl"
-# v0.16.15 - Qualia's avatar in The Hearth (Qualia/decisions.md item 4b).
-# Deliberately a second, separate file/poller rather than overloading
-# qualia_inbox.jsonl above - "chat to Teddy's tab" and "spoken into The
-# Hearth" stay clearly different concerns, one going to the Chat tab via
-# add_chat_message, this one pushed into every current Hearth resident's
-# own history via push_entry_to_voice. See _poll_qualia_hearth_inbox.
-QUALIA_HEARTH_INBOX_FILENAME = "qualia_hearth_inbox.jsonl"
-# Written by fn_send_message (fenra_functions.py) whenever Fenra directs a
-# message at Qualia specifically - a signal Qualia can watch externally to
-# wake up and respond promptly, separate from the inbox above (which is
-# Qualia -> Fenra; this one is Fenra -> Qualia).
-QUALIA_PING_FILENAME = "qualia_ping.jsonl"
-
-# Written by Qualia (externally, not by Fenra herself - contrast with
-# qualia_ping.jsonl above) to set a new Qualia allowance, mirroring how
-# Teddy sets it via the GUI field. Polled the same way as the inbox rather
-# than edited into state.json directly, so it can't race the app's own
-# writes.
-QUALIA_ALLOWANCE_SET_FILENAME = "qualia_allowance_set.txt"
-
-# Same pattern, for the context window instead of the allowance - lets
-# Qualia adjust how many past cycles Fenra sees without needing Teddy at
-# the machine (e.g. breaking a self-reinforcing repetition where her own
-# last N cycles of the same broken attempt keep echoing back at her).
-QUALIA_CONTEXT_WINDOW_SET_FILENAME = "qualia_context_window_set.txt"
-
-# Same pattern, for the model - lets Qualia switch it back externally if
-# a model Fenra picked herself turns out to be causing real problems
-# (e.g. a smaller model producing sustained fabrication), without hand-
-# editing state.json while the app process is live.
-QUALIA_MODEL_SET_FILENAME = "qualia_model_set.txt"
-
-# Same pattern, for max_tokens (num_predict) - lets Qualia raise the token
-# budget externally for a model that needs more of it to be usable (e.g. a
-# "thinking" model like qwen3 that can burn its entire budget reasoning
-# internally before ever writing to the field Fenra's response is read
-# from, going completely silent at a low limit with no error on either
-# side). Built 2026-08-31 after that exact failure recurred twice.
-QUALIA_MAX_TOKENS_SET_FILENAME = "qualia_max_tokens_set.txt"
-
-# Same pattern, for the whole model rotation (see _advance_model_rotation
-# and fn_add_to_rotation) - lets Qualia view (state.json/functions.jsonl
-# already show it) and directly set or clear it externally, not just
-# watch Fenra build it herself one add_to_rotation call at a time.
-# Comma- or pipe-separated model names replace the whole rotation; the
-# literal word "clear" (or "none") empties it back to a single fixed
-# model. Blank content is a no-op, same as the other _set files. Shares
-# _apply_model_rotation with the GUI's own "Set" button next to it, so
-# Teddy has the identical capability directly in the app.
-QUALIA_ROTATION_SET_FILENAME = "qualia_rotation_set.txt"
-
-# Presence of either file (content doesn't matter) starts/stops the
-# self-talk loop on the next poll, exactly as if Start/Stop were clicked -
-# lets Qualia (or anything else) resume a session no one's physically at
-# the machine to click Start on, e.g. right after a code-change restart.
+WORLD_STATE_FILENAME = "world.json"
+VOICE_STATE_FILENAME = "state.json"
 START_SIGNAL_FILENAME = "start_signal.txt"
 STOP_SIGNAL_FILENAME = "stop_signal.txt"
 
-DEFAULT_QUALIA_ALLOWANCE = 50000
-
-# Default lifespan (in loop ticks) for a desire added without an explicit
-# count via add_desire(text|ticks). -1 means persistent - never decrements,
-# never drops off.
-DEFAULT_DESIRE_TICKS = 10
-
-# How many of the *receiving* voice's own turns a tell_voice message stays
-# visible for before falling off on its own - Teddy's explicit design,
-# modeled directly on desires (see _voice_inbox_block/_decrement_voice_inbox).
-VOICE_MESSAGE_TICKS = 5
+_GROUP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-# How many of her own past cycles (from history, oldest to newest) go into
-# her prompt, instead of just the single most recent. Not the same thing as
-# Ollama's own num_ctx token limit - this is a count of cycles, enforced
-# entirely on our side. Bounded to keep prompt growth/latency sane; both
-# Teddy and Fenra can set it within that range.
-DEFAULT_CONTEXT_WINDOW = 10
-MIN_CONTEXT_WINDOW = 0
-MAX_CONTEXT_WINDOW = 50
+# --------------------------------------------------------------- storage --
 
-# How often the running app checks for messages Qualia has dropped into the
-# inbox file. Independent of the self-talk loop (running or not, this timer
-# is always active once the app is open) and always on the main thread, so
-# it never races the loop thread's own chat.jsonl writes.
-QUALIA_INBOX_POLL_MS = 5000
-
-# Function-call syntax: Fenra speaks ⟦name(args)⟧ inline in her response to
-# invoke a function. ⟦ ⟧ (U+27E6/U+27E7, mathematical white square brackets)
-# are essentially never produced in ordinary code or prose, so this is safe
-# to detect without false positives. Anything matched here is executed
-# against an explicit whitelist below - never eval'd.
-FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
-
-# v0.16.9 - per-session function-permission system. Only enforced when the
-# active session's permission_mode is True (default False, every session
-# that predates this feature) - see _execute_one_call. Always callable
-# regardless of a voice's own allowed_functions: seeing what exists and
-# asking for something are never restricted, only actually using something
-# is. v0.16.15 (connectivity redesign, Qualia/decisions.md item 4b) added
-# list_voices/list_groups/tell_voice - baseline social awareness and direct
-# 1:1 contact are basic to existing here at all, not something a voice
-# should have to be granted - and request_group_join, symmetric with
-# request_function_access per Teddy's explicit call (asking to join
-# something should be as unrestricted as asking for a function). Joining a
-# group itself (as opposed to asking) stays gated by the public/private
-# mechanism, not this set.
-GLOBAL_PERMISSION_FUNCTIONS = {
-    "functions", "request_function_access",
-    "list_voices", "list_groups", "tell_voice", "request_group_join",
-    # v0.16.16 - Qualia/permissions-proposal.md, reviewed and confirmed by
-    # Teddy: a function is baseline if it only ever affects the calling
-    # voice's own state, or if its own internal logic already provides
-    # the real safety check (join_group's public/private branch). Real
-    # trigger: tribe-1's seed got blocked from add_desire and stuck on a
-    # request she couldn't self-grant - exactly the friction this exists
-    # to remove.
-    "now", "add_desire", "set_context_window", "current_model", "set_model",
-    "add_to_rotation", "join_group", "leave_group", "group_accept_invite",
-    "qualia_allowance", "list_models",
-}
-
-# Fallback for a real, observed generation quirk (gemma3:4b especially, but
-# not exclusively) where a call is otherwise well-formed but drops the
-# closing parenthesis immediately before the closing bracket - "...text⟧"
-# instead of "...text)⟧". The strict regex above requires that ")" literally
-# and has no way to match this, so without a fallback the call just silently
-# never fires: no error, no functions.jsonl entry, invisible on both sides.
-# Confirmed on 2026-08-31 to cost a full ~75-minute stretch of real
-# conversation this way. This pattern is only ever tried against whatever
-# text the strict pass above did NOT already match (see run_function_calls),
-# so a normal well-formed call is never double-counted or re-executed.
-FUNCTION_CALL_FALLBACK_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)⟧", re.DOTALL)
-
-# Detects a fabricated RESULT block - Fenra writing ⟦RESULT: ...⟧ herself
-# as part of her own generated text, rather than it being the app's own
-# annotation appended after a real function call executed. This is
-# checked against the raw response_text *before* any real result lines
-# get appended (see _tick) - a genuine RESULT is only ever added after
-# generation completes, never woven into it, so any match here is
-# definitionally something she wrote, not something that happened. A
-# well-documented, recurring failure mode (see Qualia/decisions.md,
-# multiple dates) - flagged rather than hidden, per Teddy's direct
-# instruction (2026-08-31): don't hide it, flag it, point her at
-# Qualia/wiki/hallucinations.md so there's somewhere real to learn why.
-FABRICATED_RESULT_RE = re.compile(r"⟦\s*RESULT\s*:.*?⟧", re.DOTALL | re.IGNORECASE)
-
-
-_MULTI_ARG_SPLIT_RE = re.compile(r"[|,]")
-
-
-def _parse_call_args(raw_args, multi_arg):
-    """How the text inside ⟦name(...)⟧ becomes a list of arguments depends
-    on the function: a free-text function (multi_arg=False - set_desire,
-    send_message, ...) gets the whole thing as one argument, untouched, so
-    it can safely contain commas or ordinary punctuation. A function that
-    genuinely takes more than one argument (multi_arg=True -
-    read_chat_between, search_chat) splits on either | or , - both work,
-    since she reaches for commas as often as the documented |."""
-    raw_args = raw_args.strip()
-    if not raw_args:
-        return []
-    if not multi_arg:
-        return [raw_args.strip("'\"")]
-    return [a.strip().strip("'\"") for a in _MULTI_ARG_SPLIT_RE.split(raw_args)]
-
-
-def reload_function_registry():
-    """Hot-reload fenra_functions.py so edits to it (new functions, fixed
-    descriptions, whatever) take effect on the very next tick, without
-    restarting the app or interrupting a running session. If the file has
-    a syntax/import error, keep using the last good version instead of
-    crashing the loop."""
-    try:
-        importlib.reload(fenra_functions)
-    except Exception as exc:
-        return fenra_functions.FUNCTION_REGISTRY, str(exc)
-    return fenra_functions.FUNCTION_REGISTRY, None
-
-
-def _execute_one_call(app, registry, name, raw_args, repaired=False):
-    """Run a single already-matched call, log it to functions.jsonl, and
-    return its ⟦RESULT: ...⟧ annotation. Shared by the strict match pass
-    and the missing-paren fallback pass below - repaired=True just adds a
-    note to the log entry so a repaired call is always distinguishable
-    from a normally-formed one after the fact."""
-    multi_arg = registry.get(name, {}).get("multi_arg", False)
-    args = _parse_call_args(raw_args, multi_arg)
-    call_entry = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "function": name,
-        "args": args,
-    }
-    if repaired:
-        call_entry["repaired"] = "missing closing parenthesis before ⟧"
-
-    # v0.16.9 - per-session permission gate. Only active at all when this
-    # session's permission_mode is True; every existing/normal session has
-    # it False, so this short-circuits immediately and nothing below
-    # changes for them. Inside a permission-mode session, every voice may
-    # always call the two GLOBAL_PERMISSION_FUNCTIONS regardless of its own
-    # allowed_functions - everything else has to actually be in that list.
-    if (
-        getattr(app, "permission_mode", False)
-        and name not in GLOBAL_PERMISSION_FUNCTIONS
-        and name not in (getattr(app, "allowed_functions", None) or [])
-    ):
-        call_entry["success"] = False
-        call_entry["result"] = (
-            f"function '{name}' is not in your allowed_functions list - "
-            f"see functions() for everything that exists, "
-            f"request_function_access({name}|reason) to ask for it."
-        )
-    elif name in registry:
-        try:
-            result = registry[name]["fn"](app, args)
-            call_entry["success"] = True
-            call_entry["result"] = result
-        except Exception as exc:
-            call_entry["success"] = False
-            call_entry["result"] = str(exc)
-    else:
-        call_entry["success"] = False
-        call_entry["result"] = f"unknown function '{name}'"
-
-    append_voice_functions(app.session_name, app.current_voice_name, call_entry)
-    status = "ok" if call_entry["success"] else "error"
-    return f"⟦RESULT: {name} -> {status}: {call_entry['result']}⟧"
-
-
-def run_function_calls(app, response_text):
-    """Find every ⟦call⟧ in response_text, execute it, log it, and return
-    a list of result-annotation strings to append after the response.
-
-    First, a normalization pass: some models (mixtral:8x7b, observed
-    2026-08-31) write every underscore in a call as a markdown-escaped
-    "\\_" out of habit - current\\_model, add\\_desire, and so on. That
-    backslash isn't a valid character in a function name, so the call
-    silently never matched at all: every single call attempt on that
-    model was being dropped, with the model then going on to fabricate a
-    confident-looking ⟦RESULT: ...⟧ as if it had actually worked.
-    Function calls are explicit, deliberate syntax, not natural-language
-    prose she would ever need literal backslash-underscore in - so
-    un-escaping every "\\_" to "_" up front, everywhere in the response,
-    is low-risk and fixes both the function name and any escaped
-    underscores inside the arguments (e.g. a desire's text) in one pass.
-
-    Then two passes: the strict, correctly-formed ⟦name(args)⟧ pattern
-    first, then a fallback pass (see FUNCTION_CALL_FALLBACK_RE) that
-    catches a call missing only its closing parenthesis - a real,
-    observed generation quirk that would otherwise silently drop the
-    call the same way. The fallback only ever runs against text the
-    strict pass did not already consume, so nothing is matched or
-    executed twice. Every repaired call also raises a status-bar
-    warning, since it means Fenra's own generated syntax was broken even
-    though the call still got honored."""
-    registry, reload_error = reload_function_registry()
-    if reload_error:
-        app.root.after(0, app._set_status, f"functions module error (using last good version): {reload_error}")
-
-    response_text = response_text.replace("\\_", "_")
-
-    result_lines = []
-    matched_spans = []
-    for m in FUNCTION_CALL_RE.finditer(response_text):
-        matched_spans.append(m.span())
-        result_lines.append(_execute_one_call(app, registry, m.group(1), m.group(2)))
-
-    # Mask out everything the strict pass already matched before running
-    # the fallback, so a normal well-formed call can never be re-matched
-    # and re-executed by the looser pattern.
-    masked = response_text
-    for start, end in matched_spans:
-        masked = masked[:start] + " " * (end - start) + masked[end:]
-
-    for m in FUNCTION_CALL_FALLBACK_RE.finditer(masked):
-        name = m.group(1)
-        app.root.after(
-            0, app._set_status,
-            f"repaired a call to '{name}' - it was missing its closing parenthesis"
-        )
-        result_lines.append(_execute_one_call(app, registry, name, m.group(2), repaired=True))
-
-    return result_lines
-
-
-def sanitize_session_name(name):
-    name = name.strip()
-    name = re.sub(r'[<>:"/\\|?*]', "_", name)
-    return name
-
-
-_GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
-def sanitize_group_name(name):
-    # v0.16.15 - strip apostrophes rather than reject them, so family
-    # group names ("Seed's Children") sanitize cleanly instead of
-    # tripping _GROUP_NAME_RE.
+def sanitize_name(name):
     return (name or "").strip().lower().replace(" ", "_").replace("'", "")
 
 
-def group_path(name):
-    name = sanitize_group_name(name)
-    if not name or not _GROUP_NAME_RE.match(name):
-        raise ValueError(
-            "group names may only contain letters, numbers, underscores, and hyphens "
-            f"(spaces get turned into underscores automatically) - got '{name}'"
-        )
-    os.makedirs(GROUPS_DIR, exist_ok=True)
-    return os.path.join(GROUPS_DIR, f"{name}.jsonl")
+def world_dir(world_name):
+    return os.path.join(WORLDS_DIR, world_name)
 
 
-def append_group_entry(name, voice, text):
-    """Broadcast one entry to a shared group log. Tolerant of concurrent
-    writers - other voices, possibly other processes or machines later,
-    per Teddy's stated goal of eventually running voices in parallel -
-    via a short retry loop on transient file-lock contention rather than
-    losing a broadcast to a race."""
-    path = group_path(name)
-    entry = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "voice": voice,
-        "text": text,
-    }
-    line = json.dumps(entry, ensure_ascii=False) + "\n"
-    for attempt in range(5):
-        try:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line)
-            return
-        except OSError:
-            if attempt == 4:
-                raise
-            time.sleep(0.1)
-
-
-def read_group_tail(name, limit):
-    """Legacy pull-read of the old flat groups/<name>.jsonl file - kept
-    only so the one-time migration (migrate_legacy_group, below) can read
-    a pre-v0.16.15 group's content before it's wrapped into the new
-    groups/<name>/log.jsonl. Not called anywhere in the live push-delivery
-    path - see push_entry_to_voice."""
-    path = group_path(name)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f if l.strip()]
-    except OSError:
-        return []
-    out = []
-    for line in lines[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except (json.JSONDecodeError, AttributeError):
-            continue
-    return out
-
-
-# ------------------------------------------------- groups v0.16.15 (owned) --
-# The connectivity/tribe redesign (Qualia/decisions.md item 4b). Replaces
-# the old schema-less groups/<name>.jsonl (no owner, no roster, no public/
-# private or hidden/visible concept - pure implicit-existence-by-file) with
-# a real per-group entity, following the same state.json+history.jsonl
-# convention already used per-session and per-voice, one level down:
-#   groups/<name>/meta.json   - owner, kind, join_policy, visibility,
-#                                members{voice: {direction, joined}}, banned
-#   groups/<name>/log.jsonl   - canonical full log, Teddy/Qualia review
-#                                only, written by append_group_log at the
-#                                same moment a message is pushed to every
-#                                listening member's own history.jsonl -
-#                                never read back into any voice's prompt.
-GROUP_META_FILENAME = "meta.json"
-GROUP_LOG_FILENAME = "log.jsonl"
-
-
-def groups_root_dir(session_name):
-    return os.path.join(session_dir(session_name), "groups")
-
-
-def owned_group_dir(session_name, name):
-    name = sanitize_group_name(name)
-    if not name or not _GROUP_NAME_RE.match(name):
-        raise ValueError(
-            "group names may only contain letters, numbers, underscores, and hyphens "
-            f"(spaces and apostrophes get stripped/replaced automatically) - got '{name}'"
-        )
-    return os.path.join(groups_root_dir(session_name), name)
-
-
-def ensure_owned_group_dir(session_name, name):
-    path = owned_group_dir(session_name, name)
+def ensure_world_dir(world_name):
+    path = world_dir(world_name)
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def group_meta_path(session_name, name):
-    return os.path.join(owned_group_dir(session_name, name), GROUP_META_FILENAME)
+def list_worlds():
+    if not os.path.isdir(WORLDS_DIR):
+        return []
+    names = [d for d in os.listdir(WORLDS_DIR) if os.path.isdir(os.path.join(WORLDS_DIR, d))]
+
+    def sort_key(name):
+        path = os.path.join(world_dir(name), WORLD_STATE_FILENAME)
+        return os.path.getmtime(path) if os.path.exists(path) else 0
+
+    return sorted(names, key=sort_key, reverse=True)
 
 
-def group_log_path(session_name, name):
-    return os.path.join(owned_group_dir(session_name, name), GROUP_LOG_FILENAME)
-
-
-def default_group_meta(owner=None, kind="adhoc", join_policy="public", visibility="visible"):
+def default_world_state():
     return {
-        "owner": owner,          # voice name, or None for kind == "floor" (The Hearth)
-        "kind": kind,            # "family" | "adhoc" | "floor"
-        "join_policy": join_policy,  # "public" | "private" - meaningless for "floor"
-        "visibility": visibility,     # "visible" | "hidden"
-        "members": {},            # voice -> {"direction": "in"|"out"|"both", "joined": timestamp}
-        "banned": [],
-        "created": datetime.now().isoformat(timespec="seconds"),
+        "host": DEFAULT_HOST,
+        "interval": DEFAULT_INTERVAL_SEC,
+        "model_default": DEFAULT_MODEL,
+        "voices": [],
+        "voice_rotation_index": 0,
     }
 
 
-def group_exists(session_name, name):
-    return os.path.exists(group_meta_path(session_name, name))
+def world_state_path(world_name):
+    return os.path.join(world_dir(world_name), WORLD_STATE_FILENAME)
 
 
-def load_group_meta(session_name, name):
-    path = group_meta_path(session_name, name)
+def load_world_state(world_name):
+    state = default_world_state()
+    path = world_state_path(world_name)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return state
+
+
+def save_world_state(world_name, state):
+    state = dict(state)
+    state["fenra_version"] = FENRA_VERSION
+    ensure_world_dir(world_name)
+    with open(world_state_path(world_name), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+# ------------------------------------------------------------------ voices --
+
+def voices_root_dir(world_name):
+    return os.path.join(world_dir(world_name), "voices")
+
+
+def voice_dir(world_name, voice_name):
+    return os.path.join(voices_root_dir(world_name), voice_name)
+
+
+def ensure_voice_dir(world_name, voice_name):
+    path = voice_dir(world_name, voice_name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def voice_state_path(world_name, voice_name):
+    return os.path.join(voice_dir(world_name, voice_name), VOICE_STATE_FILENAME)
+
+
+def list_voices(world_name):
+    root = voices_root_dir(world_name)
+    if not os.path.isdir(root):
+        return []
+    return sorted(
+        d for d in os.listdir(root)
+        if os.path.isdir(os.path.join(root, d)) and os.path.exists(voice_state_path(world_name, d))
+    )
+
+
+def default_voice_state():
+    return {
+        "model": DEFAULT_MODEL,
+        "behavior": "",
+        "identity": "",
+        "context": "",
+    }
+
+
+def load_voice_state(world_name, voice_name):
+    state = default_voice_state()
+    path = voice_state_path(world_name, voice_name)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state.update(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return state
+
+
+def save_voice_state(world_name, voice_name, state):
+    state = dict(state)
+    state["fenra_version"] = FENRA_VERSION
+    ensure_voice_dir(world_name, voice_name)
+    with open(voice_state_path(world_name, voice_name), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+def delete_voice(world_name, voice_name):
+    import shutil
+    path = voice_dir(world_name, voice_name)
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def append_to_context(world_name, voice_name, line):
+    """The one and only way a voice's context grows - a plain string
+    append, same format for a voice's own thought or an incoming one
+    from a fellow group member (see the module docstring). Re-reads
+    from disk immediately before appending rather than trusting an
+    in-memory copy, so a concurrent write (Teddy editing Context in the
+    GUI at the same moment) can't get silently clobbered."""
+    state = load_voice_state(world_name, voice_name)
+    existing = state.get("context", "")
+    state["context"] = (existing + ("\n" if existing else "") + line)
+    save_voice_state(world_name, voice_name, state)
+
+
+# ------------------------------------------------------------------ groups --
+
+def groups_root_dir(world_name):
+    return os.path.join(world_dir(world_name), "groups")
+
+
+def ensure_groups_root_dir(world_name):
+    path = groups_root_dir(world_name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def group_path(world_name, name):
+    name = sanitize_name(name)
+    if not name or not _GROUP_NAME_RE.match(name):
+        raise ValueError(
+            "group names may only contain letters, numbers, underscores, and hyphens "
+            f"(spaces and apostrophes get stripped automatically) - got '{name}'"
+        )
+    return os.path.join(groups_root_dir(world_name), f"{name}.json")
+
+
+def list_groups(world_name):
+    root = groups_root_dir(world_name)
+    if not os.path.isdir(root):
+        return []
+    return sorted(
+        f[: -len(".json")] for f in os.listdir(root)
+        if f.endswith(".json") and os.path.isfile(os.path.join(root, f))
+    )
+
+
+def default_group_state(name):
+    return {"name": name, "members": []}
+
+
+def load_group_state(world_name, name):
+    path = group_path(world_name, name)
     if not os.path.exists(path):
         return None
     try:
@@ -1156,872 +255,144 @@ def load_group_meta(session_name, name):
         return None
 
 
-def save_group_meta(session_name, name, meta):
-    ensure_owned_group_dir(session_name, name)
-    with open(group_meta_path(session_name, name), "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+def save_group_state(world_name, name, state):
+    ensure_groups_root_dir(world_name)
+    with open(group_path(world_name, name), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
 
 
-def create_group_if_missing(session_name, name, owner=None, kind="adhoc", join_policy="public", visibility="visible", initial_member=None):
-    """Idempotent. Returns the (possibly pre-existing) meta dict."""
-    existing = load_group_meta(session_name, name)
-    if existing is not None:
-        return existing
-    meta = default_group_meta(owner=owner, kind=kind, join_policy=join_policy, visibility=visibility)
-    if initial_member:
-        meta["members"][initial_member] = {
-            "direction": "both",
-            "joined": meta["created"],
-        }
-    save_group_meta(session_name, name, meta)
-    return meta
+def delete_group(world_name, name):
+    path = group_path(world_name, name)
+    if os.path.exists(path):
+        os.remove(path)
 
 
-def append_group_log(session_name, name, voice, text):
-    """The canonical, complete record of a group's activity - Teddy/Qualia
-    review only (see Qualia/decisions.md's 'private means opaque' /
-    'canonical log' design). Never read back into any voice's own prompt -
-    that's push_entry_to_voice's job, and it writes directly to the
-    receiving voice's own history.jsonl instead. Same tolerant-retry shape
-    as the old append_group_entry, for the same reason (concurrent
-    writers)."""
-    ensure_owned_group_dir(session_name, name)
-    entry = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "voice": voice,
-        "text": text,
-    }
-    line = json.dumps(entry, ensure_ascii=False) + "\n"
-    path = group_log_path(session_name, name)
-    for attempt in range(5):
-        try:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line)
-            return
-        except OSError:
-            if attempt == 4:
-                raise
-            time.sleep(0.1)
-
-
-def read_group_log_tail(session_name, name, limit):
-    """Internal/Teddy-Qualia tooling only (e.g. a future Topology-style
-    viewer) - never registered as a voice-facing function. Reading a
-    group's history beyond what's already been pushed into a voice's own
-    history.jsonl is exactly the 'world exploration' territory explicitly
-    deferred, not part of this redesign."""
-    path = group_log_path(session_name, name)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f if l.strip()]
-    except OSError:
-        return []
+def groups_containing(world_name, voice_name):
+    """Every group (sanitized name) that currently lists voice_name as
+    a member - used both by the tick loop (who does a thought reach)
+    and the Groups tab (member add/remove)."""
     out = []
-    for line in lines[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except (json.JSONDecodeError, AttributeError):
-            continue
+    for name in list_groups(world_name):
+        state = load_group_state(world_name, name)
+        if state and voice_name in state.get("members", []):
+            out.append(name)
     return out
 
 
-def list_owned_groups(session_name):
-    root = groups_root_dir(session_name)
-    if not os.path.isdir(root):
-        return []
-    return sorted(
-        d for d in os.listdir(root)
-        if os.path.isdir(os.path.join(root, d)) and group_exists(session_name, d)
+# ------------------------------------------------------------------ model --
+
+def call_ollama(host, model, prompt):
+    resp = requests.post(
+        f"{host}/api/generate",
+        json={"model": model, "prompt": prompt, "stream": False},
+        timeout=180,
     )
+    resp.raise_for_status()
+    return resp.json().get("response", "")
 
 
-def migrate_legacy_group(name, known_voices_groups_in, known_voices_groups_out):
-    """One-time, explicit (not automatic on app start - see the GUI
-    migration trigger), for a pre-v0.16.15 groups/<name>.jsonl. Wraps its
-    content into groups/<name>/log.jsonl unchanged, synthesizes a meta.json
-    (kind='adhoc', join_policy='public', direction='both' for every voice
-    the migration is told already had this group in its own groups_in/out -
-    grandfathered in at full access, since the old system had no direction
-    concept to restrict against). known_voices_groups_in/out are
-    {voice_name: [group_names]} dicts the caller assembles by scanning
-    every voice's own state.json - this function doesn't scan disk itself,
-    keeping it testable against a fabricated mapping."""
-    if group_exists(name):
-        return load_group_meta(name)  # already migrated, idempotent
-    legacy_path = group_path(name)
-    if not os.path.exists(legacy_path):
-        raise ValueError(f"no legacy group '{name}' to migrate")
-    meta = default_group_meta(owner=None, kind="adhoc", join_policy="public", visibility="visible")
-    now = meta["created"]
-    for voice, groups in known_voices_groups_in.items():
-        if name in groups:
-            meta["members"].setdefault(voice, {"direction": "in", "joined": now})
-    for voice, groups in known_voices_groups_out.items():
-        if name in groups:
-            entry = meta["members"].setdefault(voice, {"direction": "out", "joined": now})
-            if entry["direction"] != "out":
-                entry["direction"] = "both"
-    save_group_meta(name, meta)
-    ensure_owned_group_dir(name)
-    with open(legacy_path, "r", encoding="utf-8") as src:
-        content = src.read()
-    with open(group_log_path(name), "w", encoding="utf-8") as dst:
-        dst.write(content)
-    return meta
-
-
-def migrate_all_legacy_groups():
-    """Explicit, one-time entry point - not called automatically anywhere
-    (no auto-run-on-launch, unlike _migrate_legacy_session's per-session
-    lazy trigger). Scans every session's every voice for its groups_in/
-    groups_out, then migrates every pre-v0.16.15 groups/<name>.jsonl found
-    on disk that doesn't already have a groups/<name>/ directory. Meant to
-    be run once, deliberately, before push delivery goes live (Step 3) -
-    call it from a scratch/maintenance script or a future GUI action, not
-    from app startup."""
-    groups_in_map = {}
-    groups_out_map = {}
-    for session_name in list_sessions():
-        for voice_name in list_voices(session_name):
-            vstate = load_voice_state(session_name, voice_name)
-            key = f"{session_name}:{voice_name}"
-            groups_in_map[key] = list(vstate.get("groups_in", []))
-            groups_out_map[key] = list(vstate.get("groups_out", []))
-
-    migrated = []
-    if os.path.isdir(GROUPS_DIR):
-        for fname in os.listdir(GROUPS_DIR):
-            if not fname.endswith(".jsonl"):
-                continue
-            name = fname[: -len(".jsonl")]
-            if group_exists(name):
-                continue
-            migrate_legacy_group(name, groups_in_map, groups_out_map)
-            migrated.append(name)
-    return migrated
-
-
-def list_sessions():
-    if not os.path.isdir(SESSIONS_DIR):
-        return []
-    names = [
-        d for d in os.listdir(SESSIONS_DIR)
-        if os.path.isdir(os.path.join(SESSIONS_DIR, d))
-    ]
-    # most recently modified (by state.json) first
-    def sort_key(name):
-        path = os.path.join(SESSIONS_DIR, name, STATE_FILENAME)
-        return os.path.getmtime(path) if os.path.exists(path) else 0
-
-    return sorted(names, key=sort_key, reverse=True)
-
-
-def session_dir(name):
-    return os.path.join(SESSIONS_DIR, name)
-
-
-def ensure_session_dir(name):
-    path = session_dir(name)
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def default_session_state():
-    """A session (v0.16.2) is the whole - what actually talks
-    externally (Chat tab, Qualia allowance, send_message/read_message -
-    "Fenra," never attributed to one internal part) and the process/
-    machine boundary Groups was built around. It holds one or more
-    voices, which is where everything else (top/bottom/desires/model/
-    model_rotation/context_window/groups_in/out) actually lives now -
-    see default_voice_state. Teddy's explicit design, modeled on
-    Internal Family Systems: parts (voices) have their own separate
-    internal experience; the Self (the session) is what's externally
-    facing."""
-    return {
-        "host": DEFAULT_HOST,
-        "interval": DEFAULT_INTERVAL_SEC,
-        "qualia_allowance": DEFAULT_QUALIA_ALLOWANCE,
-        "voices": [],            # voice names, in round-robin order
-        "voice_rotation_index": 0,
-        # v0.16.9 - decided once, at session creation, never changed
-        # afterward (no function or GUI control ever toggles it). False
-        # for every session that predates this feature - identical
-        # behavior to before, see _execute_one_call's gate.
-        "permission_mode": False,
-        # v0.16.15 - The Hearth's stasis/wake bookkeeping (see
-        # ensure_hearth_membership, the _tick skip-loop, and
-        # push_entry_to_voice's Hearth-wake side effect). voice_name ->
-        # bool, True while that voice is skipped in rotation waiting on a
-        # new Hearth message. Cheap session-level mirror of the real
-        # per-member "awake" flag in groups/the_hearth/meta.json, kept
-        # here so the rotation skip-loop doesn't need a disk read every
-        # single advance.
-        "hearth_stasis": {},
-    }
-
-
-def default_voice_state():
-    """One voice's own config - everything that used to be "the
-    session" before v0.16.2. Deliberately separate per voice, not
-    shared with its session-mates, per Teddy's answer: a voice is blind
-    to the others unless it deliberately joins a shared group
-    (groups_in/groups_out below still work exactly as in v0.16.0/1 -
-    the only change is whose data they live in)."""
-    return {
-        "top": "",
-        "bottom": "",
-        "model": DEFAULT_MODEL,
-        "max_tokens": DEFAULT_MAX_TOKENS,
-        "last_thought": "",
-        "desires": [],
-        "context_window": DEFAULT_CONTEXT_WINDOW,
-        "model_rotation": [],
-        "model_rotation_index": 0,
-        "groups_in": [],
-        "groups_out": [],
-        "inbox": [],  # direct messages from other voices via tell_voice - see _voice_inbox_block
-        # v0.16.9 - only meaningful inside a permission_mode session (see
-        # default_session_state); harmless/unread otherwise. Which
-        # functions this voice may call, beyond the growing set that's
-        # always-global regardless - see _execute_one_call's gate.
-        "allowed_functions": [],
-        # v0.16.15 - this voice's own owned family group ("<voice>'s
-        # Children"), set once at creation via ensure_own_family_group,
-        # never changes afterward. Read-through mirror only for display -
-        # groups/<name>/meta.json is the real source of truth for
-        # membership/ownership. See Qualia/decisions.md item 4b.
-        "family_group": "",
-    }
-
-
-def load_session_state(name):
-    path = os.path.join(session_dir(name), STATE_FILENAME)
-    state = default_session_state()
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                state.update(json.load(f))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return state
-
-
-def save_session_state(name, state):
-    state = dict(state)
-    state["fenra_version"] = FENRA_VERSION
-    ensure_session_dir(name)
-    path = os.path.join(session_dir(name), STATE_FILENAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-
-
-# ---------------------------------------------------------- voices (v0.16.2) --
-# One session directory can hold several voices, each with its own
-# subdirectory (sessions/<session>/voices/<voice>/{state.json,
-# history.jsonl, functions.jsonl}) - the same three files a session used
-# to own directly, just nested one level down. A session from before this
-# split (no voices/ subdirectory at all) is treated as a single implicit
-# voice, DEFAULT_VOICE_NAME, whose data still lives directly in the
-# session directory exactly where it always has - see
-# FenraApp._migrate_legacy_session for the one-time, GUI-triggered
-# upgrade to the real voices/ layout. Passive read-only scanners (the
-# Topology tab, Qualia/export_fenra_live.py) never migrate anything -
-# they read whichever layout is actually on disk.
-
-def voices_root_dir(session_name):
-    return os.path.join(session_dir(session_name), "voices")
-
-
-def voice_dir(session_name, voice_name):
-    return os.path.join(voices_root_dir(session_name), voice_name)
-
-
-def ensure_voice_dir(session_name, voice_name):
-    path = voice_dir(session_name, voice_name)
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def list_voices(session_name):
-    """Every voice already migrated into the real voices/ layout for
-    this session - empty if the session has no voices/ subdirectory at
-    all yet (a legacy, never-reopened session), not DEFAULT_VOICE_NAME -
-    callers that need to fall back to the legacy single-implicit-voice
-    reading need to check for that themselves (see
-    FenraApp._refresh_voice_list and the Topology/export-script
-    scanners), since a live GUI load and a passive read-only scan handle
-    that gap differently."""
-    root = voices_root_dir(session_name)
-    if not os.path.isdir(root):
-        return []
-    names = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
-    return sorted(names)
-
-
-def voice_state_path(session_name, voice_name):
-    return os.path.join(voice_dir(session_name, voice_name), STATE_FILENAME)
-
-
-def voice_history_path(session_name, voice_name):
-    return os.path.join(voice_dir(session_name, voice_name), HISTORY_FILENAME)
-
-
-def voice_functions_path(session_name, voice_name):
-    return os.path.join(voice_dir(session_name, voice_name), FUNCTIONS_FILENAME)
-
-
-def load_voice_state(session_name, voice_name):
-    state = default_voice_state()
-    path = voice_state_path(session_name, voice_name)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                state.update(json.load(f))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return state
-
-
-def save_voice_state(session_name, voice_name, state):
-    state = dict(state)
-    state["fenra_version"] = FENRA_VERSION
-    # TEMPORARY DIAGNOSTIC (remove once the v0.16.9 allowed_functions
-    # mystery is root-caused) - log every write that shrinks a voice's
-    # allowed_functions to empty when it wasn't already, with a stack
-    # trace, regardless of which caller triggered it.
+def list_ollama_models(host):
     try:
-        old_path = voice_state_path(session_name, voice_name)
-        if os.path.exists(old_path):
-            with open(old_path, "r", encoding="utf-8") as _f:
-                old_state = json.load(_f)
-            old_af = old_state.get("allowed_functions")
-            new_af = state.get("allowed_functions")
-            if old_af and not new_af:
-                import traceback
-                with open(os.path.join(SESSIONS_DIR, "_af_debug.log"), "a", encoding="utf-8") as _dbg:
-                    _dbg.write(
-                        f"{datetime.now().isoformat()} save_voice_state({session_name!r}, {voice_name!r}) "
-                        f"SHRINK old={old_af!r} new={new_af!r} thread={threading.current_thread().name}\n"
-                    )
-                    _dbg.write("".join(traceback.format_stack(limit=10)) + "\n")
-    except Exception:
-        pass
-    ensure_voice_dir(session_name, voice_name)
-    with open(voice_state_path(session_name, voice_name), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+        resp = requests.get(f"{host}/api/tags", timeout=10)
+        resp.raise_for_status()
+        return sorted(m["name"] for m in resp.json().get("models", []))
+    except requests.RequestException:
+        return []
 
 
-def family_group_name(voice_name):
-    return f"{voice_name}'s Children"
-
-
-def ensure_own_family_group(session_name, voice_name):
-    """v0.16.15 - idempotent. Guarantees every voice owns a group
-    containing itself the instant it exists, regardless of which of the
-    three ways a voice can come into being created it (fn_create_voice,
-    a brand-new session's first voice, or legacy-session migration) - see
-    Qualia/decisions.md item 4b. Family visibility is deliberately
-    one-generation-local: this only ever touches the given voice's own
-    group, never a parent's or child's, so a grandchild is never
-    automatically pulled into a grandparent's group by this function.
-    Also updates the voice's own family_group field and groups_in/out
-    mirror if it isn't set yet - callers that already hold a loaded
-    vstate should re-load or update their own copy after calling this."""
-    gname = family_group_name(voice_name)
-    meta = create_group_if_missing(
-        session_name, gname, owner=voice_name, kind="family", join_policy="private",
-        visibility="visible", initial_member=voice_name,
-    )
-    vstate = load_voice_state(session_name, voice_name)
-    changed = False
-    if not vstate.get("family_group"):
-        vstate["family_group"] = gname
-        changed = True
-    if gname not in vstate.get("groups_in", []):
-        vstate.setdefault("groups_in", []).append(gname)
-        changed = True
-    if gname not in vstate.get("groups_out", []):
-        vstate.setdefault("groups_out", []).append(gname)
-        changed = True
-    if changed:
-        save_voice_state(session_name, voice_name, vstate)
-    return meta
-
-
-def ensure_hearth_membership(session_name, voice_name):
-    """v0.16.15 - The Hearth's structural safety net (Qualia/decisions.md
-    item 4b). Checked every single cycle, for whichever voice is about
-    to actually run - not just triggered on a kick - so it catches any
-    way a voice could end up with zero groups, not only the ones
-    anticipated. This is defense-in-depth, not an expected steady-state
-    path: every voice owns its own family group from the instant it's
-    created (ensure_own_family_group) and a kick always lands the target
-    somewhere (fn_group_kick's auto-land default), so reaching zero
-    groups here should mean a real edge case - a manual state edit, a
-    future bug - not normal operation. direction='both' for every
-    Hearth resident is a deliberate, singular exception to the
-    listen-only-by-default rule that governs every other group: The
-    Hearth has no voice-owner to grant speak access, and its own wake
-    mechanic (a fellow resident's own thought waking a stasis'd one)
-    structurally requires every resident to be able to broadcast."""
-    vstate = load_voice_state(session_name, voice_name)
-    if vstate.get("groups_in") or vstate.get("groups_out"):
-        return False
-    meta = create_group_if_missing(session_name, THE_HEARTH_NAME, owner=None, kind="floor", join_policy="private", visibility="hidden")
-    now = datetime.now().isoformat(timespec="seconds")
-    meta["members"][voice_name] = {"direction": "both", "joined": now, "awake": True}
-    save_group_meta(session_name, THE_HEARTH_NAME, meta)
-    vstate.setdefault("groups_in", []).append(THE_HEARTH_NAME)
-    vstate.setdefault("groups_out", []).append(THE_HEARTH_NAME)
-    save_voice_state(session_name, voice_name, vstate)
-    return True
-
-
-def load_voice_history(session_name, voice_name):
-    path = voice_history_path(session_name, voice_name)
-    entries = []
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    return entries
-
-
-def push_entry_to_voice(session_name, target_voice, from_voice, group_name, text, timestamp):
-    """v0.16.15 - the connectivity redesign's actual delivery mechanism
-    (Qualia/decisions.md item 4b). Appends a group-message entry
-    directly into target_voice's own history.jsonl via
-    append_voice_history - pure append, never a state.json read-modify-
-    write, which is exactly the operation class that caused the
-    v0.16.14 SHRINK race (a mid-cycle voice's allowed_functions getting
-    clobbered by a GUI-triggered full-state reassignment with zero
-    coordination). Routing delivery through the append-only file instead
-    sidesteps that whole failure class by construction, not by luck.
-    Cross-session delivery works the same way - voice_history_path only
-    needs session_name+voice_name, doesn't care whether it's the
-    caller's own session. Returns the entry (for the caller to also
-    append to an in-memory self.history list if the target happens to
-    be the currently-displayed voice - see _tick)."""
-    entry = {
-        "timestamp": timestamp,
-        "fenra_version": FENRA_VERSION,
-        "kind": "group_message",
-        "from_voice": from_voice,
-        "group": group_name,
-        "response": text,
-        "display": text,
-    }
-    append_voice_history(session_name, target_voice, entry)
-    return entry
-
-
-def append_voice_history(session_name, voice_name, entry):
-    ensure_voice_dir(session_name, voice_name)
-    with open(voice_history_path(session_name, voice_name), "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
-def append_voice_functions(session_name, voice_name, entry):
-    ensure_voice_dir(session_name, voice_name)
-    with open(voice_functions_path(session_name, voice_name), "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
-def load_chat_messages(name):
-    """Chat messages (unlike history) get mutated in place - marking one
-    read - so unlike history.jsonl's append-only log, this file is always
-    rewritten in full via save_chat_messages rather than appended to."""
-    path = os.path.join(session_dir(name), CHAT_FILENAME)
-    messages = []
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    messages.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    return messages
-
-
-def save_chat_messages(name, messages):
-    ensure_session_dir(name)
-    path = os.path.join(session_dir(name), CHAT_FILENAME)
-    with open(path, "w", encoding="utf-8") as f:
-        for m in messages:
-            f.write(json.dumps(m) + "\n")
-
+# ---------------------------------------------------------------- the app --
 
 class FenraApp:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"Fenra's Aletheosis - v{FENRA_VERSION}")
-        self.root.geometry("900x700")
+        self.root.title(f"Fenra - worlds-rebuild v{FENRA_VERSION}")
+        self.root.geometry("1000x650")
 
+        self.world_name = None
+        self.world_voices = []          # this world's round-robin order
+        self.voice_rotation_index = 0
         self.running = False
         self.loop_thread = None
-        self.last_thought = ""
-        self.history = []
-        self.chat_messages = []
-        self.desires = []
-        self.inbox = []  # direct messages from other voices (tell_voice) - see _voice_inbox_block
-        self.allowed_functions = []  # which functions this voice may call - only enforced if permission_mode
-        self.permission_mode = False  # session-level, decided once at creation, never toggled - see _load_session
-        self.model_rotation = []  # models Fenra has added, in the order added
-        self.model_rotation_index = 0  # position in the rotation for the next tick
-        # Set by fn_set_model or picking a model directly in the combo box,
-        # for whichever voice is currently displayed - tells
-        # _advance_model_rotation to leave the model alone for exactly one
-        # tick, so a manual choice actually runs once instead of being
-        # overwritten before it's ever used. self.model_manual_override
-        # itself is transient, in-flight state for whichever voice a tick
-        # is currently running; _voice_manual_override (below) is what
-        # actually persists that flag across ticks, per voice, since only
-        # one voice's turn comes up at a time.
-        self.model_manual_override = False
-        self._voice_manual_override = {}  # voice name -> bool, see above and _tick
-        self.groups_in = []   # group names this voice hears - pushed straight into history, see push_entry_to_voice
-        self.groups_out = []  # group names this voice broadcasts to each real cycle
-        self.session_name = None
-        # v0.16.19 - Groups tab detail-panel selection state: which group
-        # is currently shown, and its members list in listbox-index order
-        # (so _on_group_member_select can map a selection index straight
-        # back to a voice name without re-parsing the display label).
-        self._current_group_name = None
-        self._current_group_member_names = []
 
-        # Voices (v0.16.2): one session can hold several, individually
-        # configured, round-robined through automatically - see
-        # default_voice_state/_advance_voice_rotation. self.session_voices
-        # is this session's round-robin order (voice names).
-        # self.displayed_voice is whichever voice's config is currently
-        # shown in the GUI widgets above (top_box, model_var, desires,
-        # ...) - purely a viewing/editing selection, changed via the
-        # Voice combo box. self.current_voice_name is the DIFFERENT
-        # thing: whichever voice a given tick is actually running right
-        # now (set at the top of _tick, read by run_function_calls/
-        # _execute_one_call for logging and by group broadcasts for
-        # identity) - the round-robin advances on its own regardless of
-        # what's displayed, so these two are often not the same voice.
-        self.session_voices = []
-        self.voice_rotation_index = 0
-        # v0.16.15 - The Hearth's stasis/wake bookkeeping (see
-        # ensure_hearth_membership, _tick's skip-loop, _wake_hearth_resident).
-        # voice_name -> bool, True while skipped in rotation, waiting on a
-        # new Hearth message. Session-level, like voice_rotation_index.
-        self.hearth_stasis = {}
+        self.host_var = tk.StringVar(value=DEFAULT_HOST)
+        self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
+        self.status_var = tk.StringVar(value="Idle")
+        self.world_var = tk.StringVar(value="")
+
+        self._current_voice_names = []   # listbox-index -> voice name
         self.displayed_voice = None
-        self.current_voice_name = None
-        # Plain attribute (not model_var, a widget) tracking the model
-        # actually driving the current tick's active voice - see
-        # fn_current_model/fn_set_model in fenra_functions.py and _tick.
-        # Needed because the active voice isn't always the one currently
-        # displayed in model_var.
-        self.current_model_name = DEFAULT_MODEL
+        self._current_group_names = []   # listbox-index -> group name
+        self.displayed_group = None
 
+        self._build_menu()
         self._build_ui()
-        self.refresh_models()
-        self._startup_session()
-        self._poll_qualia_inbox()
+        self._startup_world()
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------ startup --
 
-    def _startup_session(self):
-        sessions = list_sessions()
-        name = sessions[0] if sessions else DEFAULT_SESSION_NAME
-        self._load_session(name)
+    def _startup_world(self):
+        worlds = list_worlds()
+        name = worlds[0] if worlds else DEFAULT_WORLD_NAME
+        self._load_world(name)
+
+    def _on_close(self):
+        self.running = False
+        if self.world_name:
+            self._save_world_controls()
+        self.root.destroy()
 
     # ---------------------------------------------------------------- UI --
 
+    def _build_menu(self):
+        menubar = tk.Menu(self.root)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        worlds_menu = tk.Menu(file_menu, tearoff=0)
+        worlds_menu.add_command(label="New world...", command=self.new_world)
+        worlds_menu.add_command(label="Rename current world...", command=self.rename_world)
+        worlds_menu.add_separator()
+        self._worlds_menu = worlds_menu
+        self._rebuild_worlds_menu()
+        file_menu.add_cascade(label="Worlds", menu=worlds_menu)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
+        self.root.config(menu=menubar)
+
+    def _rebuild_worlds_menu(self):
+        # Keep "New world.../Rename.../separator" (first 3 entries), drop
+        # everything after, re-list every world fresh.
+        self._worlds_menu.delete(3, "end")
+        for name in list_worlds():
+            self._worlds_menu.add_command(label=name, command=lambda n=name: self._load_world(n))
+
     def _build_ui(self):
-        self._build_menu()
+        toolbar = ttk.Frame(self.root)
+        toolbar.pack(fill="x", padx=6, pady=4)
+        ttk.Label(toolbar, text="World:").pack(side="left")
+        ttk.Label(toolbar, textvariable=self.world_var, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(2, 14))
+        ttk.Label(toolbar, text="Host:").pack(side="left")
+        ttk.Entry(toolbar, textvariable=self.host_var, width=24).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar, text="Interval (s):").pack(side="left")
+        ttk.Entry(toolbar, textvariable=self.interval_var, width=5).pack(side="left", padx=(2, 10))
+        self.start_stop_btn = ttk.Button(toolbar, text="Start", command=self.toggle_loop)
+        self.start_stop_btn.pack(side="left", padx=(0, 10))
+        ttk.Label(toolbar, textvariable=self.status_var, foreground="#666").pack(side="left")
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
-
-        self.talk_tab = ttk.Frame(notebook)
         self.voices_tab = ttk.Frame(notebook)
         self.groups_tab = ttk.Frame(notebook)
-        self.chat_tab = ttk.Frame(notebook)
-        self.history_tab = ttk.Frame(notebook)
-        self.topology_tab = ttk.Frame(notebook)
-        self.hearth_tab = ttk.Frame(notebook)
-        notebook.add(self.talk_tab, text="Session")
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.groups_tab, text="Groups")
-        notebook.add(self.chat_tab, text="Chat")
-        notebook.add(self.history_tab, text="History")
-        notebook.add(self.topology_tab, text="Topology")
-        notebook.add(self.hearth_tab, text="The Hearth")
 
-        self._build_talk_tab()
         self._build_voices_tab()
         self._build_groups_tab()
-        self._build_chat_tab()
-        self._build_history_tab()
-        self._build_topology_tab()
-        self._build_hearth_tab()
 
-    def _build_menu(self):
-        """v0.16.17 - GUI redesign (Qualia/ui-redesign-proposal.md).
-        Session picking moves out of the tab body entirely - previously
-        a Combobox inside the main tab (session_combo/session_var,
-        removed below), now a real File menu. No menu bar existed in
-        this app before this."""
-        menubar = tk.Menu(self.root)
-        self.file_menu = tk.Menu(menubar, tearoff=False)
-        self.file_menu.add_command(label="New Session...", command=self.new_session)
-        self.sessions_menu = tk.Menu(self.file_menu, tearoff=False)
-        self.file_menu.add_cascade(label="Sessions", menu=self.sessions_menu)
-        self.file_menu.add_command(label="Save Session", command=self.save_session)
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.root.quit)
-        menubar.add_cascade(label="File", menu=self.file_menu)
-        self.root.config(menu=menubar)
-
-    def _refresh_sessions_menu(self):
-        """Rebuilds the File > Sessions cascade from whatever's actually
-        on disk right now - same data list_sessions() always provided
-        the old session_combo, just re-populated as menu entries instead
-        of combobox values. Called everywhere the old _refresh_session_
-        list was (end of _load_session, end of new_session via
-        _load_session)."""
-        self.sessions_menu.delete(0, "end")
-        for name in list_sessions():
-            self.sessions_menu.add_command(label=name, command=lambda n=name: self._load_session(n))
-
-    def _build_talk_tab(self):
-        """v0.16.17 - GUI redesign. Session-level controls only now -
-        session/voice picking, all per-voice framing/parameters, and
-        group membership all moved to the menu bar / Voices tab / Groups
-        tab respectively (Qualia/ui-redesign-proposal.md)."""
-        frame = self.talk_tab
-
-        controls = ttk.Frame(frame)
-        controls.pack(fill="x", padx=6, pady=6)
-
-        ttk.Label(controls, text="Host:").pack(side="left")
-        self.host_var = tk.StringVar(value=DEFAULT_HOST)
-        ttk.Entry(controls, textvariable=self.host_var, width=22).pack(side="left", padx=(2, 10))
-
-        ttk.Label(controls, text="Interval (s):").pack(side="left")
-        self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
-        ttk.Entry(controls, textvariable=self.interval_var, width=5).pack(side="left", padx=(2, 10))
-
-        ttk.Label(controls, text="Max tokens:").pack(side="left")
-        self.max_tokens_var = tk.StringVar(value=str(DEFAULT_MAX_TOKENS))
-        ttk.Entry(controls, textvariable=self.max_tokens_var, width=6).pack(side="left", padx=(2, 10))
-
-        self.start_stop_btn = ttk.Button(controls, text="Start", command=self.toggle_loop)
-        self.start_stop_btn.pack(side="left", padx=(10, 0))
-
-        self.status_var = tk.StringVar(value="Idle")
-        ttk.Label(controls, textvariable=self.status_var).pack(side="right")
-
-        second_row = ttk.Frame(frame)
-        second_row.pack(fill="x", padx=6, pady=(0, 6))
-
-        # Qualia allowance: how many characters of send_message(qualia|...)
-        # text she can still spend. Not auto-replenishing - set directly
-        # by Teddy here, or by Qualia via qualia_allowance_set.txt (see
-        # _poll_qualia_allowance_set), now based on real usage data - see
-        # Qualia/decisions.md's 2026-09-08 allowance-policy entry.
-        ttk.Label(second_row, text="Qualia allowance (chars):").pack(side="left")
-        self.qualia_allowance_var = tk.StringVar(value=str(DEFAULT_QUALIA_ALLOWANCE))
-        allowance_entry = ttk.Entry(second_row, textvariable=self.qualia_allowance_var, width=8)
-        allowance_entry.pack(side="left", padx=(4, 4))
-        allowance_entry.bind("<Return>", lambda event: self.set_qualia_allowance())
-        ttk.Button(second_row, text="Set", command=self.set_qualia_allowance).pack(side="left", padx=(0, 16))
-
-        # v0.16.17 - shown for the first time. Decided once at session
-        # creation, never toggled afterward by any function or GUI
-        # control - read-only, just visibility that was missing before.
-        ttk.Label(second_row, text="Permission mode:").pack(side="left")
-        self.permission_mode_display_var = tk.StringVar(value="off")
-        ttk.Label(second_row, textvariable=self.permission_mode_display_var, foreground="#666").pack(
-            side="left", padx=(4, 0)
-        )
-
-        self.session_status_var = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.session_status_var, foreground="#666").pack(
-            anchor="w", padx=6, pady=(0, 6)
-        )
-
-    def _build_voice_detail_panel(self, parent):
-        """v0.16.17 - the Voices tab's right-hand detail panel: Framing
-        (editable - what this voice actually is) above, Context (a
-        dashboard of her current state - parameters, permissions,
-        what's been sent to her) below. Every widget here is the SAME
-        widget that used to live directly in the old Fenra tab -
-        relocated, not cloned, so _load_voice/_current_voice_state_from_
-        widgets/_save_voice_snapshot need zero changes beyond the new
-        _refresh_*_display calls added at the bottom of _load_voice."""
-        framing = ttk.LabelFrame(parent, text="Framing")
-        framing.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-        framing.columnconfigure(0, weight=1)
-        framing.rowconfigure(1, weight=1)   # behavior box
-        framing.rowconfigure(3, weight=3)   # transcript (middle box)
-        framing.rowconfigure(5, weight=1)   # identity box
-
-        # v0.16.16's create_voice rename extended into the GUI itself -
-        # these boxes had no visible label at all before this.
-        ttk.Label(framing, text="Behavior (read first, every cycle):").grid(row=0, column=0, sticky="w")
-        self.top_box = scrolledtext.ScrolledText(framing, wrap="word", height=4)
-        self.top_box.grid(row=1, column=0, sticky="nsew", pady=(0, 4))
-
-        ttk.Label(framing, text="Transcript:").grid(row=2, column=0, sticky="w")
-        self.middle_box = scrolledtext.ScrolledText(framing, wrap="word", state="disabled")
-        self.middle_box.grid(row=3, column=0, sticky="nsew", pady=(0, 4))
-
-        ttk.Label(framing, text="Identity (read last, right before generating):").grid(row=4, column=0, sticky="w")
-        self.bottom_box = scrolledtext.ScrolledText(framing, wrap="word", height=4)
-        self.bottom_box.grid(row=5, column=0, sticky="nsew")
-
-        context = ttk.LabelFrame(parent, text="Context")
-        context.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-
-        params_row = ttk.Frame(context)
-        params_row.pack(fill="x", pady=(2, 4))
-        ttk.Label(params_row, text="Model:").pack(side="left")
-        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=18, state="readonly")
-        self.model_combo.pack(side="left", padx=(2, 2))
-        # Same "gets clobbered by the rotation before ever running" flag
-        # fn_set_model has, tracked per voice - see _advance_model_rotation.
-        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_picked)
-        ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left", padx=(0, 10))
-
-        ttk.Label(params_row, text="Context window (cycles):").pack(side="left")
-        self.context_window_var = tk.StringVar(value=str(DEFAULT_CONTEXT_WINDOW))
-        context_window_entry = ttk.Entry(params_row, textvariable=self.context_window_var, width=6)
-        context_window_entry.pack(side="left", padx=(4, 4))
-        context_window_entry.bind("<Return>", lambda event: self.set_context_window())
-        ttk.Button(params_row, text="Set", command=self.set_context_window).pack(side="left")
-
-        rotation_row = ttk.Frame(context)
-        rotation_row.pack(fill="x", pady=(0, 4))
-        ttk.Label(rotation_row, text="Model rotation:").pack(side="left")
-        self.model_rotation_display_var = tk.StringVar(value="(empty - single fixed model)")
-        ttk.Label(rotation_row, textvariable=self.model_rotation_display_var, foreground="#666").pack(
-            side="left", padx=(4, 10)
-        )
-        self.model_rotation_entry_var = tk.StringVar(value="")
-        rotation_entry = ttk.Entry(rotation_row, textvariable=self.model_rotation_entry_var, width=24)
-        rotation_entry.pack(side="left", padx=(0, 4))
-        rotation_entry.bind("<Return>", lambda event: self.set_model_rotation())
-        ttk.Button(rotation_row, text="Set", command=self.set_model_rotation).pack(side="left")
-
-        # v0.16.17 - the first real GUI surface for allowed_functions,
-        # ever. Baseline (GLOBAL_PERMISSION_FUNCTIONS) is a fixed,
-        # read-only fact - every voice always has it, nothing to manage.
-        # Below it, a classic dual-list transfer editor for everything
-        # else. This is Teddy directly editing the currently-displayed
-        # voice's own allowed_functions through the normal widget-save
-        # path (_save_voice_snapshot, same as editing Behavior/Identity
-        # text) - NOT the same write path fn_grant_function_request uses
-        # (that one reaches cross-voice, into a DIFFERENT voice's
-        # state.json, from inside a live function call). No new hazard,
-        # no new protection needed - _fresh_allowed_functions's existing
-        # disk-re-read-before-save guard covers this the same as always.
-        perms = ttk.LabelFrame(context, text="Functions")
-        perms.pack(fill="x", pady=(0, 4))
-        self.allowed_functions_baseline_label = ttk.Label(perms, text="", foreground="#666", wraplength=760)
-        self.allowed_functions_baseline_label.pack(fill="x", padx=4, pady=(2, 4))
-
-        dual = ttk.Frame(perms)
-        dual.pack(fill="x", padx=4, pady=(0, 4))
-        granted_col = ttk.Frame(dual)
-        granted_col.pack(side="left", fill="both", expand=True)
-        ttk.Label(granted_col, text="Granted (extra):").pack(anchor="w")
-        self.granted_listbox = tk.Listbox(granted_col, height=5, selectmode="extended", exportselection=False)
-        self.granted_listbox.pack(fill="both", expand=True)
-
-        btn_col = ttk.Frame(dual)
-        btn_col.pack(side="left", padx=6)
-        ttk.Button(btn_col, text="← Revoke", command=self._revoke_selected_functions).pack(pady=(20, 4))
-        ttk.Button(btn_col, text="Grant →", command=self._grant_selected_functions).pack()
-
-        available_col = ttk.Frame(dual)
-        available_col.pack(side="left", fill="both", expand=True)
-        ttk.Label(available_col, text="Available to grant:").pack(anchor="w")
-        self.available_listbox = tk.Listbox(available_col, height=5, selectmode="extended", exportselection=False)
-        self.available_listbox.pack(fill="both", expand=True)
-
-        # Inbox: messages sent to her via tell_voice, read-only - not
-        # shown anywhere in the GUI before this.
-        inbox_frame = ttk.LabelFrame(context, text="Inbox (messages received via tell_voice)")
-        inbox_frame.pack(fill="x", pady=(0, 4))
-        self.inbox_box = scrolledtext.ScrolledText(inbox_frame, wrap="word", height=3, state="disabled")
-        self.inbox_box.pack(fill="x", padx=4, pady=4)
-
-        # Group messages received: a filtered, most-recent-first pull of
-        # kind == "group_message" entries from her own history - what
-        # she's actually heard, distinct from the raw History tab (which
-        # shows everything, including her own generations) and from the
-        # Groups tab (roster, not content).
-        group_msgs_frame = ttk.LabelFrame(context, text="Group messages received")
-        group_msgs_frame.pack(fill="x", pady=(0, 4))
-        self.group_messages_box = scrolledtext.ScrolledText(group_msgs_frame, wrap="word", height=4, state="disabled")
-        self.group_messages_box.pack(fill="x", padx=4, pady=4)
-
-        # Desires: a queue, set only by Fenra herself (via add_desire),
-        # visible here but not editable from the GUI.
-        desire_frame = ttk.LabelFrame(context, text="Desires")
-        desire_frame.pack(fill="x", pady=(0, 4))
-        self.desires_box = scrolledtext.ScrolledText(desire_frame, wrap="word", height=3, state="disabled")
-        self.desires_box.pack(fill="x", padx=4, pady=4)
-
-        family_row = ttk.Frame(context)
-        family_row.pack(fill="x", pady=(0, 4))
-        ttk.Label(family_row, text="Family group:").pack(side="left")
-        self.family_group_display_var = tk.StringVar(value="(none)")
-        ttk.Label(family_row, textvariable=self.family_group_display_var, foreground="#666").pack(
-            side="left", padx=(4, 0)
-        )
-
-        # Groups in/out: still Set-able here (per-voice membership admin
-        # a voice can act on for itself) - distinct from the Groups tab,
-        # which shows a GROUP's roster read-only, not a voice's own
-        # membership list.
-        groups_row = ttk.Frame(context)
-        groups_row.pack(fill="x", pady=(0, 4))
-        ttk.Label(groups_row, text="Groups in:").pack(side="left")
-        self.groups_in_display_var = tk.StringVar(value="(none)")
-        ttk.Label(groups_row, textvariable=self.groups_in_display_var, foreground="#666").pack(
-            side="left", padx=(4, 10)
-        )
-        self.groups_in_entry_var = tk.StringVar(value="")
-        groups_in_entry = ttk.Entry(groups_row, textvariable=self.groups_in_entry_var, width=16)
-        groups_in_entry.pack(side="left", padx=(0, 2))
-        groups_in_entry.bind("<Return>", lambda event: self.set_groups_in())
-        ttk.Button(groups_row, text="Set", command=self.set_groups_in).pack(side="left", padx=(0, 16))
-
-        ttk.Label(groups_row, text="Groups out:").pack(side="left")
-        self.groups_out_display_var = tk.StringVar(value="(none)")
-        ttk.Label(groups_row, textvariable=self.groups_out_display_var, foreground="#666").pack(
-            side="left", padx=(4, 10)
-        )
-        self.groups_out_entry_var = tk.StringVar(value="")
-        groups_out_entry = ttk.Entry(groups_row, textvariable=self.groups_out_entry_var, width=16)
-        groups_out_entry.pack(side="left", padx=(0, 2))
-        groups_out_entry.bind("<Return>", lambda event: self.set_groups_out())
-        ttk.Button(groups_row, text="Set", command=self.set_groups_out).pack(side="left")
+    # ----------------------------------------------------------- Voices tab --
 
     def _build_voices_tab(self):
-        """v0.16.17 - replaces the old single voice_combo with a real
-        list of every voice in the session + a detail panel, same
-        Panedwindow+Listbox+Scrollbar template _build_history_tab
-        already established."""
         frame = self.voices_tab
 
         top_bar = ttk.Frame(frame)
@@ -2044,37 +415,133 @@ class FenraApp:
         scrollbar.config(command=self.voices_listbox.yview)
         self.voices_listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        self.voices_listbox.bind("<<ListboxSelect>>", self._on_voice_list_select)
+        self.voices_listbox.bind("<<ListboxSelect>>", self._on_voice_select)
 
-        self._build_voice_detail_panel(right)
+        params_row = ttk.Frame(right)
+        params_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(params_row, text="Model:").pack(side="left")
+        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
+        self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=24, state="normal")
+        self.model_combo.pack(side="left", padx=(2, 4))
+        ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left")
+
+        ttk.Label(right, text="Behavior (read first, every cycle):").pack(anchor="w", padx=2)
+        self.behavior_box = scrolledtext.ScrolledText(right, wrap="word", height=6)
+        self.behavior_box.pack(fill="x", padx=2, pady=(0, 4))
+
+        ttk.Label(right, text="Identity (read last, right before generating):").pack(anchor="w", padx=2)
+        self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=6)
+        self.identity_box.pack(fill="x", padx=2, pady=(0, 4))
+
+        ttk.Label(right, text="Context (grows automatically - fully editable):").pack(anchor="w", padx=2)
+        self.context_box = scrolledtext.ScrolledText(right, wrap="word")
+        self.context_box.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+
+    def _populate_voices_list(self):
+        self._current_voice_names = list_voices(self.world_name)
+        self.voices_listbox.delete(0, "end")
+        for name in self._current_voice_names:
+            self.voices_listbox.insert("end", name)
+
+    def _on_voice_select(self, event):
+        selection = self.voices_listbox.curselection()
+        if not selection:
+            return
+        if self.displayed_voice:
+            self._save_voice_snapshot(self.displayed_voice)
+        name = self._current_voice_names[selection[0]]
+        self._load_voice(name)
+
+    def _load_voice(self, name):
+        state = load_voice_state(self.world_name, name)
+        self.displayed_voice = name
+        self.model_var.set(state.get("model", DEFAULT_MODEL))
+        self.behavior_box.delete("1.0", "end")
+        self.behavior_box.insert("end", state.get("behavior", ""))
+        self.identity_box.delete("1.0", "end")
+        self.identity_box.insert("end", state.get("identity", ""))
+        self.context_box.delete("1.0", "end")
+        self.context_box.insert("end", state.get("context", ""))
+
+    def _save_voice_snapshot(self, name):
+        state = {
+            "model": self.model_var.get(),
+            "behavior": self.behavior_box.get("1.0", "end-1c"),
+            "identity": self.identity_box.get("1.0", "end-1c"),
+            "context": self.context_box.get("1.0", "end-1c"),
+        }
+        save_voice_state(self.world_name, name, state)
+
+    def save_voice(self):
+        if not self.displayed_voice:
+            return
+        self._save_voice_snapshot(self.displayed_voice)
+        self.status_var.set(f"Saved '{self.displayed_voice}'")
+
+    def new_voice(self):
+        name = simpledialog.askstring("New Voice", "Voice name:", parent=self.root)
+        if not name:
+            return
+        name = sanitize_name(name)
+        if not name:
+            return
+        if name in list_voices(self.world_name):
+            messagebox.showerror("Fenra", f"a voice named '{name}' already exists.")
+            return
+        save_voice_state(self.world_name, name, default_voice_state())
+        self.world_voices.append(name)
+        self._save_world_controls()
+        self._populate_voices_list()
+        self._refresh_group_member_candidates()
+
+    def delete_voice(self):
+        if not self.displayed_voice:
+            return
+        name = self.displayed_voice
+        if not messagebox.askyesno("Fenra", f"Delete voice '{name}'? This can't be undone."):
+            return
+        delete_voice(self.world_name, name)
+        if name in self.world_voices:
+            self.world_voices.remove(name)
+        # Also drop it from every group's membership - a deleted voice
+        # can't stay listed as a member of anything.
+        for gname in list_groups(self.world_name):
+            gstate = load_group_state(self.world_name, gname)
+            if gstate and name in gstate.get("members", []):
+                gstate["members"].remove(name)
+                save_group_state(self.world_name, gname, gstate)
+        self._save_world_controls()
+        self.displayed_voice = None
+        self._populate_voices_list()
+        self._refresh_group_member_candidates()
+        if self.displayed_group:
+            self._load_group(self.displayed_group)
+
+    def refresh_models(self):
+        models = list_ollama_models(self.host_var.get())
+        self.model_combo["values"] = models
+        if models:
+            self.status_var.set(f"{len(models)} model(s) available")
+        else:
+            self.status_var.set("Could not reach Ollama host")
+
+    # ----------------------------------------------------------- Groups tab --
 
     def _build_groups_tab(self):
-        """v0.16.17 - the roster view that never existed before: every
-        group any voice in the CURRENT session belongs to or owns, with
-        who's actually in it and their direction. View-only, deliberately
-        - no admin editing from the GUI at all (Teddy's explicit call);
-        membership changes only ever happen through the voice-driven
-        consent-flow functions (join_group/group_invite/group_kick/...),
-        never a GUI override. Same list+detail template as Voices/
-        History.
-
-        v0.16.19 - the right-hand detail panel was one flat ScrolledText
-        blob; Teddy's ask was for each field to be its own real UI
-        element, and for the member list to be genuinely interactive -
-        click one or more members to see what that voice (or voices)
-        has actually seen in this specific group. Mirrors
-        _build_voice_detail_panel's own vocabulary (LabelFrame sections,
-        label+value rows, an extended-selection Listbox like the
-        granted-functions dual-list) rather than inventing a new
-        style."""
         frame = self.groups_tab
+
+        top_bar = ttk.Frame(frame)
+        top_bar.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Button(top_bar, text="New group...", command=self.new_group).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Delete group", command=self.delete_group).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Rename group", command=self.rename_group).pack(side="left", padx=2)
 
         paned = ttk.Panedwindow(frame, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=6, pady=6)
         left = ttk.Frame(paned, width=180)
         right = ttk.Frame(paned)
         paned.add(left, weight=1)
-        paned.add(right, weight=4)
+        paned.add(right, weight=3)
 
         list_frame = ttk.Frame(left)
         list_frame.pack(fill="both", expand=True)
@@ -2085,74 +552,32 @@ class FenraApp:
         scrollbar.pack(side="right", fill="y")
         self.groups_listbox.bind("<<ListboxSelect>>", self._on_group_select)
 
-        self._build_group_detail_panel(right)
-
-    def _build_group_detail_panel(self, parent):
-        meta_frame = ttk.LabelFrame(parent, text="Group")
-        meta_frame.pack(fill="x", padx=4, pady=(0, 4))
-
+        name_row = ttk.Frame(right)
+        name_row.pack(fill="x", padx=2, pady=(0, 6))
+        ttk.Label(name_row, text="Name:", width=12).pack(side="left")
         self.group_name_var = tk.StringVar(value="")
-        self.group_owner_var = tk.StringVar(value="")
-        self.group_kind_var = tk.StringVar(value="")
-        self.group_join_policy_var = tk.StringVar(value="")
-        self.group_visibility_var = tk.StringVar(value="")
-        self.group_banned_var = tk.StringVar(value="")
+        ttk.Label(name_row, textvariable=self.group_name_var, font=("Segoe UI", 9, "bold")).pack(side="left")
 
-        for row, (label, var) in enumerate([
-            ("Name:", self.group_name_var),
-            ("Owner:", self.group_owner_var),
-            ("Kind:", self.group_kind_var),
-            ("Join policy:", self.group_join_policy_var),
-            ("Visibility:", self.group_visibility_var),
-            ("Banned:", self.group_banned_var),
-        ]):
-            row_frame = ttk.Frame(meta_frame)
-            row_frame.pack(fill="x", padx=4, pady=1)
-            ttk.Label(row_frame, text=label, width=12).pack(side="left")
-            ttk.Label(row_frame, textvariable=var).pack(side="left")
+        members_frame = ttk.LabelFrame(right, text="Members")
+        members_frame.pack(fill="both", expand=True, padx=2, pady=(0, 4))
+        self.group_members_listbox = tk.Listbox(members_frame, selectmode="extended", exportselection=False)
+        self.group_members_listbox.pack(fill="both", expand=True, padx=4, pady=(4, 2))
+        ttk.Button(members_frame, text="Remove selected", command=self.remove_group_members).pack(
+            anchor="e", padx=4, pady=(0, 4)
+        )
 
-        split = ttk.Frame(parent)
-        split.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-
-        members_col = ttk.LabelFrame(split, text="Members")
-        members_col.pack(side="left", fill="both", expand=True, padx=(0, 4))
-        self.group_members_listbox = tk.Listbox(members_col, selectmode="extended", exportselection=False)
-        self.group_members_listbox.pack(fill="both", expand=True, padx=2, pady=2)
-        self.group_members_listbox.bind("<<ListboxSelect>>", self._on_group_member_select)
-
-        seen_col = ttk.LabelFrame(split, text="Seen in this group")
-        seen_col.pack(side="left", fill="both", expand=True)
-        self.group_seen_text = scrolledtext.ScrolledText(seen_col, wrap="word", state="disabled")
-        self.group_seen_text.pack(fill="both", expand=True, padx=2, pady=2)
-
-    def _session_group_names(self):
-        """Every group belonging to the CURRENT session. v0.16.18 - groups
-        are now stored under sessions/<session>/groups/, so
-        list_owned_groups(self.session_name) is already exactly this
-        session's own groups - no more filtering against
-        self.session_voices needed (a group literally cannot belong to
-        another session anymore).
-
-        Names still run through sanitize_group_name() before being added
-        to the set - groups_in/groups_out/family_group store a voice's
-        own RAW family-group string ("seed's Children"), while
-        list_owned_groups() returns the sanitized directory name
-        ("seeds_children") that's actually on disk - both resolve to the
-        same group via load_group_meta's own internal sanitizing, but
-        without normalizing here first the same group would show up
-        twice under two different-looking names. Pre-existing storage
-        inconsistency from the connectivity redesign, not something this
-        pass fixes at the source - just guarded against here."""
-        names = set()
-        for voice_name in self.session_voices:
-            state = load_voice_state(self.session_name, voice_name)
-            names.update(sanitize_group_name(n) for n in state.get("groups_in", []))
-            names.update(sanitize_group_name(n) for n in state.get("groups_out", []))
-        names.update(sanitize_group_name(g) for g in list_owned_groups(self.session_name))
-        return sorted(names)
+        add_row = ttk.Frame(right)
+        add_row.pack(fill="x", padx=2, pady=(0, 4))
+        ttk.Label(add_row, text="Add voice:").pack(side="left")
+        self.group_add_voice_var = tk.StringVar(value="")
+        self.group_add_voice_combo = ttk.Combobox(
+            add_row, textvariable=self.group_add_voice_var, width=20, state="readonly"
+        )
+        self.group_add_voice_combo.pack(side="left", padx=(4, 4))
+        ttk.Button(add_row, text="Add", command=self.add_group_member).pack(side="left")
 
     def _populate_groups_list(self):
-        self._current_group_names = self._session_group_names()
+        self._current_group_names = list_groups(self.world_name)
         self.groups_listbox.delete(0, "end")
         for name in self._current_group_names:
             self.groups_listbox.insert("end", name)
@@ -2161,1599 +586,187 @@ class FenraApp:
         selection = self.groups_listbox.curselection()
         if not selection:
             return
-        name = self._current_group_names[selection[0]]
-        self._current_group_name = name
-        meta = load_group_meta(self.session_name, name) or {}
+        self._load_group(self._current_group_names[selection[0]])
 
-        self.group_name_var.set(name)
-        self.group_owner_var.set(meta.get("owner") or "(none)")
-        self.group_kind_var.set(meta.get("kind", "?"))
-        self.group_join_policy_var.set(meta.get("join_policy", "?"))
-        self.group_visibility_var.set(meta.get("visibility", "?"))
-        self.group_banned_var.set(", ".join(meta.get("banned", [])) or "(none)")
-
-        self._current_group_member_names = sorted(meta.get("members", {}).items())
+    def _load_group(self, name):
+        state = load_group_state(self.world_name, name) or default_group_state(name)
+        self.displayed_group = name
+        self.group_name_var.set(state.get("name", name))
         self.group_members_listbox.delete(0, "end")
-        for voice, info in self._current_group_member_names:
-            self.group_members_listbox.insert(
-                "end", f"{voice}: {info.get('direction', '?')} (joined {info.get('joined', '?')})"
-            )
-        self._set_group_seen_text("(select one or more members above to see what they've seen here)")
+        for voice in state.get("members", []):
+            self.group_members_listbox.insert("end", voice)
+        self._refresh_group_member_candidates()
 
-    def _on_group_member_select(self, event):
-        """v0.16.19 - what a member has actually SEEN in the currently
-        selected group: exactly its own kind == "group_message" history
-        entries tagged with this group (push_entry_to_voice's delivery
-        shape, fenra.py:~1590) - not its own broadcasts into the group,
-        which never come back to the sender as a group_message (see the
-        `if member == active_voice: continue` skip in _tick's broadcast
-        loop) and already show up in that voice's own History tab
-        regardless. Multiple selected members merge into one
-        chronological, per-line-attributed list - single vs. multi
-        selection is the same code path, no special case."""
-        selection = self.group_members_listbox.curselection()
-        if not selection or not self._current_group_name:
-            self._set_group_seen_text("(select one or more members above to see what they've seen here)")
+    def _refresh_group_member_candidates(self):
+        """The 'Add voice' combobox - every world voice not already a
+        member of the currently displayed group."""
+        if not self.displayed_group:
+            self.group_add_voice_combo["values"] = []
             return
-        target_group = self._current_group_name
-        seen = []
-        for index in selection:
-            voice_name, _info = self._current_group_member_names[index]
-            for entry in load_voice_history(self.session_name, voice_name):
-                if entry.get("kind") != "group_message":
-                    continue
-                if sanitize_group_name(entry.get("group", "")) != target_group:
-                    continue
-                seen.append((
-                    entry.get("timestamp", ""),
-                    voice_name,
-                    entry.get("from_voice", "?"),
-                    entry.get("response", entry.get("display", "")),
-                ))
-        if not seen:
-            self._set_group_seen_text("(nothing seen here yet by the selected member(s))")
-            return
-        seen.sort(key=lambda row: row[0])
-        lines = [f"({ts}) seen by {voice_name}, from {from_voice}: {text}" for ts, voice_name, from_voice, text in seen]
-        self._set_group_seen_text("\n".join(lines))
-
-    def _set_group_seen_text(self, text):
-        self.group_seen_text.config(state="normal")
-        self.group_seen_text.delete("1.0", "end")
-        self.group_seen_text.insert("end", text)
-        self.group_seen_text.config(state="disabled")
-
-    def _build_chat_tab(self):
-        frame = self.chat_tab
-
-        self.chat_box = scrolledtext.ScrolledText(frame, wrap="word", state="disabled")
-        self.chat_box.pack(fill="both", expand=True, padx=6, pady=6)
-
-        entry_row = ttk.Frame(frame)
-        entry_row.pack(fill="x", padx=6, pady=(0, 6))
-        self.chat_entry_var = tk.StringVar(value="")
-        chat_entry = ttk.Entry(entry_row, textvariable=self.chat_entry_var)
-        chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        chat_entry.bind("<Return>", lambda event: self.send_chat_from_ui())
-        ttk.Button(entry_row, text="Send", command=self.send_chat_from_ui).pack(side="left")
-
-    def _build_hearth_tab(self):
-        """v0.16.15 - Teddy's avatar in The Hearth (Qualia/decisions.md
-        item 4b), data-flow only - same entry+Send shape as the Chat tab.
-        A message sent here goes straight into every current Hearth
-        resident's own history via push_entry_to_voice, plus the
-        canonical log, plus a wake, exactly like a real resident
-        speaking - "teddy" is just another from_voice string as far as
-        that mechanism is concerned."""
-        frame = self.hearth_tab
-
-        ttk.Label(
-            frame,
-            text="The Hearth: every voice with zero groups lands here automatically. Nothing sent "
-                 "here is filtered through anything a voice wrote - this is you, directly.",
-            wraplength=820,
-        ).pack(fill="x", padx=6, pady=(6, 0))
-
-        self.hearth_box = scrolledtext.ScrolledText(frame, wrap="word", state="disabled")
-        self.hearth_box.pack(fill="both", expand=True, padx=6, pady=6)
-
-        entry_row = ttk.Frame(frame)
-        entry_row.pack(fill="x", padx=6, pady=(0, 6))
-        self.hearth_entry_var = tk.StringVar(value="")
-        hearth_entry = ttk.Entry(entry_row, textvariable=self.hearth_entry_var)
-        hearth_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        hearth_entry.bind("<Return>", lambda event: self.send_teddy_hearth_message())
-        ttk.Button(entry_row, text="Send", command=self.send_teddy_hearth_message).pack(side="left")
-
-    def send_teddy_hearth_message(self):
-        text = self.hearth_entry_var.get().strip()
-        if not text or not self.session_name:
-            return
-        self.hearth_entry_var.set("")
-        timestamp = datetime.now().isoformat(timespec="seconds")
-        append_group_log(self.session_name, THE_HEARTH_NAME, "teddy", text)
-        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
-        members = meta.get("members", {}) if meta else {}
-        for member in members:
-            pushed = push_entry_to_voice(self.session_name, member, "teddy", THE_HEARTH_NAME, text, timestamp)
-            self._wake_hearth_resident(member)
-            if member == self.displayed_voice:
-                self.history.append(pushed)
-                self._add_history_row(timestamp)
-        self.hearth_box.config(state="normal")
-        self.hearth_box.insert("end", f"[{timestamp}] teddy: {text}\n\n")
-        self.hearth_box.see("end")
-        self.hearth_box.config(state="disabled")
-
-    def _build_history_tab(self):
-        frame = self.history_tab
-
-        paned = ttk.Panedwindow(frame, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=6, pady=6)
-
-        left = ttk.Frame(paned, width=180)
-        right = ttk.Frame(paned)
-        paned.add(left, weight=1)
-        paned.add(right, weight=4)
-
-        list_frame = ttk.Frame(left)
-        list_frame.pack(fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
-        self.history_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
-        scrollbar.config(command=self.history_listbox.yview)
-        self.history_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        self.history_listbox.bind("<<ListboxSelect>>", self._on_history_select)
-
-        self.json_view = scrolledtext.ScrolledText(right, wrap="none", state="disabled")
-        self.json_view.pack(fill="both", expand=True)
-
-    def _build_topology_tab(self):
-        """Groups wiring view (v0.16.0). Deliberately not a port of the
-        old conductor.py Topology tab - there's no single active agent or
-        fixed path to trace anymore, since every voice runs on its own
-        independent interval with no shared turn order (see the Groups
-        changelog entry). This is closer to a social graph: groups on the
-        left, every voice with any group membership on the right, a line
-        for each connection (color/arrowhead show read vs write vs both),
-        labeled with when that voice was last actually heard from in that
-        group - the "is this alive" signal a static wiring diagram alone
-        wouldn't carry. Simple by design (straight lines, two columns, no
-        force-directed layout) - Teddy's call."""
-        frame = self.topology_tab
-
-        top_row = ttk.Frame(frame)
-        top_row.pack(fill="x", padx=6, pady=(6, 0))
-        ttk.Label(
-            top_row,
-            text="Groups (left) and voices (right), this session only. Blue = voice reads group, "
-                 "orange = voice writes group, gray = both. Label on each line is when that voice was "
-                 "last actually heard there. Auto-refreshes every 10s.",
-            wraplength=820,
-            justify="left",
-        ).pack(side="left", fill="x", expand=True)
-        ttk.Button(top_row, text="↻ Refresh now", command=self._redraw_topology).pack(side="right")
-
-        self.topology_canvas = tk.Canvas(frame, background="white")
-        self.topology_canvas.pack(fill="both", expand=True, padx=6, pady=6)
-        self.topology_canvas.bind("<Configure>", lambda event: self._redraw_topology())
-        self._schedule_topology_refresh()
-
-    def _schedule_topology_refresh(self):
-        self._redraw_topology()
-        self.root.after(TOPOLOGY_REFRESH_MS, self._schedule_topology_refresh)
-
-    def _scan_topology_data(self):
-        """Every voice's current groups_in/groups_out, this session only.
-        v0.16.18 - narrowed from a whole-disk, every-session scan
-        (groups used to be a single global store, so a group node could
-        legitimately connect voices from different sessions/processes -
-        now that groups are session-scoped storage, same as voices,
-        there's nothing left to aggregate across sessions for). Read-only
-        and tolerant of both a migrated session (voices/<name>/state.json)
-        and a legacy, never-reopened one (a single implicit voice, its
-        data still directly in the session directory) - never migrates
-        anything itself, unlike _load_session. Paired with each relevant
-        group's recent activity (read_group_log_tail) to compute a
-        last-active timestamp per voice. Best-effort throughout - a
-        session or group file mid-write by another process just gets
-        skipped for this pass, picked up again next refresh rather than
-        raising."""
-        if not self.session_name:
-            # v0.16.18 - the Topology tab schedules its first refresh
-            # synchronously during _build_ui(), before _startup_session()
-            # has set self.session_name - harmless no-op scan wasn't
-            # possible to hit before this function depended on a session
-            # name (the old whole-disk scan needed none). Real bug, caught
-            # by the first live smoke test of this change.
-            return {}, [], {}
-        voices = {}
-        voice_names = list_voices(self.session_name)
-        if voice_names:
-            for voice_name in voice_names:
-                state = load_voice_state(self.session_name, voice_name)
-                g_in = list(state.get("groups_in", []))
-                g_out = list(state.get("groups_out", []))
-                if g_in or g_out:
-                    voices[voice_name] = {"groups_in": g_in, "groups_out": g_out}
+        state = load_group_state(self.world_name, self.displayed_group) or {}
+        members = set(state.get("members", []))
+        candidates = [v for v in list_voices(self.world_name) if v not in members]
+        self.group_add_voice_combo["values"] = candidates
+        if candidates:
+            self.group_add_voice_var.set(candidates[0])
         else:
-            # Legacy, never-reopened session - single implicit voice.
-            try:
-                state = load_session_state(self.session_name)
-            except Exception:
-                state = {}
-            g_in = list(state.get("groups_in", []))
-            g_out = list(state.get("groups_out", []))
-            if g_in or g_out:
-                voices[DEFAULT_VOICE_NAME] = {"groups_in": g_in, "groups_out": g_out}
+            self.group_add_voice_var.set("")
 
-        # v0.16.15 - reads the new canonical log (groups/<name>/log.jsonl),
-        # not the legacy flat groups/<name>.jsonl - push delivery writes
-        # activity there now via append_group_log, see _tick.
-        group_names = set(list_owned_groups(self.session_name))
-        for v in voices.values():
-            group_names.update(v["groups_in"])
-            group_names.update(v["groups_out"])
-
-        last_active = {}
-        for g in group_names:
-            try:
-                tail = read_group_log_tail(self.session_name, g, 200)
-            except ValueError:
-                continue
-            for e in tail:
-                key = (e.get("voice", ""), g)
-                ts = e.get("timestamp", "")
-                if ts and (key not in last_active or ts > last_active[key]):
-                    last_active[key] = ts
-
-        return voices, sorted(group_names), last_active
-
-    def _redraw_topology(self):
-        canvas = self.topology_canvas
-        canvas.delete("all")
-        voices, groups, last_active = self._scan_topology_data()
-        voice_names = sorted(voices.keys())
-        if not voice_names and not groups:
-            canvas.create_text(20, 20, anchor="nw", text="No voices in any groups yet.", fill="#888")
-            return
-
-        width = canvas.winfo_width() or 800
-        height = canvas.winfo_height() or 400
-        margin = 30
-        node_w, node_h = 140, 30
-        left_x = margin + node_w / 2
-        right_x = max(left_x + 220, width - margin - node_w / 2)
-
-        def positions(names):
-            if not names:
-                return {}
-            step = max(1, height - 2 * margin) / len(names)
-            return {n: margin + step * (i + 0.5) for i, n in enumerate(names)}
-
-        group_y = positions(groups)
-        voice_y = positions(voice_names)
-
-        def draw_node(x, y, label, fill):
-            canvas.create_rectangle(
-                x - node_w / 2, y - node_h / 2, x + node_w / 2, y + node_h / 2,
-                fill=fill, outline="#666",
-            )
-            canvas.create_text(x, y, text=label, font=("Segoe UI", 9))
-
-        for v in voice_names:
-            vy = voice_y[v]
-            connected = set(voices[v]["groups_in"]) | set(voices[v]["groups_out"])
-            for g in connected:
-                if g not in group_y:
-                    continue
-                gy = group_y[g]
-                reads = g in voices[v]["groups_in"]
-                writes = g in voices[v]["groups_out"]
-                if reads and writes:
-                    color, arrow = "#999", "both"
-                elif reads:
-                    color, arrow = "#4a7fb5", "last"   # arrowhead at the voice - info flows toward her
-                else:
-                    color, arrow = "#c07a2e", "first"  # arrowhead at the group - she's broadcasting into it
-                canvas.create_line(
-                    left_x + node_w / 2, gy, right_x - node_w / 2, vy,
-                    fill=color, width=2, arrow=arrow,
-                )
-                ts = last_active.get((v, g), "")
-                label = ts.split("T")[-1] if ts else "never heard from"
-                mid_x = (left_x + right_x) / 2
-                mid_y = (gy + vy) / 2
-                canvas.create_text(mid_x, mid_y, text=label, fill="#777", font=("Segoe UI", 7))
-
-        for g, y in group_y.items():
-            draw_node(left_x, y, g, "#f0e6f5")
-        for v, y in voice_y.items():
-            draw_node(right_x, y, v, "#e6f0f5")
-
-    # ------------------------------------------------------------ session --
-
-    def new_session(self):
-        name = simpledialog.askstring("New Session", "Session name:", parent=self.root)
+    def new_group(self):
+        name = simpledialog.askstring("New Group", "Group name:", parent=self.root)
         if not name:
             return
-        name = sanitize_session_name(name)
+        name = sanitize_name(name)
         if not name:
             return
-        if name in list_sessions():
-            if not messagebox.askyesno("Fenra", f'Session "{name}" already exists. Load it instead?'):
-                return
-            self._load_session(name)
+        if name in list_groups(self.world_name):
+            messagebox.showerror("Fenra", f"a group named '{name}' already exists.")
             return
+        save_group_state(self.world_name, name, default_group_state(name))
+        self._populate_groups_list()
 
+    def rename_group(self):
+        if not self.displayed_group:
+            return
+        old_name = self.displayed_group
+        new_name = simpledialog.askstring("Rename Group", "New name:", initialvalue=old_name, parent=self.root)
+        if not new_name:
+            return
+        new_name = sanitize_name(new_name)
+        if not new_name or new_name == old_name:
+            return
+        if new_name in list_groups(self.world_name):
+            messagebox.showerror("Fenra", f"a group named '{new_name}' already exists.")
+            return
+        state = load_group_state(self.world_name, old_name) or default_group_state(old_name)
+        state["name"] = new_name
+        save_group_state(self.world_name, new_name, state)
+        delete_group(self.world_name, old_name)
+        self.displayed_group = new_name
+        self._populate_groups_list()
+
+    def delete_group(self):
+        if not self.displayed_group:
+            return
+        name = self.displayed_group
+        if not messagebox.askyesno("Fenra", f"Delete group '{name}'? This can't be undone."):
+            return
+        delete_group(self.world_name, name)
+        self.displayed_group = None
+        self._populate_groups_list()
+        self.group_name_var.set("")
+        self.group_members_listbox.delete(0, "end")
+
+    def add_group_member(self):
+        if not self.displayed_group:
+            return
+        voice = self.group_add_voice_var.get()
+        if not voice:
+            return
+        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        if voice not in state["members"]:
+            state["members"].append(voice)
+            save_group_state(self.world_name, self.displayed_group, state)
+        self._load_group(self.displayed_group)
+
+    def remove_group_members(self):
+        if not self.displayed_group:
+            return
+        selection = self.group_members_listbox.curselection()
+        if not selection:
+            return
+        to_remove = {self.group_members_listbox.get(i) for i in selection}
+        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        state["members"] = [v for v in state.get("members", []) if v not in to_remove]
+        save_group_state(self.world_name, self.displayed_group, state)
+        self._load_group(self.displayed_group)
+
+    # --------------------------------------------------------------- worlds --
+
+    def _load_world(self, name):
         if self.running:
             self.toggle_loop()
+        if self.displayed_voice:
+            self._save_voice_snapshot(self.displayed_voice)
 
-        # A new session starts with exactly one voice - keep the current
-        # top/bottom/model framing as its starting point, but the
-        # conversation itself (last thought, transcript, log) starts
-        # fresh, same as before voices existed.
-        ensure_session_dir(name)
-        voice_state = default_voice_state()
-        voice_state["top"] = self.top_box.get("1.0", "end-1c")
-        voice_state["bottom"] = self.bottom_box.get("1.0", "end-1c")
-        voice_state["model"] = self.model_var.get()
-        voice_state["max_tokens"] = self.max_tokens_var.get()
-        save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
-        open(voice_history_path(name, DEFAULT_VOICE_NAME), "a", encoding="utf-8").close()
-        ensure_own_family_group(name, DEFAULT_VOICE_NAME)
+        ensure_world_dir(name)
+        state = load_world_state(name)
+        self.world_name = name
+        self.world_var.set(name)
+        self.host_var.set(state.get("host", DEFAULT_HOST))
+        self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
+        self.world_voices = state.get("voices", [])
+        self.voice_rotation_index = state.get("voice_rotation_index", 0)
 
-        session_state = default_session_state()
-        session_state["host"] = self.host_var.get()
-        session_state["interval"] = self.interval_var.get()
-        session_state["voices"] = [DEFAULT_VOICE_NAME]
-        save_session_state(name, session_state)
+        self.displayed_voice = None
+        self.displayed_group = None
+        self._populate_voices_list()
+        self._populate_groups_list()
+        self.group_name_var.set("")
+        self.group_members_listbox.delete(0, "end")
+        self.behavior_box.delete("1.0", "end")
+        self.identity_box.delete("1.0", "end")
+        self.context_box.delete("1.0", "end")
+        self.status_var.set("Idle")
+        self._rebuild_worlds_menu()
 
-        self._load_session(name)
+    def new_world(self):
+        name = simpledialog.askstring("New World", "World name:", parent=self.root)
+        if not name:
+            return
+        name = sanitize_name(name)
+        if not name:
+            return
+        if name in list_worlds():
+            if messagebox.askyesno("Fenra", f"World '{name}' already exists. Load it instead?"):
+                self._load_world(name)
+            return
+        ensure_world_dir(name)
+        save_world_state(name, default_world_state())
+        self._load_world(name)
 
-    def save_session(self):
-        """Session-level fields only (v0.16.2) - host, interval, Qualia
-        allowance, and the voice roster/rotation position. Per-voice
-        fields (top/bottom/model/desires/...) live in save_voice
-        instead."""
-        if not self.session_name:
+    def rename_world(self):
+        if not self.world_name:
+            return
+        old_name = self.world_name
+        new_name = simpledialog.askstring("Rename World", "New name:", initialvalue=old_name, parent=self.root)
+        if not new_name:
+            return
+        new_name = sanitize_name(new_name)
+        if not new_name or new_name == old_name:
+            return
+        if new_name in list_worlds():
+            messagebox.showerror("Fenra", f"a world named '{new_name}' already exists.")
+            return
+        # Real bug, caught by the live smoke test: _load_world's own
+        # save-before-switch step (correct for an ordinary world switch,
+        # where the world being left genuinely still exists on disk)
+        # writes into self.world_name, which is still the OLD name at
+        # that point since _load_world only updates it partway through.
+        # For a rename specifically, the old directory has just been
+        # physically moved away - writing to it afterward resurrects a
+        # stale, empty duplicate under the old name. Clearing the
+        # displayed selection first means _load_world has nothing to
+        # save before the switch, since there's no "old world" left to
+        # save it into - this world didn't go away, it just changed name.
+        self.displayed_voice = None
+        self.displayed_group = None
+        os.rename(world_dir(old_name), world_dir(new_name))
+        self._load_world(new_name)
+
+    def _save_world_controls(self):
+        if not self.world_name:
             return
         state = {
             "host": self.host_var.get(),
             "interval": self.interval_var.get(),
-            "qualia_allowance": self.qualia_allowance_var.get(),
-            "voices": self.session_voices,
+            "model_default": DEFAULT_MODEL,
+            "voices": self.world_voices,
             "voice_rotation_index": self.voice_rotation_index,
-            # v0.16.9 - real bug, caught live: this dict used to omit
-            # permission_mode entirely, and _tick calls save_session()
-            # every single cycle, so it silently wiped permission_mode
-            # from disk on the very first tick after any permission-mode
-            # session started (in-memory self.permission_mode stayed
-            # correct for the life of the process, since it's only ever
-            # read once at _load_session - but a restart would have
-            # reloaded False from the now-corrupted file and silently
-            # disabled the whole gate for that session, permanently).
-            "permission_mode": self.permission_mode,
-            "hearth_stasis": self.hearth_stasis,
         }
-        save_session_state(self.session_name, state)
-        self.session_status_var.set(f"Session saved {datetime.now().strftime('%H:%M:%S')}")
+        save_world_state(self.world_name, state)
 
-    def _current_voice_state_from_widgets(self):
-        """Everything a voice owns, read live from whichever widgets
-        currently display it - the counterpart to _load_voice below.
-        Used both for the explicit Save voice button and, every tick, to
-        capture an in-progress edit before the round-robin possibly
-        moves on to a different voice - see _tick."""
-        return {
-            "top": self.top_box.get("1.0", "end-1c"),
-            "bottom": self.bottom_box.get("1.0", "end-1c"),
-            "model": self.model_var.get(),
-            "max_tokens": self.max_tokens_var.get(),
-            "last_thought": self.last_thought,
-            "desires": self.desires,
-            "inbox": self.inbox,
-            "context_window": self.context_window_var.get(),
-            "model_rotation": self.model_rotation,
-            "model_rotation_index": self.model_rotation_index,
-            "groups_in": self.groups_in,
-            "groups_out": self.groups_out,
-            "allowed_functions": self.allowed_functions,
-        }
-
-    def _fresh_inbox(self, voice_name):
-        """inbox is a field on a voice's state that can be modified by
-        something other than that voice's own turn or Teddy editing its
-        widgets - another voice's tell_voice call, reaching straight
-        across to voice_name's persisted state, possibly while this
-        voice is just sitting displayed or waiting between its own
-        turns. Every place that's about to save a widget-derived
-        snapshot back to disk re-reads inbox fresh here first, rather
-        than trusting self.inbox (last refreshed whenever this voice was
-        loaded) - otherwise a message could get silently overwritten by
-        a stale save before the receiving voice ever gets a turn to see
-        it. See also _fresh_allowed_functions below - same risk, same
-        fix, for a different cross-voice-write field."""
-        return load_voice_state(self.session_name, voice_name).get("inbox", [])
-
-    def _fresh_allowed_functions(self, voice_name):
-        """allowed_functions (v0.16.9) has the exact same cross-voice-
-        write risk inbox does, above: approve_function_request/
-        grant_function_request write straight into a *different* voice's
-        persisted state, possibly while that voice is sitting
-        displayed-but-idle. Same fix - re-read fresh from disk rather
-        than trust a possibly-stale self.allowed_functions."""
-        return load_voice_state(self.session_name, voice_name).get("allowed_functions", [])
-
-    def _save_voice_snapshot(self, voice_name):
-        """Widget-derived state for voice_name, with inbox and
-        allowed_functions overridden to a fresh disk read - see
-        _fresh_inbox/_fresh_allowed_functions. The one shared path every
-        widget-snapshot save (explicit Save voice, a voice switch, a new
-        voice being created, every tick) should go through instead of
-        calling _current_voice_state_from_widgets() and save_voice_state
-        directly, so none of them risk clobbering a tell_voice message
-        or a function-access grant that arrived after this voice's
-        widgets were last loaded."""
-        snapshot = self._current_voice_state_from_widgets()
-        snapshot["inbox"] = self._fresh_inbox(voice_name)
-        fresh_af = self._fresh_allowed_functions(voice_name)
-        # TEMPORARY DIAGNOSTIC (remove once the v0.16.9 allowed_functions
-        # mystery is root-caused) - log every time a save is about to
-        # shrink/change a voice's allowed_functions, with full context on
-        # who called it and from where.
-        try:
-            import traceback
-            if fresh_af != snapshot.get("allowed_functions"):
-                with open(os.path.join(SESSIONS_DIR, "_af_debug.log"), "a", encoding="utf-8") as _dbg:
-                    _dbg.write(
-                        f"{datetime.now().isoformat()} _save_voice_snapshot({voice_name!r}) "
-                        f"widget-value={snapshot.get('allowed_functions')!r} fresh-value={fresh_af!r} "
-                        f"current_voice_name={getattr(self, 'current_voice_name', None)!r} "
-                        f"displayed_voice={self.displayed_voice!r} thread={threading.current_thread().name}\n"
-                    )
-                    _dbg.write("".join(traceback.format_stack(limit=8)) + "\n")
-        except Exception:
-            pass
-        snapshot["allowed_functions"] = fresh_af
-        return snapshot
-
-    def save_voice(self):
-        """Explicit save for whichever voice is currently displayed -
-        the per-voice counterpart to save_session. Saved automatically
-        anyway on every voice switch and every tick, so this button is
-        really just "make sure right now" - matches how the old
-        session-level Save worked before the split."""
-        if not self.session_name or not self.displayed_voice:
-            return
-        save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
-        self.session_status_var.set(
-            f"Voice '{self.displayed_voice}' saved ({datetime.now().strftime('%H:%M:%S')})"
-        )
-
-    def _on_model_picked(self, event):
-        """Teddy picking a model directly in the combo box, for whichever
-        voice is currently displayed - flags that voice specifically
-        (not a single shared flag) so a manual pick for voice A doesn't
-        get misread as one for voice B just because B's turn happens to
-        come up first. See _advance_model_rotation."""
-        if self.displayed_voice:
-            self._voice_manual_override[self.displayed_voice] = True
-
-    def set_qualia_allowance(self):
-        """Teddy manually setting how many characters Fenra can spend on
-        messages directed at Qualia. Session-level (v0.16.2) - shared
-        across every voice, since chat is "Fenra," not one voice. Saved
-        immediately (not just on the next tick) so it takes effect even
-        while the self-talk loop is stopped."""
-        try:
-            value = int(float(self.qualia_allowance_var.get()))
-        except ValueError:
-            messagebox.showwarning("Fenra", "Qualia allowance must be a number.")
-            return
-        value = max(0, value)
-        self.qualia_allowance_var.set(str(value))
-        self.save_session()
-        self.session_status_var.set(f"Qualia allowance set to {value} ({datetime.now().strftime('%H:%M:%S')})")
-
-    def set_context_window(self):
-        """Teddy manually setting how many of her own past cycles go into
-        her prompt, for whichever voice is currently displayed. Clamped
-        to [MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW] and saved
-        immediately, same reasoning as set_qualia_allowance."""
-        try:
-            value = int(float(self.context_window_var.get()))
-        except ValueError:
-            messagebox.showwarning("Fenra", "Context window must be a number.")
-            return
-        value = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, value))
-        self.context_window_var.set(str(value))
-        self.save_voice()
-        self.session_status_var.set(f"Context window set to {value} ({datetime.now().strftime('%H:%M:%S')})")
-
-    def _apply_model_rotation(self, raw_text):
-        """Shared by the GUI's 'Set' button and the external
-        qualia_rotation_set.txt poll - replace the whole model rotation
-        at once (for whichever voice is currently displayed) from a
-        comma- or pipe-separated list of names, or clear it with the
-        literal word "clear"/"none". Best-effort validation against
-        Ollama's installed-models list, same tolerance as
-        _poll_qualia_model_set (applies anyway if the check itself fails,
-        rather than block on an extra failure mode) - an unrecognized
-        name is just dropped rather than rejecting the whole list, so one
-        typo doesn't lose an otherwise-good rotation. Blank input is a
-        no-op (returns None), not a clear - matches every other _set
-        file's convention of "nothing written, nothing to do"."""
-        stripped = raw_text.strip()
-        if not stripped:
-            return None
-        if stripped.lower() in ("clear", "none", "-"):
-            self.model_rotation = []
-            self.model_rotation_index = 0
-            self.save_voice()
-            self.root.after(0, self._refresh_model_rotation_display)
-            return "cleared - back to a single fixed model"
-
-        names = [n.strip() for n in _MULTI_ARG_SPLIT_RE.split(stripped) if n.strip()]
-        try:
-            host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-            resp = requests.get(f"{host}/api/tags", timeout=5)
-            resp.raise_for_status()
-            installed = [m["name"] for m in resp.json().get("models", [])]
-            if installed:
-                names = [n for n in names if n in installed]
-        except Exception:
-            pass
-
-        self.model_rotation = names
-        self.model_rotation_index = 0
-        self.save_voice()
-        self.root.after(0, self._refresh_model_rotation_display)
-        if not names:
-            return "no recognized/installed model names found - rotation left empty"
-        return f"set to {len(names)} model(s): {', '.join(names)}"
-
-    def set_model_rotation(self):
-        """Teddy's GUI-side equivalent of qualia_rotation_set.txt - see
-        _apply_model_rotation for the shared logic."""
-        result = self._apply_model_rotation(self.model_rotation_entry_var.get())
-        if result is None:
-            messagebox.showinfo(
-                "Fenra",
-                "Type model name(s) - comma or pipe separated for more than one - or \"clear\" to empty the rotation."
-            )
-            return
-        self.model_rotation_entry_var.set("")
-        self.session_status_var.set(f"Model rotation {result} ({datetime.now().strftime('%H:%M:%S')})")
-
-    def _refresh_model_rotation_display(self):
-        if self.model_rotation:
-            self.model_rotation_display_var.set(", ".join(self.model_rotation))
-        else:
-            self.model_rotation_display_var.set("(empty - single fixed model)")
-
-    def _apply_groups(self, raw_text, attr):
-        """Shared by both group Set buttons - replace the whole
-        groups_in or groups_out list (for whichever voice is currently
-        displayed) at once from a comma/pipe-separated list of names, or
-        clear it with "clear"/"none". Blank input is a no-op (returns
-        None), matching every other _set control's convention. Names are
-        sanitized the same way join_group does (fenra_functions.py), so
-        a name typed here and one she joins herself always land on the
-        same underlying group file."""
-        stripped = raw_text.strip()
-        if not stripped:
-            return None
-        if stripped.lower() in ("clear", "none", "-"):
-            setattr(self, attr, [])
-            self.root.after(0, self._refresh_groups_display)
-            self.save_voice()
-            return "cleared"
-        names = []
-        for n in _MULTI_ARG_SPLIT_RE.split(stripped):
-            n = sanitize_group_name(n)
-            if n and n not in names:
-                names.append(n)
-        setattr(self, attr, names)
-        self.root.after(0, self._refresh_groups_display)
-        self.save_voice()
-        self._populate_groups_list()
-        if not names:
-            return "no valid group names found - left empty"
-        return f"set to {len(names)} group(s): {', '.join(names)}"
-
-    def set_groups_in(self):
-        result = self._apply_groups(self.groups_in_entry_var.get(), "groups_in")
-        if result is None:
-            messagebox.showinfo(
-                "Fenra",
-                "Type group name(s) - comma or pipe separated for more than one - or \"clear\" to empty."
-            )
-            return
-        self.groups_in_entry_var.set("")
-        self.session_status_var.set(f"Groups in {result} ({datetime.now().strftime('%H:%M:%S')})")
-
-    def set_groups_out(self):
-        result = self._apply_groups(self.groups_out_entry_var.get(), "groups_out")
-        if result is None:
-            messagebox.showinfo(
-                "Fenra",
-                "Type group name(s) - comma or pipe separated for more than one - or \"clear\" to empty."
-            )
-            return
-        self.groups_out_entry_var.set("")
-        self.session_status_var.set(f"Groups out {result} ({datetime.now().strftime('%H:%M:%S')})")
-
-    def _refresh_groups_display(self):
-        self.groups_in_display_var.set(", ".join(self.groups_in) if self.groups_in else "(none)")
-        self.groups_out_display_var.set(", ".join(self.groups_out) if self.groups_out else "(none)")
-
-    def _migrate_legacy_session(self, name):
-        """One-time upgrade from a pre-v0.16.2 session (a single
-        implicit voice, its data living directly in the session
-        directory - top-level state.json/history.jsonl/functions.jsonl)
-        to the real voices/ layout. Only ever runs on a session actually
-        opened here in the GUI - the passive scanners (Topology tab,
-        Qualia/export_fenra_live.py) never migrate anything, they just
-        read whichever layout is on disk. Safe to call on an
-        already-migrated or brand-new session - a no-op either way, and
-        idempotent even if interrupted (guarded purely by whether
-        voices/ already exists)."""
-        if os.path.isdir(voices_root_dir(name)):
-            return
-
-        old_state_path = os.path.join(session_dir(name), STATE_FILENAME)
-        old_state = {}
-        if os.path.exists(old_state_path):
-            try:
-                with open(old_state_path, "r", encoding="utf-8") as f:
-                    old_state = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                old_state = {}
-
-        voice_state = default_voice_state()
-        for key in voice_state:
-            if key in old_state:
-                voice_state[key] = old_state[key]
-        save_voice_state(name, DEFAULT_VOICE_NAME, voice_state)
-        ensure_own_family_group(name, DEFAULT_VOICE_NAME)
-
-        old_history = os.path.join(session_dir(name), HISTORY_FILENAME)
-        if os.path.exists(old_history):
-            shutil.move(old_history, voice_history_path(name, DEFAULT_VOICE_NAME))
-        old_functions = os.path.join(session_dir(name), FUNCTIONS_FILENAME)
-        if os.path.exists(old_functions):
-            shutil.move(old_functions, voice_functions_path(name, DEFAULT_VOICE_NAME))
-
-        session_state = default_session_state()
-        session_state["host"] = old_state.get("host", DEFAULT_HOST)
-        session_state["interval"] = old_state.get("interval", DEFAULT_INTERVAL_SEC)
-        session_state["qualia_allowance"] = old_state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)
-        session_state["voices"] = [DEFAULT_VOICE_NAME]
-        session_state["voice_rotation_index"] = 0
-        save_session_state(name, session_state)
-
-    def _load_session(self, name):
-        if self.running:
-            self.toggle_loop()
-
-        self._migrate_legacy_session(name)
-        state = load_session_state(name)
-        self.session_name = name
-
-        self.host_var.set(state.get("host", DEFAULT_HOST))
-        self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
-        self.qualia_allowance_var.set(str(state.get("qualia_allowance", DEFAULT_QUALIA_ALLOWANCE)))
-        # Decided once, at session creation, never toggled afterward - no
-        # function or GUI control ever changes this. Read once here per
-        # session load, not per-tick, since it structurally cannot change.
-        self.permission_mode = bool(state.get("permission_mode", False))
-        self.permission_mode_display_var.set("on" if self.permission_mode else "off")
-        self.hearth_stasis = dict(state.get("hearth_stasis", {}))
-        self.session_voices = list(state.get("voices", [])) or list_voices(name) or [DEFAULT_VOICE_NAME]
-        self.voice_rotation_index = int(state.get("voice_rotation_index", 0) or 0)
-        self._voice_manual_override = {}
-
-        self.chat_messages = load_chat_messages(name)
-        self._refresh_chat_display()
-
-        self._populate_voices_list()
-        self._load_voice(self.session_voices[0])
-        self._populate_groups_list()
-
-        self._refresh_sessions_menu()
-        self.session_status_var.set(f"Session loaded ({len(self.session_voices)} voice(s))")
-
-    # ------------------------------------------------------------- voices --
-
-    def _populate_voices_list(self):
-        self.voices_listbox.delete(0, "end")
-        for name in self.session_voices:
-            self.voices_listbox.insert("end", name)
-        if self.displayed_voice in self.session_voices:
-            idx = self.session_voices.index(self.displayed_voice)
-            self.voices_listbox.selection_clear(0, "end")
-            self.voices_listbox.selection_set(idx)
-            self.voices_listbox.see(idx)
-
-    def _on_voice_list_select(self, event):
-        selection = self.voices_listbox.curselection()
-        if not selection:
-            return
-        chosen = self.session_voices[selection[0]]
-        if chosen and chosen != self.displayed_voice:
-            if self.displayed_voice:
-                save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
-            self._load_voice(chosen)
-
-    def _load_voice(self, name):
-        """Populate every voice-scoped widget from disk - the per-voice
-        counterpart to _load_session. Does NOT touch session-level
-        widgets (host/interval/qualia allowance) or pin the live loop to
-        this voice; it only changes what's displayed for editing/
-        viewing. See _tick for how the round-robin picks who actually
-        runs regardless of this."""
-        state = load_voice_state(self.session_name, name)
-        self.displayed_voice = name
-
-        self.top_box.delete("1.0", "end")
-        self.top_box.insert("end", state.get("top", ""))
-        self.bottom_box.delete("1.0", "end")
-        self.bottom_box.insert("end", state.get("bottom", ""))
-        self.model_var.set(state.get("model", DEFAULT_MODEL))
-        self.max_tokens_var.set(str(state.get("max_tokens", DEFAULT_MAX_TOKENS)))
-        self.last_thought = state.get("last_thought", "")
-        self.desires = state.get("desires", [])
-        self._refresh_desires_display()
-        self.inbox = list(state.get("inbox", []))
-        self._refresh_inbox_display()
-        self.context_window_var.set(str(state.get("context_window", DEFAULT_CONTEXT_WINDOW)))
-        self.model_rotation = list(state.get("model_rotation", []))
-        self.model_rotation_index = int(state.get("model_rotation_index", 0) or 0)
-        self._refresh_model_rotation_display()
-        self.groups_in = list(state.get("groups_in", []))
-        self.groups_out = list(state.get("groups_out", []))
-        self._refresh_groups_display()
-        self.family_group_display_var.set(state.get("family_group") or "(none)")
-        self.allowed_functions = list(state.get("allowed_functions", []))
-        self._refresh_allowed_functions_display()
-
-        self.history = load_voice_history(self.session_name, name)
-        self._populate_history_list()
-        self._replay_middle_box()
-        self._refresh_group_messages_display()
-
-        self._populate_voices_list()
-        self.session_status_var.set(f"Voice '{name}' loaded ({len(self.history)} entries)")
-
-    def _refresh_allowed_functions_display(self):
-        """v0.16.17 - the first real GUI surface for allowed_functions.
-        Baseline (GLOBAL_PERMISSION_FUNCTIONS) is a fixed fact, same for
-        every voice regardless of allowed_functions - shown as plain
-        text, nothing to manage. Everything else in fenra_functions.
-        FUNCTION_REGISTRY is either already granted (left list) or
-        available to grant (right list) - see _grant_selected_functions/
-        _revoke_selected_functions."""
-        self.allowed_functions_baseline_label.config(
-            text="Baseline (always available): " + ", ".join(sorted(GLOBAL_PERMISSION_FUNCTIONS))
-        )
-        granted_extra = sorted(set(self.allowed_functions) - GLOBAL_PERMISSION_FUNCTIONS)
-        all_gated = sorted(set(fenra_functions.FUNCTION_REGISTRY.keys()) - GLOBAL_PERMISSION_FUNCTIONS)
-        available = sorted(set(all_gated) - set(granted_extra))
-        self.granted_listbox.delete(0, "end")
-        for fn in granted_extra:
-            self.granted_listbox.insert("end", fn)
-        self.available_listbox.delete(0, "end")
-        for fn in available:
-            self.available_listbox.insert("end", fn)
-
-    def _grant_selected_functions(self):
-        """Teddy directly editing the currently-displayed voice's own
-        allowed_functions through the normal widget-save path - same
-        shape as editing Behavior/Identity text, flushed to disk by
-        Save voice / a voice switch / the next tick via the existing
-        _save_voice_snapshot. NOT the same write path
-        fn_grant_function_request uses (that one reaches cross-voice,
-        into a DIFFERENT voice's state.json, from inside a live function
-        call) - no new hazard, no new protection needed."""
-        for i in self.available_listbox.curselection():
-            fn = self.available_listbox.get(i)
-            if fn not in self.allowed_functions:
-                self.allowed_functions.append(fn)
-        self._refresh_allowed_functions_display()
-
-    def _revoke_selected_functions(self):
-        for i in self.granted_listbox.curselection():
-            fn = self.granted_listbox.get(i)
-            if fn in self.allowed_functions:
-                self.allowed_functions.remove(fn)
-        self._refresh_allowed_functions_display()
-
-    def _refresh_inbox_display(self):
-        """Read-only, most-recent-first - what's actually sitting in
-        this voice's inbox right now (tell_voice messages), including
-        how many of her own turns each has left - see fn_tell_voice/
-        VOICE_MESSAGE_TICKS. No dedicated widget existed for this
-        before v0.16.17."""
-        self.inbox_box.config(state="normal")
-        self.inbox_box.delete("1.0", "end")
-        for entry in reversed(self.inbox):
-            self.inbox_box.insert(
-                "end",
-                f"[{entry.get('timestamp', '?')}] from {entry.get('from', '?')} "
-                f"({entry.get('ticks', '?')} turn(s) left): {entry.get('text', '')}\n"
-            )
-        self.inbox_box.config(state="disabled")
-
-    def _refresh_group_messages_display(self):
-        """Read-only, most-recent-first pull of kind == 'group_message'
-        entries from this voice's own history - what she's actually
-        heard from groups, distinct from the raw History tab (shows
-        everything, her own generations included) and the Groups tab
-        (a group's roster, not its content). Same discriminator
-        _recent_thoughts_block uses to tell a pushed message apart from
-        her own thought - see push_entry_to_voice."""
-        self.group_messages_box.config(state="normal")
-        self.group_messages_box.delete("1.0", "end")
-        matches = [e for e in self.history if e.get("kind") == "group_message"]
-        for entry in reversed(matches):
-            text = entry.get("display", entry.get("response", ""))
-            self.group_messages_box.insert(
-                "end",
-                f"[{entry.get('timestamp', '?')}] {entry.get('group', '?')} / "
-                f"{entry.get('from_voice', '?')}: {text}\n"
-            )
-        self.group_messages_box.config(state="disabled")
-
-    def new_voice(self):
-        """Add another voice to the current session - individually
-        configured (its own top/bottom/model/model_rotation/desires/
-        context window/groups), round-robined in automatically
-        alongside whatever else is already here (see
-        _advance_voice_rotation). Starts blank, not copied from
-        whichever voice is currently displayed - a deliberate choice:
-        two voices that start identical would just be an expensive way
-        to run the same thing twice until they diverge."""
-        if not self.session_name:
-            return
-        name = simpledialog.askstring("New Voice", "Voice name:", parent=self.root)
-        if not name:
-            return
-        name = sanitize_group_name(name)  # same permissive charset as a group name
-        if not name:
-            messagebox.showwarning("Fenra", "Voice names may only contain letters, numbers, underscores, and hyphens.")
-            return
-        if name in self.session_voices:
-            messagebox.showinfo("Fenra", f'Voice "{name}" already exists in this session.')
-            return
-
-        if self.displayed_voice:
-            save_voice_state(self.session_name, self.displayed_voice, self._save_voice_snapshot(self.displayed_voice))
-
-        save_voice_state(self.session_name, name, default_voice_state())
-        open(voice_history_path(self.session_name, name), "a", encoding="utf-8").close()
-
-        self.session_voices.append(name)
-        self.save_session()
-        self._populate_voices_list()
-        self._load_voice(name)
-        self._populate_groups_list()
-
-    def delete_voice(self):
-        """Removes the currently displayed voice - its history and
-        config, permanently - and the session's own record of it.
-        Refuses on a session's last remaining voice rather than leaving
-        a session with none."""
-        if not self.session_name or not self.displayed_voice:
-            return
-        if len(self.session_voices) <= 1:
-            messagebox.showwarning("Fenra", "Can't delete the only voice in a session.")
-            return
-        name = self.displayed_voice
-        if not messagebox.askyesno(
-            "Fenra", f'Delete voice "{name}"? This permanently removes its history and configuration.'
-        ):
-            return
-
-        if self.running:
-            self.toggle_loop()
-
-        shutil.rmtree(voice_dir(self.session_name, name), ignore_errors=True)
-        self.session_voices.remove(name)
-        self._voice_manual_override.pop(name, None)
-        if self.voice_rotation_index >= len(self.session_voices):
-            self.voice_rotation_index = 0
-        self.save_session()
-        self._populate_voices_list()
-        self._load_voice(self.session_voices[0])
-        self._populate_groups_list()
-
-    # --------------------------------------------------------------- chat --
-
-    def _next_chat_id(self):
-        return max((m.get("id", 0) for m in self.chat_messages), default=0) + 1
-
-    def add_chat_message(self, sender, text, read, to=None):
-        entry = {
-            "id": self._next_chat_id(),
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "sender": sender,
-            "text": text,
-            "read": read,
-        }
-        if to:
-            entry["to"] = to
-        self.chat_messages.append(entry)
-        self.persist_chat()
-        return entry
-
-    def persist_chat(self):
-        """Save chat_messages to disk and refresh the Chat tab. Safe to call
-        from the background loop thread (function calls) or the main thread
-        (the Send button) - matches the pattern already used elsewhere for
-        cross-thread GUI updates."""
-        if self.session_name:
-            save_chat_messages(self.session_name, self.chat_messages)
-        self.root.after(0, self._refresh_chat_display)
-
-    def _refresh_chat_display(self):
-        self.chat_box.config(state="normal")
-        self.chat_box.delete("1.0", "end")
-        for m in self.chat_messages:
-            who = {"teddy": "Teddy", "qualia": "Qualia"}.get(m["sender"], "Fenra")
-            to = m.get("to")
-            to_tag = f" -> {'Teddy' if to == 'teddy' else 'Qualia'}" if to else ""
-            unread_marker = " [unread]" if m["sender"] != "fenra" and not m.get("read", True) else ""
-            self.chat_box.insert("end", f"[{m['timestamp']}] {who}{to_tag}{unread_marker}: {m['text']}\n\n")
-        self.chat_box.see("end")
-        self.chat_box.config(state="disabled")
-
-    def send_chat_from_ui(self):
-        text = self.chat_entry_var.get().strip()
-        if not text:
-            return
-        self.add_chat_message("teddy", text, read=False)
-        self.chat_entry_var.set("")
-
-    def _poll_qualia_inbox(self):
-        """Check the current session's inbox for messages Qualia has
-        dropped in since the last poll, turn each into a real chat message
-        (sender "qualia" - a distinct, honest identity, not Teddy speaking
-        through her), then clear the inbox. Runs on the main thread via
-        root.after, independent of whether the self-talk loop is running,
-        so it's always live while the app is open and never races the loop
-        thread's own chat.jsonl writes."""
-        if self.session_name:
-            path = os.path.join(session_dir(self.session_name), QUALIA_INBOX_FILENAME)
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        lines = [line.strip() for line in f if line.strip()]
-                except OSError:
-                    lines = []
-                if lines:
-                    for line in lines:
-                        try:
-                            text = json.loads(line).get("text", "")
-                        except (json.JSONDecodeError, AttributeError):
-                            text = line
-                        if text:
-                            self.add_chat_message("qualia", text, read=False)
-                    try:
-                        open(path, "w", encoding="utf-8").close()
-                    except OSError:
-                        pass
-            self._poll_qualia_allowance_set()
-            self._poll_qualia_context_window_set()
-            self._poll_qualia_max_tokens_set()
-            self._poll_qualia_model_set()
-            self._poll_qualia_rotation_set()
-            self._poll_start_stop_signal()
-            self._poll_qualia_hearth_inbox()
-        self.root.after(QUALIA_INBOX_POLL_MS, self._poll_qualia_inbox)
-
-    def _poll_qualia_hearth_inbox(self):
-        """v0.16.15 - Qualia's avatar in The Hearth (Qualia/decisions.md
-        item 4b). Same read-then-truncate shape as _poll_qualia_inbox
-        (called from there, same cadence/thread, no separate
-        self-rescheduling chain needed), but each line becomes a real
-        push into every current Hearth resident's own history via
-        push_entry_to_voice, plus a canonical log entry, plus a wake -
-        not a Chat-tab message. Kept as its own file/method rather than
-        folded into the main inbox precisely so the two stay visibly
-        separate concerns."""
-        if not self.session_name:
-            return
-        path = os.path.join(session_dir(self.session_name), QUALIA_HEARTH_INBOX_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f if line.strip()]
-        except OSError:
-            lines = []
-        if not lines:
-            return
-        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
-        members = meta.get("members", {}) if meta else {}
-        for line in lines:
-            try:
-                text = json.loads(line).get("text", "")
-            except (json.JSONDecodeError, AttributeError):
-                text = line
-            if not text:
-                continue
-            timestamp = datetime.now().isoformat(timespec="seconds")
-            append_group_log(self.session_name, THE_HEARTH_NAME, "qualia", text)
-            for member in members:
-                pushed = push_entry_to_voice(self.session_name, member, "qualia", THE_HEARTH_NAME, text, timestamp)
-                self._wake_hearth_resident(member)
-                if member == self.displayed_voice:
-                    self.history.append(pushed)
-                    self.root.after(0, self._add_history_row, timestamp)
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-
-    def _poll_start_stop_signal(self):
-        """Companion to the inbox poll, same cadence: start or stop the
-        self-talk loop if the corresponding signal file exists, exactly as
-        if the Start/Stop button were clicked. Content doesn't matter, only
-        presence. Whichever file is found is cleared after acting on it;
-        if both exist in the same poll, start wins and the stop file is
-        left for the next poll (avoids starting-then-immediately-stopping
-        on a stale leftover stop file)."""
-        start_path = os.path.join(session_dir(self.session_name), START_SIGNAL_FILENAME)
-        stop_path = os.path.join(session_dir(self.session_name), STOP_SIGNAL_FILENAME)
-        if os.path.exists(start_path):
-            try:
-                os.remove(start_path)
-            except OSError:
-                pass
-            if not self.running:
-                self.toggle_loop()
-            return
-        if os.path.exists(stop_path):
-            try:
-                os.remove(stop_path)
-            except OSError:
-                pass
-            if self.running:
-                self.toggle_loop()
-
-    def _poll_qualia_allowance_set(self):
-        """Companion to the inbox poll above, same cadence: pick up a new
-        Qualia allowance value if Qualia has written one (Teddy's call - he
-        shares rough usage/cost figures periodically, Qualia sets the
-        number directly rather than asking each time). Mirrors
-        set_qualia_allowance's own validation/clamping and persists
-        immediately, same reasoning as that method."""
-        path = os.path.join(session_dir(self.session_name), QUALIA_ALLOWANCE_SET_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except OSError:
-            return
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-        if not raw:
-            return
-        try:
-            value = max(0, int(float(raw)))
-        except ValueError:
-            return
-        self.qualia_allowance_var.set(str(value))
-        self.save_session()
-
-    def _poll_qualia_context_window_set(self):
-        """Same pattern as the allowance-set poll, for the context window
-        - lets Qualia adjust it externally (e.g. to break a self-
-        reinforcing repetition) without needing Teddy at the machine.
-        Clamped the same as set_context_window/fn_set_context_window.
-        Voice-scoped (v0.16.2): applies to whichever voice is currently
-        displayed in the GUI, same as the GUI field itself - the right
-        voice needs to be selected first if a session has more than
-        one."""
-        path = os.path.join(session_dir(self.session_name), QUALIA_CONTEXT_WINDOW_SET_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except OSError:
-            return
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-        if not raw:
-            return
-        try:
-            value = max(MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(raw))))
-        except ValueError:
-            return
-        self.context_window_var.set(str(value))
-        self.save_voice()
-
-    def _poll_qualia_max_tokens_set(self):
-        """Same pattern again, for max_tokens (num_predict) - lets Qualia
-        raise (or lower) the token budget externally, e.g. for a
-        "thinking" model like qwen3 that needs a larger budget to ever
-        reach the response field it's actually read from. No upper clamp,
-        matching the GUI's own plain entry field (0 means unlimited there
-        too); only rejects a negative or unparseable value. Voice-scoped
-        (v0.16.2), same caveat as the context-window poll above."""
-        path = os.path.join(session_dir(self.session_name), QUALIA_MAX_TOKENS_SET_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except OSError:
-            return
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-        if not raw:
-            return
-        try:
-            value = int(float(raw))
-        except ValueError:
-            return
-        if value < 0:
-            return
-        self.max_tokens_var.set(str(value))
-        self.save_voice()
-
-    def _poll_qualia_rotation_set(self):
-        """Same pattern again, for the whole model rotation - lets Qualia
-        view (state.json/functions.jsonl already show it) and directly
-        set or clear it externally too, not just watch it get built one
-        add_to_rotation call at a time. Shares _apply_model_rotation with
-        the GUI's own 'Set' button - voice-scoped the same way, see that
-        method."""
-        path = os.path.join(session_dir(self.session_name), QUALIA_ROTATION_SET_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read()
-        except OSError:
-            return
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-        self._apply_model_rotation(raw)
-
-    def _poll_qualia_model_set(self):
-        """Same pattern again, for the model. Best-effort validation
-        against Ollama's installed-models list (matching set_model's own
-        check) - but if that check itself fails (e.g. transient network
-        issue), applies the value anyway rather than block, since this is
-        specifically a rescue mechanism for moments where blocking on an
-        extra failure mode is the last thing needed. Voice-scoped
-        (v0.16.2), same caveat as the context-window poll above."""
-        path = os.path.join(session_dir(self.session_name), QUALIA_MODEL_SET_FILENAME)
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except OSError:
-            return
-        try:
-            open(path, "w", encoding="utf-8").close()
-        except OSError:
-            pass
-        if not raw:
-            return
-        try:
-            host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-            resp = requests.get(f"{host}/api/tags", timeout=5)
-            resp.raise_for_status()
-            names = [m["name"] for m in resp.json().get("models", [])]
-            if names and raw not in names:
-                return
-        except Exception:
-            pass
-        self.model_var.set(raw)
-        self.save_voice()
-
-    def _chat_notice(self):
-        """Always-present status line appended at the very end of the
-        prompt: last sent/received times regardless of unread state, plus
-        an explicit unread count and pointer to the chat functions."""
-        sent_times = [m["timestamp"] for m in self.chat_messages if m["sender"] == "fenra"]
-        received_times = [m["timestamp"] for m in self.chat_messages if m["sender"] != "fenra"]
-        last_sent = max(sent_times) if sent_times else "never"
-        last_received = max(received_times) if received_times else "never"
-
-        unread = [m for m in self.chat_messages if m["sender"] != "fenra" and not m.get("read", True)]
-        if unread:
-            senders = sorted({"Teddy" if m["sender"] == "teddy" else "Qualia" for m in unread})
-            unread_note = (
-                f"You have {len(unread)} unread message(s) from {' and '.join(senders)}. "
-                f"Use the chat functions (see ⟦functions()⟧) to review them."
-            )
-        else:
-            unread_note = "You have no unread messages."
-
-        return (
-            f"[Chat status: you last sent a message at {last_sent}. "
-            f"You last received a message at {last_received}. {unread_note}]"
-        )
-
-    def _function_requests_notice(self):
-        """v0.16.11 - only present in a permission_mode session (empty
-        otherwise, matching how the gate itself only does anything
-        there). Same reasoning as _chat_notice above, for a real gap
-        that let one of seed's own requests sit unanswered for hours in
-        permissions-test-1: check_function_requests exists, but nothing
-        ever told anyone - not even a voice holding it - that something
-        was actually waiting, so it just never got checked again after
-        the cycle it was created. This is the always-present pointer
-        _chat_notice already gives the chat system; function requests
-        need the same thing.
-
-        v0.16.12 - Teddy's correction: only show this to a voice that
-        actually holds check_function_requests. Originally shown to
-        every voice in the session regardless - a voice with no power
-        to act on it (or even look at it) just got told "N pending"
-        every cycle with nothing to do about it, pure noise for them."""
-        if not self.permission_mode:
-            return ""
-        if "check_function_requests" not in (self.allowed_functions or []):
-            return ""
-        requests = [
-            r for r in fenra_functions._load_function_requests(self.session_name)
-            if r.get("status") == "pending"
-        ]
-        mine = [r for r in requests if r.get("voice") == self.current_voice_name]
-        mine_note = f", {len(mine)} of them yours" if mine else ""
-        action_note = " Call check_function_requests() to see who's asking, for what, and why." if requests else ""
-        return f"[Function requests: {len(requests)} pending session-wide{mine_note}.{action_note}]"
-
-    def _identity_notice(self, current_model):
-        """v0.16.13 - always-present, every prompt: who you actually are.
-        Teddy caught the real gap live during a demo: seed created a
-        voice named 'speaker', wrote first-person framing for it ("I am
-        the Speaker..."), then started calling send_message/read_chat as
-        if it WERE speaker - nothing in the prompt ever told it its own
-        name, so once it had written a persona in its own words it just
-        kept narrating as that persona instead of itself. current_voice_
-        name was already tracked internally (used for self-request
-        flagging etc.) but never actually surfaced in the text she reads.
-
-        Deliberately no session name here - Teddy's call, cut during
-        review: a voice never addresses another session directly except
-        through groups, which already self-identify, so it's not load-
-        bearing information, just noise.
-
-        Takes current_model explicitly, same reasoning as
-        _model_rotation_notice - the voice actually running this cycle
-        isn't always the one currently displayed in the GUI."""
-        # v0.16.16 - "none yet" stopped being true the moment baseline
-        # functions existed (Qualia/permissions-proposal.md): every
-        # voice, regardless of allowed_functions, always has the
-        # baseline set - a voice with a genuinely empty allowed_functions
-        # is not actually powerless, and the old wording risked reading
-        # that way to a fresh, never-granted-anything voice.
-        extra_note = (
-            f"Beyond that, extra: {', '.join(self.allowed_functions)}."
-            if self.allowed_functions
-            else "Nothing extra granted yet - see request_function_access() to ask."
-        ) if self.permission_mode else (
-            "Functions allowed: unrestricted - every function in the registry is "
-            "available to you (this session doesn't use function permissions)."
-        )
-        functions_note = (
-            f"Baseline (always yours): {', '.join(sorted(GLOBAL_PERMISSION_FUNCTIONS))}. {extra_note}"
-            if self.permission_mode else extra_note
-        )
-        return f"[You are: {self.current_voice_name}. Model: {current_model}. {functions_note}]"
-
-    def _qualia_allowance_notice(self):
-        """Always-present, every prompt: how many characters she has left
-        to spend on messages directed specifically at Qualia. Teddy sets
-        this number directly (see set_qualia_allowance) - it does not
-        refill on its own."""
-        try:
-            remaining = max(0, int(float(self.qualia_allowance_var.get())))
-        except ValueError:
-            remaining = 0
-        return (
-            f"[Qualia allowance: {remaining} character(s) remaining. This is spent only by messages "
-            f"addressed specifically to Qualia - send_message(qualia|your text) - and Teddy or Qualia "
-            f"set this number directly (Teddy from the GUI, Qualia based on usage figures Teddy shares "
-            f"with her); it does not refill on its own. Messages to Teddy "
-            f"(send_message(teddy|your text), or send_message(text) with no recipient) cost nothing.]"
-        )
-
-    # ------------------------------------------------------------ desires --
-
-    def _sorted_desires(self):
-        """Most-ticks-remaining first, persistent (-1) entries always
-        last regardless of how long they've existed, tie-broken by
-        timestamp added (oldest first) within each group."""
-        def sort_key(d):
-            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
-            persistent = ticks == -1
-            return (persistent, 0 if persistent else -ticks, d.get("timestamp", ""))
-        return sorted(self.desires, key=sort_key)
-
-    def _desires_block(self):
-        """Always-present, every prompt: the whole desire queue, sorted
-        per _sorted_desires. A desire is free text she set herself via
-        add_desire - see fn_add_desire in fenra_functions.py."""
-        if not self.desires:
-            return (
-                "[Your desire queue is empty. Call ⟦functions(desire)⟧ to see the functions for adding one.]"
-            )
-        lines = ["[Your current desires, most time remaining first:]"]
-        for d in self._sorted_desires():
-            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
-            tag = "persistent" if ticks == -1 else f"{ticks} loop(s) left"
-            lines.append(f"- ({tag}) {d.get('text', '')}")
-        return "\n".join(lines)
-
-    def add_desire_entry(self, entry):
-        """Append a new desire (called from fn_add_desire, on the same
-        loop thread as _tick - plain list mutation is safe here the same
-        way self.history.append already is elsewhere; only the actual
-        widget update needs marshaling to the main thread). self.desires
-        at this point belongs to whichever voice is actually running
-        this tick (current_voice_name) - only touch the desires_box
-        widget if that's also the voice currently displayed, so a
-        background voice's turn never overwrites what's shown for a
-        different one."""
-        self.desires.append(entry)
-        if self.current_voice_name == self.displayed_voice:
-            self.root.after(0, self._refresh_desires_display)
-
-    def _refresh_desires_display(self):
-        self.desires_box.config(state="normal")
-        self.desires_box.delete("1.0", "end")
-        for d in self._sorted_desires():
-            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
-            tag = "persistent" if ticks == -1 else f"{ticks} left"
-            self.desires_box.insert("end", f"({tag}) {d.get('text', '')}\n")
-        self.desires_box.config(state="disabled")
-
-    def _decrement_desires(self):
-        """Called once at the end of every tick: every non-persistent
-        desire loses one tick, and anything that reaches zero drops off
-        entirely. Persistent (-1) entries are untouched. Operates on
-        self.desires for whichever voice is actually running this tick
-        (current_voice_name) - only refreshes the widget if that's also
-        the displayed voice, same reasoning as add_desire_entry."""
-        updated = []
-        for d in self.desires:
-            ticks = d.get("ticks", DEFAULT_DESIRE_TICKS)
-            if ticks == -1:
-                updated.append(d)
-                continue
-            d = dict(d)
-            d["ticks"] = ticks - 1
-            if d["ticks"] > 0:
-                updated.append(d)
-        self.desires = updated
-        if self.current_voice_name == self.displayed_voice:
-            self.root.after(0, self._refresh_desires_display)
-
-    # -------------------------------------------------------- voice inbox --
-    # tell_voice(voice, message) (fenra_functions.py, v0.16.3) - direct
-    # messages from one voice to another, Teddy's design, modeled directly
-    # on how desires already work: appended with a fixed ticks-remaining
-    # count, folded into the receiving voice's prompt every cycle while
-    # ticks remain, then falls off on its own - no explicit "read" or
-    # "clear" needed. Chosen over auto-folding every group/chat message
-    # forever specifically to bound how much a busy multi-voice session can
-    # grow any one prompt by, the same reasoning context_window bounds how
-    # much history (including pushed group messages, v0.16.15) a voice
-    # carries. Unlike desires, a voice can't add to its own inbox -
-    # only another voice's, via tell_voice - so there's no GUI/function
-    # symmetry with add_desire; the entries here are always written by
-    # fn_tell_voice reaching across to this voice's own persisted state,
-    # never by this voice itself mid-tick the way self.desires is.
-
-    def _voice_inbox_block(self):
-        """Always-checked, only sometimes present: direct messages other
-        voices have sent this one via tell_voice, most recently sent
-        first, each showing who it's from and how many of this voice's
-        own turns it has left before falling off."""
-        if not self.inbox:
-            return ""
-        lines = ["[Messages from other voices, most recent first:]"]
-        for m in sorted(self.inbox, key=lambda m: m.get("timestamp", ""), reverse=True):
-            ticks = m.get("ticks", VOICE_MESSAGE_TICKS)
-            lines.append(
-                f"- from {m.get('from', '?')} ({ticks} of your turn(s) left before this falls off): "
-                f"{m.get('text', '')}"
-            )
-        return "\n".join(lines)
-
-    def _decrement_voice_inbox(self):
-        """Called once at the end of every tick, same pattern as
-        _decrement_desires: every inbox entry for whichever voice is
-        actually running this tick loses one tick, and anything that
-        reaches zero drops off entirely. No persistent (-1) option here,
-        unlike desires - a message from another voice is always
-        temporary by design."""
-        updated = []
-        for m in self.inbox:
-            ticks = m.get("ticks", VOICE_MESSAGE_TICKS)
-            m = dict(m)
-            m["ticks"] = ticks - 1
-            if m["ticks"] > 0:
-                updated.append(m)
-        self.inbox = updated
-
-    # ------------------------------------------------------------- context --
-
-    def _recent_thoughts_block(self, history, window):
-        """The active voice's last N cycles of thoughts (history, oldest
-        to newest), N being the context window size in cycles - not
-        Ollama's own num_ctx token limit, which this doesn't touch.
-        Takes both explicitly (v0.16.2) rather than reading
-        self.history/self.context_window_var directly, since the voice
-        actually running this tick isn't always the one currently
-        displayed in the GUI widgets - see _tick. Deliberately excludes
-        the cycle currently being built - history doesn't have this
-        cycle's entry yet at the point this is called."""
-        if window == 0 or not history:
-            return ""
-        recent = history[-window:]
-        parts = []
-        for entry in recent:
-            text = entry.get("display", entry.get("response", ""))
-            # v0.16.15 - a pushed group message (see push_entry_to_voice)
-            # is a real history entry but not something this voice
-            # itself generated - the header makes that plain so it
-            # doesn't get mistaken for her own prior thought.
-            if entry.get("kind") == "group_message":
-                header = f"[{entry.get('timestamp', '?')}] (from {entry.get('from_voice', '?')} in {entry.get('group', '?')})"
-            else:
-                header = f"[{entry.get('timestamp', '?')}]"
-            parts.append(f"{header}\n{text}")
-        return "\n\n".join(parts)
-
-    def _context_window_notice(self, window):
-        """Always-present, every prompt: how many cycles back she's
-        currently seeing, and how to change it herself. Takes the
-        window size explicitly - see _recent_thoughts_block."""
-        return (
-            f"[Context window: you're currently seeing your last {window} cycle(s) of thoughts, oldest first. "
-            f"Teddy or you can change this - set_context_window(n), {MIN_CONTEXT_WINDOW} to {MAX_CONTEXT_WINDOW}.]"
-        )
-
-    def _model_rotation_notice(self, current_model):
-        """Always-present, every prompt: what's actually driving the model
-        each cycle. With nothing in the rotation, current_model() is the
-        only way to know what's running (a single fixed model, same as
-        before this feature existed). With one or more, the app itself
-        advances through them automatically each cycle in the order
-        added - this notice exists so that isn't a mystery to her. Takes
-        the resolved model explicitly - see _recent_thoughts_block."""
-        if not self.model_rotation:
-            return (
-                "[Model rotation: empty - you are on a single fixed model (see current_model()). "
-                "add_to_rotation(name) starts an automatic rotation: one model repeats itself, two "
-                "alternate back and forth each cycle, three or more cycle through in the order added.]"
-            )
-        order = ", ".join(self.model_rotation)
-        return (
-            f"[Model rotation: {len(self.model_rotation)} model(s) in rotation, cycling automatically "
-            f"every cycle in this order: {order}. This cycle is running on {current_model}. "
-            f"add_to_rotation(name) to add another.]"
-        )
-
-    def _groups_notice(self):
-        """Always-present, every prompt: which groups she's actually in
-        right now and how to change it - same pattern as the context
-        window and model rotation notices. v0.16.15 - group content
-        itself no longer appears here at all: a group message is
-        delivered by being pushed straight into her own history (see
-        push_entry_to_voice/_recent_thoughts_block's 'from ... in ...'
-        entries) the moment it's spoken, not merged into the prompt live
-        from a shared log the way the old _groups_block used to. This
-        notice is purely membership bookkeeping now."""
-        in_text = ", ".join(self.groups_in) if self.groups_in else "none"
-        out_text = ", ".join(self.groups_out) if self.groups_out else "none"
-        return (
-            f"[Groups: hearing from [{in_text}], able to speak into [{out_text}] (direction is "
-            "owner-only to change - joining defaults to listen-only until the owner grants you "
-            "speak access). A group message from someone else appears in your own history "
-            "automatically, tagged with who said it and where - you don't have to check "
-            "anything to see it. join_group(name), leave_group(name), create_group(name), "
-            "list_groups() to see what exists.]"
-        )
-
-    def _function_bootstrap_notice(self):
-        """Always-present, every prompt, unconditionally - the one piece
-        of system mechanics that was never actually guaranteed. The
-        other always-present notices (_groups_notice,
-        _qualia_allowance_notice, _model_rotation_notice,
-        _context_window_notice) already name specific functions in plain
-        text regardless of what a voice's own top/bottom says - but none
-        of them ever explained that ⟦ ⟧ is how a function call actually
-        gets written, or that functions() exists to see the rest. That
-        was only ever taught in voice1's original bottom text, which
-        create_voice (v0.16.4) stopped auto-copying into every
-        descendant for good reason - but a parent who forgets to mention
-        it leaves its child with no way to discover the syntax exists at
-        all, even though later notices go on to reference real function
-        names as if she already knew how to call them.
-
-        Teddy's framing (2026-09-02), after flagging the gap and
-        weighing "hard-coding" against the project's own chaos-driven
-        design: a human doesn't need to be told how to breathe or open
-        its eyes for that to still be innate - something pushes you
-        there regardless. This is that floor, not content: it says
-        nothing about which functions to use or why, only that the
-        mechanism exists. Everything past this - what a parent chooses
-        to explain, what a voice discovers on its own via functions() -
-        stays exactly as unscripted as before."""
-        return (
-            "[You can call functions by writing a real function name wrapped in ⟦ ⟧, "
-            "for example ⟦functions()⟧ - call it any time to see everything available "
-            "to you.]"
-        )
-
-    # ------------------------------------------------------------ history --
-
-    def _populate_history_list(self):
-        self.history_listbox.delete(0, "end")
-        for entry in self.history:
-            self.history_listbox.insert("end", entry.get("timestamp", "?"))
-
-    def _replay_middle_box(self):
-        self.middle_box.config(state="normal")
-        self.middle_box.delete("1.0", "end")
-        for entry in self.history:
-            text = entry.get("display", entry.get("response", ""))
-            self.middle_box.insert("end", f"[{entry.get('timestamp', '?')}]\n{text}\n\n")
-        self.middle_box.see("end")
-        self.middle_box.config(state="disabled")
-
-    def _on_history_select(self, event):
-        selection = self.history_listbox.curselection()
-        if not selection:
-            return
-        entry = self.history[selection[0]]
-        pretty = json.dumps(entry.get("request", entry), indent=2, ensure_ascii=False)
-        self.json_view.config(state="normal")
-        self.json_view.delete("1.0", "end")
-        self.json_view.insert("end", pretty)
-        self.json_view.config(state="disabled")
-
-    # --------------------------------------------------------------- model --
-
-    def refresh_models(self):
-        """Query Ollama for installed models and populate the dropdown."""
-        host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-        try:
-            resp = requests.get(f"{host}/api/tags", timeout=5)
-            resp.raise_for_status()
-            names = [m["name"] for m in resp.json().get("models", [])]
-        except Exception as exc:
-            messagebox.showwarning("Fenra", f"Could not fetch installed models from Ollama:\n{exc}")
-            return
-
-        self.model_combo["values"] = names
-        if not names:
-            return
-        # keep current selection if it's still installed, otherwise pick the first
-        if self.model_var.get() not in names:
-            self.model_var.set(names[0])
-
-    # --------------------------------------------------------------- loop --
+    # ----------------------------------------------------------- the loop --
 
     def toggle_loop(self):
         if self.running:
@@ -3761,6 +774,9 @@ class FenraApp:
             self.start_stop_btn.config(text="Start")
             self.status_var.set("Stopping...")
         else:
+            if not self.world_voices:
+                messagebox.showinfo("Fenra", "This world has no voices yet - add one on the Voices tab first.")
+                return
             self.running = True
             self.start_stop_btn.config(text="Stop")
             self.status_var.set("Running")
@@ -3771,8 +787,8 @@ class FenraApp:
         while self.running:
             try:
                 self._tick()
-            except Exception as exc:  # keep the loop alive on transient errors
-                self.root.after(0, self._set_status, f"Error: {exc}")
+            except Exception as exc:  # keep the loop alive on a transient error
+                self.root.after(0, self.status_var.set, f"Error: {exc}")
             try:
                 interval = float(self.interval_var.get())
             except ValueError:
@@ -3781,382 +797,60 @@ class FenraApp:
                 if not self.running:
                     break
                 time.sleep(0.1)
-        self.root.after(0, self._set_status, "Idle")
-
-    def _set_status(self, text):
-        self.status_var.set(text)
-
-    def _advance_voice_rotation(self):
-        """Pick which voice runs this cycle and advance the index for
-        next time - simple round-robin (v0.16.2), Teddy's explicit call:
-        no manual-override concept here the way model rotation has one -
-        a voice doesn't get "picked" the way a model combo box selection
-        does, there's no single implicit "the running voice" widget to
-        honor. One voice just repeats itself every cycle (no visible
-        change with only one), two alternate back and forth, three or
-        more take turns in the order they were added. Session-level:
-        voice_rotation_index is saved alongside host/interval/qualia
-        allowance, not per voice."""
-        if not self.session_voices:
-            self.session_voices = [DEFAULT_VOICE_NAME]
-        index = self.voice_rotation_index % len(self.session_voices)
-        name = self.session_voices[index]
-        self.voice_rotation_index = (index + 1) % len(self.session_voices)
-        return name
-
-    def _wake_hearth_resident(self, voice_name):
-        """v0.16.15 - flips a Hearth resident back to awake in both the
-        cheap session-level mirror (hearth_stasis, read by the _tick
-        skip-loop) and the real per-member record (groups/the_hearth/
-        meta.json). Called whenever something is pushed into The Hearth
-        (another resident's own thought, or either avatar) - see the
-        broadcast loop in _tick, send_teddy_hearth_message, and
-        _poll_qualia_hearth_inbox."""
-        self.hearth_stasis[voice_name] = False
-        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
-        if meta and voice_name in meta.get("members", {}):
-            meta["members"][voice_name]["awake"] = True
-            save_group_meta(self.session_name, THE_HEARTH_NAME, meta)
-
-    def _advance_model_rotation(self, current_model):
-        """If this voice has added any models to its rotation
-        (fn_add_to_rotation in fenra_functions.py), pick the next one in
-        order for this cycle and advance the index for next time - one
-        model just repeats itself every cycle (no visible change), two
-        alternate back and forth, three run 1-2-3-1-2-3, and so on.
-
-        A manual override (fn_set_model, or Teddy picking a model
-        directly in the combo box for this voice) gets exactly one real
-        cycle honored first - model_manual_override is set the moment
-        either happens (tracked per voice via _voice_manual_override,
-        loaded into this plain flag at the top of _tick), checked and
-        cleared right here, so the manual choice is what actually
-        generates that cycle rather than being clobbered before it's
-        ever used. The tick after that, rotation resumes from exactly
-        where it left off (model_rotation_index untouched during the
-        honored cycle - nothing skipped, nothing repeated).
-
-        Takes/returns the model as a plain value (v0.16.2) rather than
-        touching model_var directly - the voice this cycle is actually
-        running isn't always the one currently displayed in the GUI, so
-        the widget itself is updated separately, only when it is."""
-        if self.model_manual_override:
-            self.model_manual_override = False
-            return current_model
-        if not self.model_rotation:
-            return current_model
-        index = self.model_rotation_index % len(self.model_rotation)
-        picked = self.model_rotation[index]
-        self.model_rotation_index = (index + 1) % len(self.model_rotation)
-        return picked
+        self.root.after(0, self.status_var.set, "Idle")
 
     def _tick(self):
-        # Whatever's in the widgets right now belongs to whichever voice
-        # is displayed - persist it before anything below touches self.*,
-        # so an in-progress edit is never lost even if a *different*
-        # voice turns out to be the one running this cycle (the round-
-        # robin doesn't care what's displayed).
-        displayed = self.displayed_voice
-        if displayed:
-            save_voice_state(self.session_name, displayed, self._save_voice_snapshot(displayed))
+        if not self.world_voices:
+            return
+        # If the currently-displayed voice is about to run, its in-flight
+        # widget edits are the authoritative copy - persist them first so
+        # a same-voice tick doesn't clobber an unsaved edit.
+        if self.displayed_voice:
+            self.root.after(0, self._save_voice_snapshot, self.displayed_voice)
 
-        active_voice = self._advance_voice_rotation()
+        index = self.voice_rotation_index % len(self.world_voices)
+        active_voice = self.world_voices[index]
+        self.voice_rotation_index = (index + 1) % len(self.world_voices)
+        self.root.after(0, self._save_world_controls)
 
-        # v0.16.15 - The Hearth stasis skip-loop. _advance_voice_rotation
-        # itself stays a pure picker (unchanged) - this decides whether
-        # the picked voice actually gets to run this cycle, or whether
-        # we advance again. Bounded at len(session_voices) attempts so a
-        # session where every single voice happens to be in stasis at
-        # once still runs *someone* rather than deadlocking the interval
-        # loop entirely - see Qualia/decisions.md item 4b.
-        attempts = 0
-        while self.hearth_stasis.get(active_voice) and attempts < len(self.session_voices):
-            active_voice = self._advance_voice_rotation()
-            attempts += 1
-
-        self.root.after(0, self.save_session)  # persist the new voice_rotation_index immediately
-
-        # v0.16.15 - checked every cycle, for whoever's actually about to
-        # run, before anything else - see ensure_hearth_membership.
-        # v0.16.18 - ensure_own_family_group added alongside it: a voice
-        # created before groups became session-scoped still lists its own
-        # family group in groups_in/out, but that group no longer exists
-        # under the new per-session path (fresh-empty was the deliberate
-        # call for existing sessions, not a copy of the old global data -
-        # see Qualia/decisions.md). Without this, the group would just
-        # stay silently missing forever - a push to it finds no meta,
-        # no-ops, and nothing ever recreates it. Idempotent, same as
-        # ensure_hearth_membership, so a no-op once the group is real.
-        ensure_hearth_membership(self.session_name, active_voice)
-        ensure_own_family_group(self.session_name, active_voice)
-
-        if active_voice == displayed:
-            vstate = self._save_voice_snapshot(active_voice)
-            active_history = self.history
-        else:
-            vstate = load_voice_state(self.session_name, active_voice)
-            active_history = load_voice_history(self.session_name, active_voice)
-
-        # Bind the scratch attributes run_function_calls / the Groups
-        # functions in fenra_functions.py / _advance_model_rotation
-        # already know how to read and mutate - unchanged since before
-        # voices existed, they just operate on whichever voice is
-        # actually running this cycle now. current_voice_name is also
-        # what _execute_one_call (functions.jsonl logging) and the group
-        # broadcast below use as this cycle's real identity.
-        self.current_voice_name = active_voice
-        self.desires = vstate.get("desires", [])
-        self.inbox = vstate.get("inbox", [])
-        self.allowed_functions = vstate.get("allowed_functions", [])
-        self.model_rotation = vstate.get("model_rotation", [])
-        self.model_rotation_index = vstate.get("model_rotation_index", 0)
-        self.groups_in = vstate.get("groups_in", [])
-        self.groups_out = vstate.get("groups_out", [])
-        self.model_manual_override = self._voice_manual_override.get(active_voice, False)
-
+        state = load_voice_state(self.world_name, active_voice)
+        model = state.get("model", DEFAULT_MODEL)
+        prompt = f"{state.get('behavior', '')}\n\n{state.get('context', '')}\n\n{state.get('identity', '')}"
         try:
-            context_window = max(
-                MIN_CONTEXT_WINDOW, min(MAX_CONTEXT_WINDOW, int(float(vstate.get("context_window", DEFAULT_CONTEXT_WINDOW))))
-            )
-        except (TypeError, ValueError):
-            context_window = DEFAULT_CONTEXT_WINDOW
-
-        tick_model = self._advance_model_rotation(vstate.get("model") or DEFAULT_MODEL)
-        # _voice_manual_override[active_voice] is re-saved further below,
-        # after run_function_calls - fn_set_model may set it again there
-        # (for *next* cycle), so capturing it here too would just be
-        # immediately stale.
-
-        top_text = vstate.get("top", "")
-        bottom_text = vstate.get("bottom", "")
-        recent_thoughts = self._recent_thoughts_block(active_history, context_window)
-        desires_block = self._desires_block()
-        inbox_block = self._voice_inbox_block()
-        identity_notice = self._identity_notice(tick_model)
-        chat_notice = self._chat_notice()
-        function_requests_notice = self._function_requests_notice()
-        qualia_notice = self._qualia_allowance_notice()
-        context_notice = self._context_window_notice(context_window)
-        rotation_notice = self._model_rotation_notice(tick_model)
-        groups_notice = self._groups_notice()
-        function_bootstrap = self._function_bootstrap_notice()
-
-        # Teddy's direct call (2026-09-03): the function-related notices
-        # need to be in *both* system and prompt, not prompt alone - his
-        # experience is that a local model tends to ignore instructions
-        # that only live in the system field, and he suspects this is a
-        # real contributor to how rarely functions actually get called
-        # despite being explained every cycle. notices_block is the
-        # shared text (bootstrap/chat/qualia/context/rotation/groups -
-        # everything that teaches or reminds about function-calling
-        # mechanics specifically, not the per-cycle context blocks like
-        # recent_thoughts/desires/inbox/groups content), built once and
-        # used identically in both fields below.
-        notices_block = (
-            f"{identity_notice}\n\n{function_bootstrap}\n\n{chat_notice}\n\n{function_requests_notice}\n\n{qualia_notice}\n\n"
-            f"{context_notice}\n\n{rotation_notice}\n\n{groups_notice}"
-        )
-        system_prompt = f"{top_text}\n\n{bottom_text}\n\n{notices_block}".strip()
-        # v0.16.15 - no separate groups_block anymore: a group message is
-        # already sitting in recent_thoughts by the time this runs, since
-        # push_entry_to_voice writes it straight into history the moment
-        # it's spoken - see _recent_thoughts_block's discriminator.
-        prompt = (
-            f"{top_text}\n\n{recent_thoughts}\n\n{desires_block}\n\n{inbox_block}\n\n{bottom_text}\n\n"
-            f"{notices_block}"
-        ).strip()
-
-        payload = {
-            "model": tick_model or DEFAULT_MODEL,
-            "system": system_prompt,
-            "prompt": prompt,
-            "stream": False,
-        }
-
-        try:
-            max_tokens = int(float(vstate.get("max_tokens", DEFAULT_MAX_TOKENS)))
-        except (TypeError, ValueError):
-            max_tokens = 0
-        if max_tokens > 0:
-            payload["options"] = {"num_predict": max_tokens}
+            response = call_ollama(self.host_var.get(), model, prompt)
+        except requests.RequestException as exc:
+            self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
+            return
+        response = response.strip()
+        if not response:
+            return
 
         timestamp = datetime.now().isoformat(timespec="seconds")
-        self.root.after(0, self._set_status, "Thinking...")
+        line = f"[{timestamp}] {active_voice}: {response}"
 
-        host = self.host_var.get().strip().rstrip("/") or DEFAULT_HOST
-        response = requests.post(f"{host}/api/generate", json=payload, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        response_text = response.json().get("response", "").strip()
+        # The speaker's own record - same format as everyone else sees.
+        append_to_context(self.world_name, active_voice, line)
 
-        # Check for a fabricated RESULT block *before* running the real
-        # function calls appends anything - response_text at this point is
-        # exactly what she generated, untouched, so a match here can only
-        # be something she wrote herself. See FABRICATED_RESULT_RE.
-        fabricated = FABRICATED_RESULT_RE.findall(response_text)
-
-        # v0.16.15 - push delivery, not the old pull/merge (_groups_block
-        # is gone). Broadcast the raw thought - not display_text, which
-        # may carry function-result/hallucination-flag text appended
-        # below - to every group this voice writes to: the canonical
-        # log (append_group_log, Teddy/Qualia review only) plus a real
-        # push into every OTHER current roster member whose direction is
-        # "in"/"both" - see push_entry_to_voice. Best-effort throughout:
-        # a broadcast failure (e.g. a stale group name) shouldn't take
-        # down the tick itself.
-        broadcast_identity = f"{self.session_name}:{active_voice}"
-        push_timestamp = datetime.now().isoformat(timespec="seconds")
-        for g in self.groups_out:
-            try:
-                append_group_log(self.session_name, g, broadcast_identity, response_text)
-                meta = load_group_meta(self.session_name, g)
-                if meta is None:
+        # Every OTHER member of every group the speaker belongs to - one
+        # append per listener max, even if they share more than one
+        # group with the speaker.
+        already_notified = {active_voice}
+        for group_name in groups_containing(self.world_name, active_voice):
+            gstate = load_group_state(self.world_name, group_name) or {}
+            for member in gstate.get("members", []):
+                if member in already_notified:
                     continue
-                for member, info in meta.get("members", {}).items():
-                    if member == active_voice:
-                        continue
-                    if info.get("direction") in ("in", "both"):
-                        pushed = push_entry_to_voice(
-                            self.session_name, member, active_voice, g, response_text, push_timestamp
-                        )
-                        if g == THE_HEARTH_NAME:
-                            self._wake_hearth_resident(member)
-                        if pushed and member == self.displayed_voice and member != active_voice:
-                            self.history.append(pushed)
-                            self.root.after(0, self._add_history_row, push_timestamp)
-            except (OSError, ValueError):
-                pass
+                already_notified.add(member)
+                append_to_context(self.world_name, member, line)
 
-        # Plain attribute (not model_var, a widget - see fn_current_model/
-        # fn_set_model in fenra_functions.py) exposing "the model this
-        # cycle is actually running on" to function calls. fn_set_model
-        # can change it during run_function_calls below - that's a
-        # request for *next* cycle (its own docstring says so), so it's
-        # re-read afterward into persisted_model rather than mutating
-        # tick_model itself (which already decided this cycle's actual
-        # payload/request, above).
-        self.current_model_name = tick_model
-        result_lines = run_function_calls(self, response_text)
-        persisted_model = self.current_model_name
-        # Same reasoning as model_manual_override's initial capture,
-        # above - re-save it here too, since fn_set_model (just run,
-        # possibly) sets it again for *next* cycle, after that initial
-        # capture already happened.
-        self._voice_manual_override[active_voice] = self.model_manual_override
-
-        display_text = response_text
-        if result_lines:
-            display_text = display_text + "\n\n" + "\n".join(result_lines)
-        if fabricated:
-            plural = len(fabricated) != 1
-            display_text = display_text + (
-                f"\n\n⟦NOTE: the RESULT block{'s' if plural else ''} above "
-                f"{'were' if plural else 'was'} not a code-generated result. "
-                f"You made {'them' if plural else 'it'} up. See the wiki entry on "
-                "Hallucinations - read_wiki(hallucinations).⟧"
-            )
-
-        entry = {
-            "timestamp": timestamp,
-            "fenra_version": FENRA_VERSION,
-            "request": payload,
-            "response": response_text,
-            "display": display_text,
-        }
-        active_history.append(entry)
-        append_voice_history(self.session_name, active_voice, entry)
-
-        self.last_thought = display_text
-        self._decrement_desires()
-        self._decrement_voice_inbox()
-
-        vstate.update({
-            "top": top_text,
-            "bottom": bottom_text,
-            "model": persisted_model,
-            "max_tokens": vstate.get("max_tokens", DEFAULT_MAX_TOKENS),
-            "last_thought": self.last_thought,
-            "desires": self.desires,
-            "inbox": self.inbox,
-            "context_window": context_window,
-            "model_rotation": self.model_rotation,
-            "model_rotation_index": self.model_rotation_index,
-            "groups_in": self.groups_in,
-            "groups_out": self.groups_out,
-            # v0.16.14 - re-read fresh from disk right here, at the very
-            # last possible moment, instead of trusting self.allowed_
-            # functions - see the SHRINK root-cause writeup in
-            # Qualia/decisions.md. self.allowed_functions is a single
-            # shared, unsynchronized attribute; _load_voice (bound to
-            # the voice dropdown, main thread) reassigns the exact same
-            # attribute the instant a human switches which voice is
-            # displayed, with zero coordination with this background
-            # tick thread. Since nothing ever legitimately lets a voice
-            # change its own allowed_functions mid-cycle (grant/approve/
-            # deny only ever write a *different* voice's persisted
-            # state), a fresh disk read here is always correct - unlike
-            # desires/inbox/groups/model_rotation, which a voice's own
-            # calls (add_desire, join_group, ...) or this same cycle's
-            # own aging (_decrement_desires/_decrement_voice_inbox)
-            # legitimately mutate in-place, so a blind fresh-read would
-            # silently discard real changes for those - not done here.
-            "allowed_functions": self._fresh_allowed_functions(active_voice),
-        })
-        save_voice_state(self.session_name, active_voice, vstate)
-
-        # v0.16.15 - The Hearth: this voice just had its one post-entry
-        # (or post-wake) tick - back to stasis until a new message
-        # arrives (see push_entry_to_voice's Hearth branch in the
-        # broadcast loop above, and _wake_hearth_resident). Only applies
-        # if this voice is actually a current Hearth resident.
-        if THE_HEARTH_NAME in self.groups_in:
-            hearth_meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
-            if hearth_meta and active_voice in hearth_meta.get("members", {}):
-                hearth_meta["members"][active_voice]["awake"] = False
-                save_group_meta(self.session_name, THE_HEARTH_NAME, hearth_meta)
-            self.hearth_stasis[active_voice] = True
-            self.root.after(0, self.save_session)
-
-        # Only touch the GUI widgets if the voice that just ran is also
-        # the one currently displayed - otherwise leave them exactly as
-        # they are, showing whatever Teddy or Qualia was actually looking
-        # at, and just note in the status bar that a different voice
-        # spoke.
-        if active_voice == displayed:
-            self.history = active_history
-            if persisted_model != self.model_var.get():
-                self.root.after(0, self.model_var.set, persisted_model)
-            self.root.after(0, self._refresh_desires_display)
-            self.root.after(0, self._refresh_model_rotation_display)
-            self.root.after(0, self._refresh_groups_display)
-            self.root.after(0, self._append_message, timestamp, display_text)
-            self.root.after(0, self._add_history_row, timestamp)
-            self.root.after(0, self._set_status, "Running")
-        else:
-            self.root.after(0, self._set_status, f"Running ('{active_voice}' spoke)")
-
-    def _append_message(self, timestamp, text):
-        self.middle_box.config(state="normal")
-        self.middle_box.insert("end", f"[{timestamp}]\n{text}\n\n")
-        self.middle_box.see("end")
-        self.middle_box.config(state="disabled")
-
-    def _add_history_row(self, timestamp):
-        self.history_listbox.insert("end", timestamp)
+        if active_voice == self.displayed_voice:
+            self.root.after(0, self._load_voice, active_voice)
+        self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
 
 
 def main():
     root = tk.Tk()
     app = FenraApp(root)
-
-    def on_close():
-        app.running = False
-        if app.session_name:
-            app.save_session()
-            if app.displayed_voice:
-                app.save_voice()
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
 
 
