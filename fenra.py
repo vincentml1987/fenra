@@ -282,10 +282,15 @@ def groups_containing(world_name, voice_name):
 # ------------------------------------------------------------------ model --
 
 def call_ollama(host, model, prompt):
+    # No fixed timeout, matching fenras-aletheosis's own REQUEST_TIMEOUT=None
+    # (its comment applies here too, unchanged): some models are legitimately
+    # slow, and a client-side timeout doesn't cancel server-side generation -
+    # it just abandons the connection while the server keeps working anyway,
+    # which can pile up rather than help.
     resp = requests.post(
         f"{host}/api/generate",
         json={"model": model, "prompt": prompt, "stream": False},
-        timeout=180,
+        timeout=None,
     )
     resp.raise_for_status()
     return resp.json().get("response", "")
