@@ -661,7 +661,27 @@ import fenra_functions
 #             resolve to the same group via load_group_meta's own
 #             sanitizing, but looked like two groups without normalizing
 #             first - see _session_group_names).
-FENRA_VERSION = "0.16.17"
+#   0.16.18 - Groups (including The Hearth) are now session-scoped,
+#             like voices already were - Teddy's direct correction,
+#             prompted by tribe-3's seed inheriting tribe-1's listener
+#             and tribe-2's explorer as family-group members just by
+#             reusing the name "seed" (groups lived at a single global
+#             groups/<name>/ path, keyed only by group name, shared
+#             across every session on disk - a deliberate v0.16.15
+#             choice, now reversed). Storage moves to
+#             sessions/<session>/groups/<name>/ - every group path
+#             function (owned_group_dir, load/save_group_meta,
+#             create_group_if_missing, append/read_group_log, etc.) now
+#             takes session_name. Existing sessions get fresh empty
+#             groups, not a migration of the old entangled data (Teddy's
+#             call) - the old top-level groups/ directory is simply
+#             orphaned, left on disk untouched. The Hearth becomes one
+#             per session as a direct consequence (THE_HEARTH_NAME is
+#             unchanged, only its storage location is now
+#             session-qualified). Topology tab narrows from "every
+#             session on disk" to the current session only, matching
+#             the same call.
+FENRA_VERSION = "0.16.18"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -1072,28 +1092,32 @@ GROUP_META_FILENAME = "meta.json"
 GROUP_LOG_FILENAME = "log.jsonl"
 
 
-def owned_group_dir(name):
+def groups_root_dir(session_name):
+    return os.path.join(session_dir(session_name), "groups")
+
+
+def owned_group_dir(session_name, name):
     name = sanitize_group_name(name)
     if not name or not _GROUP_NAME_RE.match(name):
         raise ValueError(
             "group names may only contain letters, numbers, underscores, and hyphens "
             f"(spaces and apostrophes get stripped/replaced automatically) - got '{name}'"
         )
-    return os.path.join(GROUPS_DIR, name)
+    return os.path.join(groups_root_dir(session_name), name)
 
 
-def ensure_owned_group_dir(name):
-    path = owned_group_dir(name)
+def ensure_owned_group_dir(session_name, name):
+    path = owned_group_dir(session_name, name)
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def group_meta_path(name):
-    return os.path.join(owned_group_dir(name), GROUP_META_FILENAME)
+def group_meta_path(session_name, name):
+    return os.path.join(owned_group_dir(session_name, name), GROUP_META_FILENAME)
 
 
-def group_log_path(name):
-    return os.path.join(owned_group_dir(name), GROUP_LOG_FILENAME)
+def group_log_path(session_name, name):
+    return os.path.join(owned_group_dir(session_name, name), GROUP_LOG_FILENAME)
 
 
 def default_group_meta(owner=None, kind="adhoc", join_policy="public", visibility="visible"):
@@ -1108,12 +1132,12 @@ def default_group_meta(owner=None, kind="adhoc", join_policy="public", visibilit
     }
 
 
-def group_exists(name):
-    return os.path.exists(group_meta_path(name))
+def group_exists(session_name, name):
+    return os.path.exists(group_meta_path(session_name, name))
 
 
-def load_group_meta(name):
-    path = group_meta_path(name)
+def load_group_meta(session_name, name):
+    path = group_meta_path(session_name, name)
     if not os.path.exists(path):
         return None
     try:
@@ -1123,15 +1147,15 @@ def load_group_meta(name):
         return None
 
 
-def save_group_meta(name, meta):
-    ensure_owned_group_dir(name)
-    with open(group_meta_path(name), "w", encoding="utf-8") as f:
+def save_group_meta(session_name, name, meta):
+    ensure_owned_group_dir(session_name, name)
+    with open(group_meta_path(session_name, name), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
-def create_group_if_missing(name, owner=None, kind="adhoc", join_policy="public", visibility="visible", initial_member=None):
+def create_group_if_missing(session_name, name, owner=None, kind="adhoc", join_policy="public", visibility="visible", initial_member=None):
     """Idempotent. Returns the (possibly pre-existing) meta dict."""
-    existing = load_group_meta(name)
+    existing = load_group_meta(session_name, name)
     if existing is not None:
         return existing
     meta = default_group_meta(owner=owner, kind=kind, join_policy=join_policy, visibility=visibility)
@@ -1140,11 +1164,11 @@ def create_group_if_missing(name, owner=None, kind="adhoc", join_policy="public"
             "direction": "both",
             "joined": meta["created"],
         }
-    save_group_meta(name, meta)
+    save_group_meta(session_name, name, meta)
     return meta
 
 
-def append_group_log(name, voice, text):
+def append_group_log(session_name, name, voice, text):
     """The canonical, complete record of a group's activity - Teddy/Qualia
     review only (see Qualia/decisions.md's 'private means opaque' /
     'canonical log' design). Never read back into any voice's own prompt -
@@ -1152,14 +1176,14 @@ def append_group_log(name, voice, text):
     receiving voice's own history.jsonl instead. Same tolerant-retry shape
     as the old append_group_entry, for the same reason (concurrent
     writers)."""
-    ensure_owned_group_dir(name)
+    ensure_owned_group_dir(session_name, name)
     entry = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "voice": voice,
         "text": text,
     }
     line = json.dumps(entry, ensure_ascii=False) + "\n"
-    path = group_log_path(name)
+    path = group_log_path(session_name, name)
     for attempt in range(5):
         try:
             with open(path, "a", encoding="utf-8") as f:
@@ -1171,13 +1195,13 @@ def append_group_log(name, voice, text):
             time.sleep(0.1)
 
 
-def read_group_log_tail(name, limit):
+def read_group_log_tail(session_name, name, limit):
     """Internal/Teddy-Qualia tooling only (e.g. a future Topology-style
     viewer) - never registered as a voice-facing function. Reading a
     group's history beyond what's already been pushed into a voice's own
     history.jsonl is exactly the 'world exploration' territory explicitly
     deferred, not part of this redesign."""
-    path = group_log_path(name)
+    path = group_log_path(session_name, name)
     if not os.path.exists(path):
         return []
     try:
@@ -1194,12 +1218,13 @@ def read_group_log_tail(name, limit):
     return out
 
 
-def list_owned_groups():
-    if not os.path.isdir(GROUPS_DIR):
+def list_owned_groups(session_name):
+    root = groups_root_dir(session_name)
+    if not os.path.isdir(root):
         return []
     return sorted(
-        d for d in os.listdir(GROUPS_DIR)
-        if os.path.isdir(os.path.join(GROUPS_DIR, d)) and group_exists(d)
+        d for d in os.listdir(root)
+        if os.path.isdir(os.path.join(root, d)) and group_exists(session_name, d)
     )
 
 
@@ -1497,7 +1522,7 @@ def ensure_own_family_group(session_name, voice_name):
     vstate should re-load or update their own copy after calling this."""
     gname = family_group_name(voice_name)
     meta = create_group_if_missing(
-        gname, owner=voice_name, kind="family", join_policy="private",
+        session_name, gname, owner=voice_name, kind="family", join_policy="private",
         visibility="visible", initial_member=voice_name,
     )
     vstate = load_voice_state(session_name, voice_name)
@@ -1535,10 +1560,10 @@ def ensure_hearth_membership(session_name, voice_name):
     vstate = load_voice_state(session_name, voice_name)
     if vstate.get("groups_in") or vstate.get("groups_out"):
         return False
-    meta = create_group_if_missing(THE_HEARTH_NAME, owner=None, kind="floor", join_policy="private", visibility="hidden")
+    meta = create_group_if_missing(session_name, THE_HEARTH_NAME, owner=None, kind="floor", join_policy="private", visibility="hidden")
     now = datetime.now().isoformat(timespec="seconds")
     meta["members"][voice_name] = {"direction": "both", "joined": now, "awake": True}
-    save_group_meta(THE_HEARTH_NAME, meta)
+    save_group_meta(session_name, THE_HEARTH_NAME, meta)
     vstate.setdefault("groups_in", []).append(THE_HEARTH_NAME)
     vstate.setdefault("groups_out", []).append(THE_HEARTH_NAME)
     save_voice_state(session_name, voice_name, vstate)
@@ -2039,15 +2064,16 @@ class FenraApp:
         self.group_detail_text.pack(fill="both", expand=True)
 
     def _session_group_names(self):
-        """Every group any voice in the CURRENT session belongs to,
-        reads from, writes to, or owns - unlike _scan_topology_data
-        (whole-disk, every session), this is pinned to self.session_voices.
-        Reuses the same load_voice_state/list_owned_groups/load_group_meta
-        helpers Topology already uses, just filtered down.
+        """Every group belonging to the CURRENT session. v0.16.18 - groups
+        are now stored under sessions/<session>/groups/, so
+        list_owned_groups(self.session_name) is already exactly this
+        session's own groups - no more filtering against
+        self.session_voices needed (a group literally cannot belong to
+        another session anymore).
 
-        Names run through sanitize_group_name() before being added to
-        the set - groups_in/groups_out/family_group store a voice's own
-        RAW family-group string ("seed's Children"), while
+        Names still run through sanitize_group_name() before being added
+        to the set - groups_in/groups_out/family_group store a voice's
+        own RAW family-group string ("seed's Children"), while
         list_owned_groups() returns the sanitized directory name
         ("seeds_children") that's actually on disk - both resolve to the
         same group via load_group_meta's own internal sanitizing, but
@@ -2060,10 +2086,7 @@ class FenraApp:
             state = load_voice_state(self.session_name, voice_name)
             names.update(sanitize_group_name(n) for n in state.get("groups_in", []))
             names.update(sanitize_group_name(n) for n in state.get("groups_out", []))
-        for g in list_owned_groups():
-            meta = load_group_meta(g)
-            if meta and meta.get("owner") in self.session_voices:
-                names.add(sanitize_group_name(g))
+        names.update(sanitize_group_name(g) for g in list_owned_groups(self.session_name))
         return sorted(names)
 
     def _populate_groups_list(self):
@@ -2077,7 +2100,7 @@ class FenraApp:
         if not selection:
             return
         name = self._current_group_names[selection[0]]
-        meta = load_group_meta(name) or {}
+        meta = load_group_meta(self.session_name, name) or {}
         lines = [
             f"Group: {name}",
             f"Owner: {meta.get('owner') or '(none)'}",
@@ -2144,8 +2167,8 @@ class FenraApp:
             return
         self.hearth_entry_var.set("")
         timestamp = datetime.now().isoformat(timespec="seconds")
-        append_group_log(THE_HEARTH_NAME, "teddy", text)
-        meta = load_group_meta(THE_HEARTH_NAME)
+        append_group_log(self.session_name, THE_HEARTH_NAME, "teddy", text)
+        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
         members = meta.get("members", {}) if meta else {}
         for member in members:
             pushed = push_entry_to_voice(self.session_name, member, "teddy", THE_HEARTH_NAME, text, timestamp)
@@ -2199,10 +2222,9 @@ class FenraApp:
         top_row.pack(fill="x", padx=6, pady=(6, 0))
         ttk.Label(
             top_row,
-            text="Groups (left) and voices (right, labeled session:voice). Blue = voice reads group, "
+            text="Groups (left) and voices (right), this session only. Blue = voice reads group, "
                  "orange = voice writes group, gray = both. Label on each line is when that voice was "
-                 "last actually heard there. Every session and voice on disk is scanned, not just this "
-                 "one - auto-refreshes every 10s.",
+                 "last actually heard there. Auto-refreshes every 10s.",
             wraplength=820,
             justify="left",
         ).pack(side="left", fill="x", expand=True)
@@ -2218,47 +2240,45 @@ class FenraApp:
         self.root.after(TOPOLOGY_REFRESH_MS, self._schedule_topology_refresh)
 
     def _scan_topology_data(self):
-        """Every voice's current groups_in/groups_out, read fresh from
-        disk across every session on disk - not just this process's own,
-        since other voices (session-mates or in an entirely different
-        session/process) may be active right now, possibly saving state
-        at the same moment this reads it. Voice names are qualified as
-        "session:voice" so two different sessions' voices sharing a
-        plain name (or two voices within the same session) never
-        collide on the graph. Read-only and tolerant of both a migrated
-        session (voices/<name>/state.json) and a legacy, never-reopened
-        one (a single implicit voice, its data still directly in the
-        session directory) - never migrates anything itself, unlike
-        _load_session. Paired with each relevant group's recent activity
-        (read_group_tail) to compute a last-active timestamp per
-        qualified voice. Best-effort throughout - a session or group
-        file mid-write by another process just gets skipped for this
-        pass, picked up again next refresh rather than raising."""
+        """Every voice's current groups_in/groups_out, this session only.
+        v0.16.18 - narrowed from a whole-disk, every-session scan
+        (groups used to be a single global store, so a group node could
+        legitimately connect voices from different sessions/processes -
+        now that groups are session-scoped storage, same as voices,
+        there's nothing left to aggregate across sessions for). Read-only
+        and tolerant of both a migrated session (voices/<name>/state.json)
+        and a legacy, never-reopened one (a single implicit voice, its
+        data still directly in the session directory) - never migrates
+        anything itself, unlike _load_session. Paired with each relevant
+        group's recent activity (read_group_log_tail) to compute a
+        last-active timestamp per voice. Best-effort throughout - a
+        session or group file mid-write by another process just gets
+        skipped for this pass, picked up again next refresh rather than
+        raising."""
         voices = {}
-        for session_name in list_sessions():
-            voice_names = list_voices(session_name)
-            if voice_names:
-                for voice_name in voice_names:
-                    state = load_voice_state(session_name, voice_name)
-                    g_in = list(state.get("groups_in", []))
-                    g_out = list(state.get("groups_out", []))
-                    if g_in or g_out:
-                        voices[f"{session_name}:{voice_name}"] = {"groups_in": g_in, "groups_out": g_out}
-            else:
-                # Legacy, never-reopened session - single implicit voice.
-                try:
-                    state = load_session_state(session_name)
-                except Exception:
-                    continue
+        voice_names = list_voices(self.session_name)
+        if voice_names:
+            for voice_name in voice_names:
+                state = load_voice_state(self.session_name, voice_name)
                 g_in = list(state.get("groups_in", []))
                 g_out = list(state.get("groups_out", []))
                 if g_in or g_out:
-                    voices[f"{session_name}:{DEFAULT_VOICE_NAME}"] = {"groups_in": g_in, "groups_out": g_out}
+                    voices[voice_name] = {"groups_in": g_in, "groups_out": g_out}
+        else:
+            # Legacy, never-reopened session - single implicit voice.
+            try:
+                state = load_session_state(self.session_name)
+            except Exception:
+                state = {}
+            g_in = list(state.get("groups_in", []))
+            g_out = list(state.get("groups_out", []))
+            if g_in or g_out:
+                voices[DEFAULT_VOICE_NAME] = {"groups_in": g_in, "groups_out": g_out}
 
         # v0.16.15 - reads the new canonical log (groups/<name>/log.jsonl),
         # not the legacy flat groups/<name>.jsonl - push delivery writes
         # activity there now via append_group_log, see _tick.
-        group_names = set(list_owned_groups())
+        group_names = set(list_owned_groups(self.session_name))
         for v in voices.values():
             group_names.update(v["groups_in"])
             group_names.update(v["groups_out"])
@@ -2266,7 +2286,7 @@ class FenraApp:
         last_active = {}
         for g in group_names:
             try:
-                tail = read_group_log_tail(g, 200)
+                tail = read_group_log_tail(self.session_name, g, 200)
             except ValueError:
                 continue
             for e in tail:
@@ -3042,7 +3062,7 @@ class FenraApp:
             lines = []
         if not lines:
             return
-        meta = load_group_meta(THE_HEARTH_NAME)
+        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
         members = meta.get("members", {}) if meta else {}
         for line in lines:
             try:
@@ -3052,7 +3072,7 @@ class FenraApp:
             if not text:
                 continue
             timestamp = datetime.now().isoformat(timespec="seconds")
-            append_group_log(THE_HEARTH_NAME, "qualia", text)
+            append_group_log(self.session_name, THE_HEARTH_NAME, "qualia", text)
             for member in members:
                 pushed = push_entry_to_voice(self.session_name, member, "qualia", THE_HEARTH_NAME, text, timestamp)
                 self._wake_hearth_resident(member)
@@ -3681,10 +3701,10 @@ class FenraApp:
         broadcast loop in _tick, send_teddy_hearth_message, and
         _poll_qualia_hearth_inbox."""
         self.hearth_stasis[voice_name] = False
-        meta = load_group_meta(THE_HEARTH_NAME)
+        meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
         if meta and voice_name in meta.get("members", {}):
             meta["members"][voice_name]["awake"] = True
-            save_group_meta(THE_HEARTH_NAME, meta)
+            save_group_meta(self.session_name, THE_HEARTH_NAME, meta)
 
     def _advance_model_rotation(self, current_model):
         """If this voice has added any models to its rotation
@@ -3865,8 +3885,8 @@ class FenraApp:
         push_timestamp = datetime.now().isoformat(timespec="seconds")
         for g in self.groups_out:
             try:
-                append_group_log(g, broadcast_identity, response_text)
-                meta = load_group_meta(g)
+                append_group_log(self.session_name, g, broadcast_identity, response_text)
+                meta = load_group_meta(self.session_name, g)
                 if meta is None:
                     continue
                 for member, info in meta.get("members", {}).items():
@@ -3967,10 +3987,10 @@ class FenraApp:
         # broadcast loop above, and _wake_hearth_resident). Only applies
         # if this voice is actually a current Hearth resident.
         if THE_HEARTH_NAME in self.groups_in:
-            hearth_meta = load_group_meta(THE_HEARTH_NAME)
+            hearth_meta = load_group_meta(self.session_name, THE_HEARTH_NAME)
             if hearth_meta and active_voice in hearth_meta.get("members", {}):
                 hearth_meta["members"][active_voice]["awake"] = False
-                save_group_meta(THE_HEARTH_NAME, hearth_meta)
+                save_group_meta(self.session_name, THE_HEARTH_NAME, hearth_meta)
             self.hearth_stasis[active_voice] = True
             self.root.after(0, self.save_session)
 

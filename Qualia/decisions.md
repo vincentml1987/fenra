@@ -2,6 +2,66 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-08 (v0.16.18 - groups (including The Hearth) become session-scoped)
+
+Teddy's direct correction, prompted by a real observation: restarting a
+brand-new `tribe-3` (single seed, exact tribe-1/tribe-2 starting shape),
+watching it create children, then checking the Groups tab showed
+`seed's Children` already containing `listener` (a real child tribe-1's
+own seed made) and `explorer` (tribe-2's), neither ever created in
+`tribe-3` at all. Root cause, confirmed by tracing `family_group_name`/
+`create_group_if_missing`: groups have lived at a single global
+`groups/<name>/` path since the v0.16.15 connectivity redesign, keyed
+only by group name - deliberately built that way at the time ("the
+process/machine boundary Groups was built around"), but it means any
+two sessions whose voices happen to share a name (every "seed") share
+the exact same family group, cross-session, by construction. Teddy:
+**"different sessions should have entirely different states, including
+group membership."**
+
+Went through Plan mode (real `fenra.py` restructuring, restart
+required) - plan at `C:\Users\Matt\.claude\plans\flickering-sprouting-church.md`.
+Confirmed three open calls with Teddy before building: **existing
+sessions get fresh empty groups**, not a migration/copy of the
+currently-entangled global data; **The Hearth becomes one per session**
+(was the one deliberate global exception - now isolated too, no
+exceptions); **Topology tab narrows to the current session only**,
+dropping its deliberate whole-install scan rather than qualifying group
+nodes `"session:group"` to match how voice nodes already were.
+
+**What changed**: every group storage function (`owned_group_dir`,
+`load_group_meta`, `save_group_meta`, `create_group_if_missing`,
+`append_group_log`, `read_group_log_tail`, `list_owned_groups`, etc.)
+now takes `session_name` and resolves under
+`sessions/<session>/groups/<name>/` - the exact same pattern voices
+already used. `ensure_own_family_group`/`ensure_hearth_membership`
+already took `session_name` as a parameter, so no signature change
+there, just their now-session-aware calls underneath - this is what
+makes The Hearth per-session for free, `THE_HEARTH_NAME` itself is
+unchanged. Every call site (roughly 20 in `fenra.py`, 18 in
+`fenra_functions.py`, the latter all via each function's own local
+`import fenra as _fenra`) already had a `session_name`/
+`app.session_name` in scope - a mechanical threading pass, not a design
+problem. Groups tab (`_session_group_names`) simplified: no more
+filtering a global list down to `self.session_voices`, since
+`list_owned_groups(session_name)` is now already exactly right.
+Topology tab rewritten to scan only `self.session_name` instead of
+`list_sessions()`, dropped the `"session:voice"` node-name
+qualification (nothing else in the live codebase parsed that format).
+Old top-level `groups/` directory and the pre-v0.16.15 legacy-format
+migration functions (`migrate_legacy_group`, `migrate_all_legacy_groups`,
+never auto-invoked) are left alone, orphaned/dead - Teddy's "fresh
+empty, no migration" call means there's nothing for them to do; no
+`.gitignore` change needed either (`sessions/<x>/groups/...` was
+already covered by the existing bare `sessions/` ignore rule).
+
+**Verified**: `python -c "import fenra"` clean; a scratch session
+confirmed a fresh family group and a fresh, session-scoped Hearth both
+land under `sessions/<name>/groups/`, with the old global `groups/`
+directory completely untouched. `tribe-3` was stopped cleanly (confirmed
+idle, two unchanged history-length reads) before this work and
+restarted after, on the new model.
+
 ## 2026-09-08 (v0.16.17 - GUI redesign built and shipped, "Engage, using auto mode")
 
 Full plan-mode pass (explore -> design agent -> plan file) against `Qualia/ui-redesign-proposal.md`'s finalized spec, then built straight through per Teddy's "Engage, using auto mode." Menu bar (File > Sessions replaces the session Combobox entirely), Voices tab (real list + Framing/Context detail panel - `allowed_functions` finally has a real GUI surface, a grant/revoke dual-list), Groups tab (session-scoped, view-only roster), `permission_mode` shown read-only for the first time, Session tab slimmed to just session-level controls. Every relocated widget (`top_box`/`bottom_box`/`model_var`/etc.) kept its original attribute name - `_current_voice_state_from_widgets`/`_save_voice_snapshot` needed zero changes.

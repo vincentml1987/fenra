@@ -695,7 +695,7 @@ def fn_create_group(app, args):
     raw_name, policy = match.group(1).strip(), (match.group(2) or "public").strip().lower()
     name = _fenra.sanitize_group_name(raw_name)
     try:
-        _fenra.owned_group_dir(name)  # validates charset, raises ValueError with a clear message
+        _fenra.owned_group_dir(app.session_name, name)  # validates charset, raises ValueError with a clear message
     except ValueError:
         raise
     if name == _fenra.THE_HEARTH_NAME:
@@ -705,10 +705,10 @@ def fn_create_group(app, args):
             "names ending in \"'s Children\" are reserved for family groups, created "
             "automatically the moment a voice is born - not something you create directly."
         )
-    if _fenra.group_exists(name):
+    if _fenra.group_exists(app.session_name, name):
         return f"'{name}' already exists - see list_groups()."
     _fenra.create_group_if_missing(
-        name, owner=app.current_voice_name, kind="adhoc",
+        app.session_name, name, owner=app.current_voice_name, kind="adhoc",
         join_policy=policy, visibility="visible", initial_member=app.current_voice_name,
     )
     if name not in app.groups_in:
@@ -728,12 +728,12 @@ def fn_list_groups(app, args):
     member of don't appear at all."""
     import fenra as _fenra
 
-    names = _fenra.list_owned_groups()
+    names = _fenra.list_owned_groups(app.session_name)
     if not names:
         return "(no groups exist yet - create_group(name) makes one)"
     parts = []
     for name in names:
-        meta = _fenra.load_group_meta(name)
+        meta = _fenra.load_group_meta(app.session_name, name)
         if meta is None:
             continue
         members = meta.get("members", {})
@@ -766,7 +766,7 @@ def fn_join_group(app, args):
     name = _fenra.sanitize_group_name(args[0])
     if name == _fenra.THE_HEARTH_NAME:
         raise ValueError("The Hearth can't be joined - it's the automatic floor for a voice with zero other groups.")
-    meta = _fenra.load_group_meta(name)
+    meta = _fenra.load_group_meta(app.session_name, name)
     if meta is None:
         raise ValueError(f"'{name}' doesn't exist - see list_groups(), or create_group({name}) to make it.")
     if app.current_voice_name in meta.get("members", {}):
@@ -779,7 +779,7 @@ def fn_join_group(app, args):
         "direction": "in",
         "joined": datetime.now().isoformat(timespec="seconds"),
     }
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     if name not in app.groups_in:
         app.groups_in.append(name)
     app.root.after(0, app._refresh_groups_display)
@@ -800,11 +800,11 @@ def fn_leave_group(app, args):
     name = _fenra.sanitize_group_name(args[0])
     if name == _fenra.THE_HEARTH_NAME:
         raise ValueError("The Hearth has no voice-facing membership control at all - not even leaving it yourself.")
-    meta = _fenra.load_group_meta(name)
+    meta = _fenra.load_group_meta(app.session_name, name)
     if meta is None or app.current_voice_name not in meta.get("members", {}):
         return f"wasn't in '{name}'."
     del meta["members"][app.current_voice_name]
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     if name in app.groups_in:
         app.groups_in.remove(name)
     if name in app.groups_out:
@@ -813,8 +813,8 @@ def fn_leave_group(app, args):
     return f"left '{name}'."
 
 
-def _load_owned_group_or_raise(_fenra, name, require_owner_voice=None):
-    meta = _fenra.load_group_meta(name)
+def _load_owned_group_or_raise(_fenra, session_name, name, require_owner_voice=None):
+    meta = _fenra.load_group_meta(session_name, name)
     if meta is None:
         raise ValueError(f"'{name}' doesn't exist - see list_groups().")
     if meta.get("kind") == "floor":
@@ -843,7 +843,7 @@ def fn_group_invite(app, args):
     if not match:
         raise ValueError("group_invite requires a group name and a target voice separated by | , e.g. group_invite(lobby|watcher).")
     name, target = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower().replace(" ", "_")
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     if target not in app.session_voices:
         raise ValueError(f"'{target}' isn't a voice in this session. See list_voices().")
     if target in meta.get("members", {}):
@@ -883,9 +883,9 @@ def fn_group_accept_invite(app, args):
     if not accepted:
         raise ValueError(f"no pending invite to '{name}' for you.")
     _save_function_requests(app.session_name, remaining)
-    meta = _load_owned_group_or_raise(_fenra, name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name)
     meta["members"][app.current_voice_name] = {"direction": "in", "joined": datetime.now().isoformat(timespec="seconds")}
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     if name not in app.groups_in:
         app.groups_in.append(name)
     app.root.after(0, app._refresh_groups_display)
@@ -907,13 +907,13 @@ def fn_group_kick(app, args):
     name = _fenra.sanitize_group_name(match.group(1))
     target = match.group(2).strip().lower().replace(" ", "_")
     dest = _fenra.sanitize_group_name(match.group(3)) if match.group(3) else None
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     if target not in meta.get("members", {}):
         return f"'{target}' isn't in '{name}'."
     if target == app.current_voice_name:
         raise ValueError("you can't kick yourself - use leave_group instead.")
     del meta["members"][target]
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     target_state = _fenra.load_voice_state(app.session_name, target)
     if name in target_state.get("groups_in", []):
         target_state["groups_in"].remove(name)
@@ -940,10 +940,10 @@ def fn_group_ban(app, args):
     match = _GROUP_TARGET_DEST_RE.match(args[0])
     name = _fenra.sanitize_group_name(match.group(1))
     target = match.group(2).strip().lower().replace(" ", "_")
-    meta = _fenra.load_group_meta(name)
+    meta = _fenra.load_group_meta(app.session_name, name)
     if meta is not None and target not in meta.get("banned", []):
         meta["banned"].append(target)
-        _fenra.save_group_meta(name, meta)
+        _fenra.save_group_meta(app.session_name, name, meta)
     return result + f" '{target}' is now banned from '{name}' - can't rejoin or be re-invited."
 
 
@@ -961,9 +961,9 @@ def fn_group_set_visibility(app, args):
     name, value = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower()
     if value not in ("hidden", "visible"):
         raise ValueError("visibility must be 'hidden' or 'visible'.")
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     meta["visibility"] = value
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     return f"'{name}' is now {value}."
 
 
@@ -980,9 +980,9 @@ def fn_group_set_join_policy(app, args):
     name, value = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip().lower()
     if value not in ("public", "private"):
         raise ValueError("join_policy must be 'public' or 'private'.")
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     meta["join_policy"] = value
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     return f"'{name}' is now {value}."
 
 
@@ -1009,11 +1009,11 @@ def fn_group_set_direction(app, args):
     direction = match.group(3).strip().lower()
     if direction not in ("in", "out", "both"):
         raise ValueError("direction must be 'in', 'out', or 'both'.")
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     if target not in meta.get("members", {}):
         raise ValueError(f"'{target}' isn't a member of '{name}' yet - invite or approve them first.")
     meta["members"][target]["direction"] = direction
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     return f"'{target}'s direction in '{name}' is now {direction}."
 
 
@@ -1035,7 +1035,7 @@ def fn_request_group_join(app, args):
     if not match:
         raise ValueError("request_group_join requires a group name and a reason separated by | , e.g. request_group_join(lobby|I'd like to help here).")
     name, reason = _fenra.sanitize_group_name(match.group(1)), match.group(2).strip()
-    meta = _fenra.load_group_meta(name)
+    meta = _fenra.load_group_meta(app.session_name, name)
     if meta is None:
         raise ValueError(f"'{name}' doesn't exist - see list_groups().")
     if app.current_voice_name in meta.get("members", {}):
@@ -1063,7 +1063,7 @@ def fn_check_group_requests(app, args):
     """List pending join requests for groups you own."""
     import fenra as _fenra
 
-    owned = {n for n in _fenra.list_owned_groups() if (_fenra.load_group_meta(n) or {}).get("owner") == app.current_voice_name}
+    owned = {n for n in _fenra.list_owned_groups(app.session_name) if (_fenra.load_group_meta(app.session_name, n) or {}).get("owner") == app.current_voice_name}
     requests = [
         r for r in _load_function_requests(app.session_name)
         if r.get("status") == "pending" and r.get("kind") == "group_join" and r.get("function_name") in owned
@@ -1087,7 +1087,7 @@ def fn_approve_group_request(app, args):
     if not match:
         raise ValueError("approve_group_request requires a voice and a group separated by | , e.g. approve_group_request(watcher|lobby).")
     target, name = match.group(1).strip().lower().replace(" ", "_"), _fenra.sanitize_group_name(match.group(2))
-    meta = _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    meta = _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     requests = _load_function_requests(app.session_name)
     remaining, found = [], False
     for r in requests:
@@ -1100,7 +1100,7 @@ def fn_approve_group_request(app, args):
         raise ValueError(f"no pending join request from '{target}' for '{name}' - see check_group_requests().")
     _save_function_requests(app.session_name, remaining)
     meta["members"][target] = {"direction": "in", "joined": datetime.now().isoformat(timespec="seconds")}
-    _fenra.save_group_meta(name, meta)
+    _fenra.save_group_meta(app.session_name, name, meta)
     target_state = _fenra.load_voice_state(app.session_name, target)
     if name not in target_state.get("groups_in", []):
         target_state.setdefault("groups_in", []).append(name)
@@ -1119,7 +1119,7 @@ def fn_deny_group_request(app, args):
     if not match:
         raise ValueError("deny_group_request requires a voice and a group separated by | , e.g. deny_group_request(watcher|lobby).")
     target, name = match.group(1).strip().lower().replace(" ", "_"), _fenra.sanitize_group_name(match.group(2))
-    _load_owned_group_or_raise(_fenra, name, require_owner_voice=app.current_voice_name)
+    _load_owned_group_or_raise(_fenra, app.session_name, name, require_owner_voice=app.current_voice_name)
     requests = _load_function_requests(app.session_name)
     remaining, found = [], False
     for r in requests:
@@ -1275,12 +1275,12 @@ def fn_create_voice(app, args):
     # only ever touches the parent's own group, never a grandparent's.
     _fenra.ensure_own_family_group(app.session_name, parent)
     parent_family = _fenra.family_group_name(parent)
-    parent_meta = _fenra.load_group_meta(parent_family) or _fenra.create_group_if_missing(
-        parent_family, owner=parent, kind="family", join_policy="private",
+    parent_meta = _fenra.load_group_meta(app.session_name, parent_family) or _fenra.create_group_if_missing(
+        app.session_name, parent_family, owner=parent, kind="family", join_policy="private",
         visibility="visible", initial_member=parent,
     )
     parent_meta["members"][name] = {"direction": "both", "joined": datetime.now().isoformat(timespec="seconds")}
-    _fenra.save_group_meta(parent_family, parent_meta)
+    _fenra.save_group_meta(app.session_name, parent_family, parent_meta)
     child_state = _fenra.load_voice_state(app.session_name, name)
     if parent_family not in child_state.get("groups_in", []):
         child_state.setdefault("groups_in", []).append(parent_family)
