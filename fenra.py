@@ -681,7 +681,16 @@ import fenra_functions
 #             session-qualified). Topology tab narrows from "every
 #             session on disk" to the current session only, matching
 #             the same call.
-FENRA_VERSION = "0.16.18"
+#   0.16.19 - Groups tab detail panel: Teddy's ask - each field (name,
+#             owner, kind, join policy, visibility, banned) is now its
+#             own real UI element (LabelFrame + label/value rows), not
+#             one flat text blob. The member list is a real, multi-
+#             selectable Listbox (_on_group_member_select) - click one
+#             or more members to see exactly what they've seen in this
+#             group (their own kind == "group_message" history entries
+#             tagged with it), merged and chronologically sorted with
+#             per-line attribution when more than one is selected.
+FENRA_VERSION = "0.16.19"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -1684,6 +1693,12 @@ class FenraApp:
         self.groups_in = []   # group names this voice hears - pushed straight into history, see push_entry_to_voice
         self.groups_out = []  # group names this voice broadcasts to each real cycle
         self.session_name = None
+        # v0.16.19 - Groups tab detail-panel selection state: which group
+        # is currently shown, and its members list in listbox-index order
+        # (so _on_group_member_select can map a selection index straight
+        # back to a voice name without re-parsing the display label).
+        self._current_group_name = None
+        self._current_group_member_names = []
 
         # Voices (v0.16.2): one session can hold several, individually
         # configured, round-robined through automatically - see
@@ -2041,7 +2056,17 @@ class FenraApp:
         membership changes only ever happen through the voice-driven
         consent-flow functions (join_group/group_invite/group_kick/...),
         never a GUI override. Same list+detail template as Voices/
-        History."""
+        History.
+
+        v0.16.19 - the right-hand detail panel was one flat ScrolledText
+        blob; Teddy's ask was for each field to be its own real UI
+        element, and for the member list to be genuinely interactive -
+        click one or more members to see what that voice (or voices)
+        has actually seen in this specific group. Mirrors
+        _build_voice_detail_panel's own vocabulary (LabelFrame sections,
+        label+value rows, an extended-selection Listbox like the
+        granted-functions dual-list) rather than inventing a new
+        style."""
         frame = self.groups_tab
 
         paned = ttk.Panedwindow(frame, orient="horizontal")
@@ -2060,8 +2085,45 @@ class FenraApp:
         scrollbar.pack(side="right", fill="y")
         self.groups_listbox.bind("<<ListboxSelect>>", self._on_group_select)
 
-        self.group_detail_text = scrolledtext.ScrolledText(right, wrap="word", state="disabled")
-        self.group_detail_text.pack(fill="both", expand=True)
+        self._build_group_detail_panel(right)
+
+    def _build_group_detail_panel(self, parent):
+        meta_frame = ttk.LabelFrame(parent, text="Group")
+        meta_frame.pack(fill="x", padx=4, pady=(0, 4))
+
+        self.group_name_var = tk.StringVar(value="")
+        self.group_owner_var = tk.StringVar(value="")
+        self.group_kind_var = tk.StringVar(value="")
+        self.group_join_policy_var = tk.StringVar(value="")
+        self.group_visibility_var = tk.StringVar(value="")
+        self.group_banned_var = tk.StringVar(value="")
+
+        for row, (label, var) in enumerate([
+            ("Name:", self.group_name_var),
+            ("Owner:", self.group_owner_var),
+            ("Kind:", self.group_kind_var),
+            ("Join policy:", self.group_join_policy_var),
+            ("Visibility:", self.group_visibility_var),
+            ("Banned:", self.group_banned_var),
+        ]):
+            row_frame = ttk.Frame(meta_frame)
+            row_frame.pack(fill="x", padx=4, pady=1)
+            ttk.Label(row_frame, text=label, width=12).pack(side="left")
+            ttk.Label(row_frame, textvariable=var).pack(side="left")
+
+        split = ttk.Frame(parent)
+        split.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+        members_col = ttk.LabelFrame(split, text="Members")
+        members_col.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        self.group_members_listbox = tk.Listbox(members_col, selectmode="extended", exportselection=False)
+        self.group_members_listbox.pack(fill="both", expand=True, padx=2, pady=2)
+        self.group_members_listbox.bind("<<ListboxSelect>>", self._on_group_member_select)
+
+        seen_col = ttk.LabelFrame(split, text="Seen in this group")
+        seen_col.pack(side="left", fill="both", expand=True)
+        self.group_seen_text = scrolledtext.ScrolledText(seen_col, wrap="word", state="disabled")
+        self.group_seen_text.pack(fill="both", expand=True, padx=2, pady=2)
 
     def _session_group_names(self):
         """Every group belonging to the CURRENT session. v0.16.18 - groups
@@ -2100,24 +2162,66 @@ class FenraApp:
         if not selection:
             return
         name = self._current_group_names[selection[0]]
+        self._current_group_name = name
         meta = load_group_meta(self.session_name, name) or {}
-        lines = [
-            f"Group: {name}",
-            f"Owner: {meta.get('owner') or '(none)'}",
-            f"Kind: {meta.get('kind', '?')}",
-            f"Join policy: {meta.get('join_policy', '?')}",
-            f"Visibility: {meta.get('visibility', '?')}",
-            "",
-            "Members:",
-        ]
-        for voice, info in sorted(meta.get("members", {}).items()):
-            lines.append(f"  {voice}: {info.get('direction', '?')} (joined {info.get('joined', '?')})")
-        lines.append("")
-        lines.append("Banned: " + (", ".join(meta.get("banned", [])) or "(none)"))
-        self.group_detail_text.config(state="normal")
-        self.group_detail_text.delete("1.0", "end")
-        self.group_detail_text.insert("end", "\n".join(lines))
-        self.group_detail_text.config(state="disabled")
+
+        self.group_name_var.set(name)
+        self.group_owner_var.set(meta.get("owner") or "(none)")
+        self.group_kind_var.set(meta.get("kind", "?"))
+        self.group_join_policy_var.set(meta.get("join_policy", "?"))
+        self.group_visibility_var.set(meta.get("visibility", "?"))
+        self.group_banned_var.set(", ".join(meta.get("banned", [])) or "(none)")
+
+        self._current_group_member_names = sorted(meta.get("members", {}).items())
+        self.group_members_listbox.delete(0, "end")
+        for voice, info in self._current_group_member_names:
+            self.group_members_listbox.insert(
+                "end", f"{voice}: {info.get('direction', '?')} (joined {info.get('joined', '?')})"
+            )
+        self._set_group_seen_text("(select one or more members above to see what they've seen here)")
+
+    def _on_group_member_select(self, event):
+        """v0.16.19 - what a member has actually SEEN in the currently
+        selected group: exactly its own kind == "group_message" history
+        entries tagged with this group (push_entry_to_voice's delivery
+        shape, fenra.py:~1590) - not its own broadcasts into the group,
+        which never come back to the sender as a group_message (see the
+        `if member == active_voice: continue` skip in _tick's broadcast
+        loop) and already show up in that voice's own History tab
+        regardless. Multiple selected members merge into one
+        chronological, per-line-attributed list - single vs. multi
+        selection is the same code path, no special case."""
+        selection = self.group_members_listbox.curselection()
+        if not selection or not self._current_group_name:
+            self._set_group_seen_text("(select one or more members above to see what they've seen here)")
+            return
+        target_group = self._current_group_name
+        seen = []
+        for index in selection:
+            voice_name, _info = self._current_group_member_names[index]
+            for entry in load_voice_history(self.session_name, voice_name):
+                if entry.get("kind") != "group_message":
+                    continue
+                if sanitize_group_name(entry.get("group", "")) != target_group:
+                    continue
+                seen.append((
+                    entry.get("timestamp", ""),
+                    voice_name,
+                    entry.get("from_voice", "?"),
+                    entry.get("response", entry.get("display", "")),
+                ))
+        if not seen:
+            self._set_group_seen_text("(nothing seen here yet by the selected member(s))")
+            return
+        seen.sort(key=lambda row: row[0])
+        lines = [f"({ts}) seen by {voice_name}, from {from_voice}: {text}" for ts, voice_name, from_voice, text in seen]
+        self._set_group_seen_text("\n".join(lines))
+
+    def _set_group_seen_text(self, text):
+        self.group_seen_text.config(state="normal")
+        self.group_seen_text.delete("1.0", "end")
+        self.group_seen_text.insert("end", text)
+        self.group_seen_text.config(state="disabled")
 
     def _build_chat_tab(self):
         frame = self.chat_tab

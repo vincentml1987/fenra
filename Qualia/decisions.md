@@ -2,6 +2,40 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-08 (v0.16.19 - Groups tab: individual fields + per-member "seen in this group")
+
+Teddy's ask, straight after the session-scoping fix: the Groups tab's
+detail panel was one flat `ScrolledText` blob - wanted each field
+(name, owner, kind, join policy, visibility, banned) as its own real UI
+element, and the member list genuinely interactive - click one or more
+members to see what that voice (or voices) has actually seen in this
+specific group. Went through Plan mode (real GUI restructuring, restart
+required); plan at `C:\Users\Matt\.claude\plans\flickering-sprouting-church.md`.
+
+**Design call, checked against the actual architecture rather than
+assumed**: "seen in this group" = exactly a voice's own
+`kind == "group_message"` history entries tagged with that group
+(`push_entry_to_voice`'s delivery shape) - deliberately excludes a
+voice's own broadcasts into the group, since the sender is always
+skipped on delivery (`_tick`'s broadcast loop) and their own words
+already live in their own History tab regardless of any group. Reused
+`_build_voice_detail_panel`'s existing vocabulary (LabelFrame sections,
+label+value rows, an extended-selection Listbox like the granted-
+functions dual-list) rather than inventing new style. New
+`_on_group_member_select` merges multiple selected members'
+matches into one chronological, per-line-attributed list - single vs.
+multi selection is the same code path.
+
+**Verified functionally, not just by inspection**: a scratch session
+(two voices, a shared adhoc group, two real `push_entry_to_voice`
+calls) driven headlessly through the actual `FenraApp` methods
+(`_on_group_select`/`_on_group_member_select`) - confirmed the field
+StringVars, the members listbox contents, the correct filtered "seen"
+text for the receiving voice, correctly-empty text for the sender (she
+never sees her own broadcast come back to her), and the merged
+multi-select view. `tribe-3` stopped cleanly before this work (confirmed
+idle) and left stopped - not yet restarted after this pass.
+
 ## 2026-09-08 (v0.16.18 - groups (including The Hearth) become session-scoped)
 
 Teddy's direct correction, prompted by a real observation: restarting a
