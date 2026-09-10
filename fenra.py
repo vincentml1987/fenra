@@ -36,11 +36,14 @@ THE LOOP: one voice per tick, simple round-robin across the world's
 voice list. Build the prompt as context + HUD (`build_hud()`), call
 Ollama, get the raw response, run it through `run_function_calls()`
 (2026-09-09 - functions are back, no permission layer this round, every
-voice can call everything) so any real `⟦function_name(args)⟧` calls
-resolve into `⟦RESULT: ...⟧` text folded into that same response - the
-whole thing (thought + any real results) IS what gets saved. Append it
-to the speaker's own context, then to every OTHER member's context for
-every group the speaker belongs to (deduped across overlapping groups).
+voice can call everything). That returns two versions of the response
+(2026-09-10): the real one, with any `⟦function_name(args)⟧` calls
+resolved into `⟦RESULT: ...⟧` text folded in - that's what the speaker's
+own context gets - and a masked one, where every call becomes a plain
+"(*speaker called name*)" notice with no arguments and no result at all
+- that's what every OTHER member of every group the speaker belongs to
+gets instead (deduped across overlapping groups). A voice can always see
+what it did; bystanders only see that something happened, not what.
 
 THE HUD: the last thing in every prompt, computed fresh every tick and
 never persisted to context (Teddy's call, 2026-09-09 - it reflects live
@@ -461,14 +464,24 @@ FUNCTION_REGISTRY = {
 
 
 def run_function_calls(world_name, caller_name, response_text):
-    """Scans response_text for every ⟦function_name(args)⟧ call, runs
-    each one for real, and returns response_text with a ⟦RESULT: ...⟧
-    line appended per call - the combined text becomes what actually
-    gets saved and broadcast (see module docstring). No calls found ->
-    response_text returned unchanged."""
+    """Scans response_text for every ⟦function_name(args)⟧ call and runs
+    each one for real. Returns a (full_text, masked_text) pair:
+
+    - full_text: response_text with a ⟦RESULT: ...⟧ line appended per
+      call - what the caller's own context gets (they made the call,
+      they see what it actually did).
+    - masked_text: response_text with each call replaced by a plain
+      "(*caller called name*)" notice - no arguments, no result, ever -
+      what gets broadcast to everyone else in a shared group (Teddy's
+      call, 2026-09-10: calling a function shouldn't be any more visible
+      to bystanders than a real action is - they can see *that* it
+      happened, not the details, unless the caller chooses to say so in
+      their own words).
+
+    No calls found -> both entries are response_text unchanged."""
     matches = list(FUNCTION_CALL_RE.finditer(response_text))
     if not matches:
-        return response_text
+        return response_text, response_text
 
     result_lines = []
     for match in matches:
@@ -483,7 +496,11 @@ def run_function_calls(world_name, caller_name, response_text):
         except Exception as exc:
             result_lines.append(f"⟦RESULT: {name} -> error: {exc}⟧")
 
-    return response_text + "\n" + "\n".join(result_lines)
+    full_text = response_text + "\n" + "\n".join(result_lines)
+    masked_text = FUNCTION_CALL_RE.sub(
+        lambda m: f"(*{caller_name} called {m.group(1)}*)", response_text
+    )
+    return full_text, masked_text
 
 
 # ------------------------------------------------------------------ model --
@@ -1072,13 +1089,17 @@ class FenraApp:
         response = response.strip()
         if not response:
             return
-        response = run_function_calls(self.world_name, active_voice, response)
+        full_response, masked_response = run_function_calls(self.world_name, active_voice, response)
 
         timestamp = datetime.now().isoformat(timespec="seconds")
-        line = f"[{timestamp}] {active_voice}: {response}"
+        full_line = f"[{timestamp}] {active_voice}: {full_response}"
+        masked_line = f"[{timestamp}] {active_voice}: {masked_response}"
 
-        # The speaker's own record - same format as everyone else sees.
-        append_to_context(self.world_name, active_voice, line)
+        # The speaker's own record - the real thing, calls and results
+        # both. Everyone else sees the masked version (see
+        # run_function_calls) - that a call happened, never its
+        # arguments or result.
+        append_to_context(self.world_name, active_voice, full_line)
 
         # Every OTHER member of every group the speaker belongs to - one
         # append per listener max, even if they share more than one
@@ -1090,7 +1111,7 @@ class FenraApp:
                 if member in already_notified:
                     continue
                 already_notified.add(member)
-                append_to_context(self.world_name, member, line)
+                append_to_context(self.world_name, member, masked_line)
 
         if active_voice == self.displayed_voice:
             self.root.after(0, self._load_voice, active_voice)
