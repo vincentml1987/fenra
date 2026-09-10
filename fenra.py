@@ -712,15 +712,16 @@ def _mask_for_call(caller_name, name, args_text):
     per-function action mask (FUNCTION_REGISTRY[name]["mask"]),
     rendered with {caller} and {arg0} (see _first_pipe_arg). An
     unrecognized function name (no registry entry - a hallucinated
-    call) falls back to the old generic "(*caller called name*)"
-    notice, since there's no mask template to pull from."""
+    call, no real mask to pull from) falls back to a WoW-nod easter egg
+    (Teddy's call, 2026-09-10): "makes some strange gestures" - the
+    classic failed-cast flavor text."""
     meta = FUNCTION_REGISTRY.get(name)
     if not meta or "mask" not in meta:
-        return f"(*{caller_name} called {name}*)"
+        return f"(*{caller_name} makes some strange gestures.*)"
     try:
         return meta["mask"].format(caller=caller_name, arg0=_first_pipe_arg(args_text))
     except (KeyError, IndexError):
-        return f"(*{caller_name} called {name}*)"
+        return f"(*{caller_name} makes some strange gestures.*)"
 
 
 def run_function_calls(world_name, caller_name, response_text):

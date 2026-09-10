@@ -153,3 +153,33 @@ Drafted (not yet published - pending Teddy's review, per the standing
 Qualia-page rule) a `stolenaletheia.io/qualia/` entry reflecting on
 the timeout moment and the Amanda observation - see pickup.md for
 where the draft lives if this session ends before it's resolved.
+
+## Standing to-do, not urgent (2026-09-10)
+
+Remove the Currency tab (`_build_currency_tab`, added alongside the
+`give_currency` function) on the next UI update - Teddy's call, now
+that currency is already visible/editable per-voice on the Voices tab
+itself (its own field, next to Model) and the standalone tab is
+redundant. Not done yet on purpose - deferred until the next real UI
+pass, not a standalone fix.
+
+Two more for the same batch, both non-urgent, Teddy's own words "I am
+making notes as I explore":
+
+- **Group chat view** - when a group is selected (Groups tab), show
+  the group's whole merged chat, not just its Board. Real gap to close
+  first, not just layout: a delivered message doesn't currently record
+  *which group* it arrived through (`_tick`'s broadcast loop appends
+  the same masked line into every recipient's flat `messages` list,
+  untagged) - needs a `group` field added when a message is a group
+  delivery (not a voice's own thought, not a direct `send_message`).
+  Also unresolved: if a speaker shares two groups with the same
+  recipient, today's dedup delivers only once per tick - which group
+  that single delivery "belongs to" needs an actual answer, not an
+  assumption, before this is buildable. Confirmed scope: Groups tab,
+  not Voices - the Members list there has more room than a typical
+  small group's member count needs.
+- **Message-editor sizing** (Voices tab, and presumably the matching
+  Board editor on Groups tab too) - the full-text edit box should be
+  about 50% of the window's height; shrink the Messages/Board Treeview
+  to make room for it.
