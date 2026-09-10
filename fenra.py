@@ -14,19 +14,25 @@ THE MODEL, exactly as specified:
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - model, identity, context, currency. `behavior` existed in the
+- Voice - model, identity, messages, currency. `behavior` existed in the
   first pass and is gone (2026-09-09) - it was the same boilerplate for
   every voice, and the HUD below (ending in identity) replaces what it
   was doing. `currency` (2026-09-09, default 10.0) is a real, if simple,
   balance any voice can move via `give_currency` - genuinely
   exploratory, no plan for it beyond seeing what they do with it once
-  they can see it and move it. context is a single free-text field,
-  fully editable by Teddy at any time ("even context," his words) - not
-  a fixed-size window, not a separate history file. It grows by plain
-  string append: every time a voice thinks, and every time a fellow
-  group member's thought lands, one line gets appended: "[timestamp]
-  name: text" - the SAME format whether it's the voice's own thought or
-  an incoming one, no special case for self vs. other.
+  they can see it and move it. `messages` (2026-09-10 - replaces the
+  original flat `context` string) is a real list of structured entries
+  (`{id, timestamp, speaker, text}`, stable `id`), fully editable by
+  Teddy at any time down to one specific message ("even context," his
+  words, extended into an actual data structure instead of a text blob)
+  - not a fixed-size window, not a separate history file. It grows by
+  `append_message`: every time a voice thinks, and every time a fellow
+  group member's thought lands, one entry gets appended - the SAME
+  shape whether it's the voice's own thought or an incoming one, no
+  special case for self vs. other. `render_messages` flattens the list
+  back into the exact `"[timestamp] name: text"` text the model has
+  always received - the storage/GUI changed, what Ollama sees given the
+  same content did not.
 - Group - name, members (a list of voice names), and `board` (2026-09-10
   - see FUNCTIONS below). No owner, no join_policy, no visibility, no
   direction on membership itself - manually managed only, entirely from
@@ -60,7 +66,23 @@ see whether visibility on its own changes anything) - and how to call/
 discover functions (hard-coded, same reasoning as the old branch's
 bootstrap notice - the calling convention is mechanics, not content, so
 it isn't optional) - ending with its own identity line as the literal
-last line of the entire prompt.
+last line of the entire prompt. `hud_fields()` (2026-09-10) returns the
+same pieces as plain data, not text - `build_hud` formats them, and the
+GUI's read-only HUD summary (Voices tab) calls the identical function,
+so the two can never drift apart.
+
+THE GUI is object-oriented (2026-09-10): select a voice or group in its
+list, its properties appear underneath - nothing duplicated across
+tabs. Group membership and a group's board are properties of the
+*group*, edited only from the Groups tab (a Board panel there, matching
+the Messages panel below) - never from Voices, even though a voice's
+HUD summary displays derived facts about both (which groups it's in,
+who it can/can't see, board activity) - those stay read-only there on
+purpose, since editing them has no sensible meaning outside the group
+that actually owns them. A voice's Messages panel (Voices tab) is a
+real multi-column list (id/timestamp/speaker/text) - select a row to
+edit or delete that one message, or add a new one - not a single text
+blob.
 
 FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
 `⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
@@ -217,7 +239,7 @@ def default_voice_state():
     return {
         "model": DEFAULT_MODEL,
         "identity": "",
-        "context": "",
+        "messages": [],
         "currency": 10.0,
     }
 
@@ -249,17 +271,34 @@ def delete_voice(world_name, voice_name):
         shutil.rmtree(path)
 
 
-def append_to_context(world_name, voice_name, line):
-    """The one and only way a voice's context grows - a plain string
-    append, same format for a voice's own thought or an incoming one
-    from a fellow group member (see the module docstring). Re-reads
-    from disk immediately before appending rather than trusting an
-    in-memory copy, so a concurrent write (Teddy editing Context in the
-    GUI at the same moment) can't get silently clobbered."""
+def append_message(world_name, voice_name, speaker, text, timestamp=None):
+    """The one and only way a voice's message history grows - appends a
+    real structured entry ({id, timestamp, speaker, text}), same shape
+    whether it's the voice's own thought or an incoming one from a
+    fellow group member (see the module docstring). Re-reads from disk
+    immediately before appending rather than trusting an in-memory copy,
+    so a concurrent write (Teddy editing a message in the GUI at the
+    same moment) can't get silently clobbered. `id` is stable
+    (max existing + 1) - the same pattern board posts already use."""
     state = load_voice_state(world_name, voice_name)
-    existing = state.get("context", "")
-    state["context"] = (existing + ("\n" if existing else "") + line)
+    messages = state.get("messages", [])
+    next_id = max((m["id"] for m in messages), default=0) + 1
+    messages.append({
+        "id": next_id,
+        "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
+        "speaker": speaker,
+        "text": text,
+    })
+    state["messages"] = messages
     save_voice_state(world_name, voice_name, state)
+
+
+def render_messages(messages):
+    """Flattens a voice's structured message list back into the exact
+    text the model has always received - "[timestamp] speaker: text"
+    per line, newline-joined. Storage/GUI changed (2026-09-10); what
+    Ollama sees given the same content did not."""
+    return "\n".join(f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in messages)
 
 
 # ------------------------------------------------------------------ groups --
@@ -333,12 +372,11 @@ def groups_containing(world_name, voice_name):
     return out
 
 
-def build_hud(world_name, voice_name):
-    """The last thing in a voice's prompt (see module docstring) -
-    computed fresh every tick, never written to state.json. Own
-    name/model, own groups, every group in the world, who's currently
-    seen (shares a group), who exists but isn't seen, then the voice's
-    own identity line as the literal last line."""
+def hud_fields(world_name, voice_name):
+    """Every piece build_hud's text is made of, as plain data - the GUI
+    (Voices tab HUD summary) calls this directly instead of parsing
+    build_hud's string, so the two can never drift out of sync (Teddy's
+    call, 2026-09-10)."""
     state = load_voice_state(world_name, voice_name)
     own_groups = groups_containing(world_name, voice_name)
     all_groups = list_groups(world_name)
@@ -361,7 +399,6 @@ def build_hud(world_name, voice_name):
         unread = sum(1 for p in board if voice_name not in p.get("seen", {}))
         skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
         board_counts.append(f"{gname}: {unread} unread, {skimmed} skimmed")
-    board_line = "Board activity: " + (", ".join(board_counts) if board_counts else "none")
 
     # Everyone's balance, not just your own (Teddy's call, 2026-09-10) -
     # full transparency rather than a private number, deliberately with
@@ -371,23 +408,44 @@ def build_hud(world_name, voice_name):
         v_state = state if v == voice_name else load_voice_state(world_name, v)
         balances.append((v, v_state.get("currency", 0.0)))
     balances.sort(key=lambda pair: (-pair[1], pair[0]))
+
+    return {
+        "model": state.get("model", DEFAULT_MODEL),
+        "own_groups": own_groups,
+        "all_groups": all_groups,
+        "seen": sorted(seen),
+        "unseen": unseen,
+        "board_counts": board_counts,
+        "balances": balances,
+        "identity": state.get("identity", ""),
+    }
+
+
+def build_hud(world_name, voice_name):
+    """The last thing in a voice's prompt (see module docstring) -
+    computed fresh every tick, never written to state.json. Own
+    name/model, own groups, every group in the world, who's currently
+    seen (shares a group), who exists but isn't seen, then the voice's
+    own identity line as the literal last line."""
+    f = hud_fields(world_name, voice_name)
+    board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
     currency_line = "Currency levels (everyone): " + ", ".join(
-        f"{v}: ${amt:.2f}" for v, amt in balances
+        f"{v}: ${amt:.2f}" for v, amt in f["balances"]
     )
 
     lines = [
         "Everything above this line is your thoughts. Everything below is your HUD.",
         f"Name: {voice_name}",
-        f"Model: {state.get('model', DEFAULT_MODEL)}",
-        f"Your groups: {', '.join(own_groups) if own_groups else 'none'}",
-        f"All groups in this world: {', '.join(all_groups) if all_groups else 'none'}",
-        f"Voices you can see: {', '.join(sorted(seen)) if seen else 'none'}",
-        f"Voices that exist but you cannot see: {', '.join(unseen) if unseen else 'none'}",
+        f"Model: {f['model']}",
+        f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
+        f"All groups in this world: {', '.join(f['all_groups']) if f['all_groups'] else 'none'}",
+        f"Voices you can see: {', '.join(f['seen']) if f['seen'] else 'none'}",
+        f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
         board_line,
         currency_line,
         "You can call functions by writing ⟦function_name(args)⟧ in your "
         "response - try ⟦functions()⟧ to see everything available to you.",
-        state.get("identity", ""),
+        f["identity"],
     ]
     return "\n".join(lines)
 
@@ -448,11 +506,11 @@ def _first_and_last_sentence(text):
 
 def fn_send_message(world_name, caller_name, args_text):
     """A direct message to one specific voice - the Slack-DM equivalent.
-    Delivered straight into the target's real, persisted context via the
-    same append_to_context every group broadcast already uses, just
-    addressed to one voice and wrapped in an explicit flag so it reads
-    as a message rather than ordinary group chatter (Teddy's call,
-    2026-09-09 - not a separate transitory mechanism)."""
+    Delivered straight into the target's real, persisted messages via
+    the same append_message every group broadcast already uses, just
+    addressed to one voice and wrapped in an explicit flag so the text
+    itself reads as a message rather than ordinary group chatter
+    (Teddy's call, 2026-09-09 - not a separate transitory mechanism)."""
     target, text = _parse_target_and_rest(args_text)
     if target not in list_voices(world_name):
         raise ValueError(f"'{target}' isn't a voice in this world")
@@ -461,11 +519,11 @@ def fn_send_message(world_name, caller_name, args_text):
     if not text:
         raise ValueError("no message text given")
     timestamp = datetime.now().isoformat(timespec="seconds")
-    line = (
+    wrapped = (
         f"***You received the following message from {caller_name} at "
         f"{timestamp}*** {text} ***End Message from {caller_name}***"
     )
-    append_to_context(world_name, target, line)
+    append_message(world_name, target, caller_name, wrapped, timestamp)
     return f"message sent to {target}"
 
 
@@ -753,8 +811,12 @@ class FenraApp:
 
         self._current_voice_names = []   # listbox-index -> voice name
         self.displayed_voice = None
+        self._current_messages = []      # this voice's messages, as loaded
+        self.selected_message_id = None
         self._current_group_names = []   # listbox-index -> group name
         self.displayed_group = None
+        self._current_board = []         # this group's board, as loaded
+        self.selected_post_id = None
 
         self._build_menu()
         self._build_ui()
@@ -856,17 +918,62 @@ class FenraApp:
         params_row.pack(fill="x", pady=(0, 4))
         ttk.Label(params_row, text="Model:").pack(side="left")
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=24, state="normal")
+        self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=20, state="normal")
         self.model_combo.pack(side="left", padx=(2, 4))
         ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left")
+        ttk.Label(params_row, text="Currency: $").pack(side="left", padx=(14, 0))
+        self.currency_var = tk.StringVar(value="10.00")
+        ttk.Entry(params_row, textvariable=self.currency_var, width=10).pack(side="left")
 
         ttk.Label(right, text="Identity (last line of the HUD, every cycle):").pack(anchor="w", padx=2)
-        self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=6)
+        self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=4)
         self.identity_box.pack(fill="x", padx=2, pady=(0, 4))
 
-        ttk.Label(right, text="Context (grows automatically - fully editable):").pack(anchor="w", padx=2)
-        self.context_box = scrolledtext.ScrolledText(right, wrap="word")
-        self.context_box.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+        hud_frame = ttk.LabelFrame(
+            right, text="HUD (read-only - membership/board managed from the Groups tab)"
+        )
+        hud_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.hud_summary_box = tk.Text(hud_frame, wrap="word", height=5, state="disabled")
+        self.hud_summary_box.pack(fill="x", padx=4, pady=4)
+
+        messages_frame = ttk.LabelFrame(right, text="Messages")
+        messages_frame.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+
+        msg_top_bar = ttk.Frame(messages_frame)
+        msg_top_bar.pack(fill="x", padx=4, pady=(4, 0))
+        ttk.Button(msg_top_bar, text="New message", command=self.new_message).pack(side="left", padx=2)
+        ttk.Button(msg_top_bar, text="Save message", command=self.save_message).pack(side="left", padx=2)
+        ttk.Button(msg_top_bar, text="Delete message", command=self.delete_message).pack(side="left", padx=2)
+
+        tree_frame = ttk.Frame(messages_frame)
+        tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        msg_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
+        self.messages_tree = ttk.Treeview(
+            tree_frame,
+            columns=("id", "timestamp", "speaker", "text"),
+            show="headings",
+            yscrollcommand=msg_scrollbar.set,
+            height=6,
+        )
+        for col, width in (("id", 40), ("timestamp", 130), ("speaker", 90), ("text", 400)):
+            self.messages_tree.heading(col, text=col.capitalize())
+            self.messages_tree.column(col, width=width, stretch=(col == "text"))
+        msg_scrollbar.config(command=self.messages_tree.yview)
+        self.messages_tree.pack(side="left", fill="both", expand=True)
+        msg_scrollbar.pack(side="right", fill="y")
+        self.messages_tree.bind("<<TreeviewSelect>>", self._on_message_select)
+
+        edit_frame = ttk.Frame(messages_frame)
+        edit_frame.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Label(edit_frame, text="Timestamp:").grid(row=0, column=0, sticky="w")
+        self.msg_timestamp_var = tk.StringVar(value="")
+        ttk.Entry(edit_frame, textvariable=self.msg_timestamp_var, width=22).grid(row=0, column=1, sticky="w", padx=(2, 12))
+        ttk.Label(edit_frame, text="Speaker:").grid(row=0, column=2, sticky="w")
+        self.msg_speaker_var = tk.StringVar(value="")
+        ttk.Entry(edit_frame, textvariable=self.msg_speaker_var, width=16).grid(row=0, column=3, sticky="w", padx=(2, 0))
+        self.msg_text_box = scrolledtext.ScrolledText(edit_frame, wrap="word", height=4)
+        self.msg_text_box.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
+        edit_frame.grid_columnconfigure(3, weight=1)
 
     def _populate_voices_list(self):
         self._current_voice_names = list_voices(self.world_name)
@@ -887,16 +994,116 @@ class FenraApp:
         state = load_voice_state(self.world_name, name)
         self.displayed_voice = name
         self.model_var.set(state.get("model", DEFAULT_MODEL))
+        self.currency_var.set(f"{state.get('currency', 0.0):.2f}")
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
-        self.context_box.delete("1.0", "end")
-        self.context_box.insert("end", state.get("context", ""))
+        self._refresh_hud_summary(name)
+        self._current_messages = state.get("messages", [])
+        self._populate_messages_tree()
+        self._clear_message_edit()
+
+    def _refresh_hud_summary(self, name):
+        """Read-only - see hud_fields() for the actual data, shared with
+        build_hud() so this can never drift out of sync with what the
+        voice really receives."""
+        f = hud_fields(self.world_name, name)
+        board_summary = ", ".join(f["board_counts"]) if f["board_counts"] else "none"
+        lines = [
+            f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
+            f"Voices you can see: {', '.join(f['seen']) if f['seen'] else 'none'}",
+            f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
+            f"Board activity: {board_summary}",
+        ]
+        self.hud_summary_box.config(state="normal")
+        self.hud_summary_box.delete("1.0", "end")
+        self.hud_summary_box.insert("end", "\n".join(lines))
+        self.hud_summary_box.config(state="disabled")
+
+    def _populate_messages_tree(self):
+        self.messages_tree.delete(*self.messages_tree.get_children())
+        for m in sorted(self._current_messages, key=lambda m: m["id"]):
+            preview = m["text"].replace("\n", " ")
+            if len(preview) > 120:
+                preview = preview[:120] + "..."
+            self.messages_tree.insert(
+                "", "end", iid=str(m["id"]), values=(m["id"], m["timestamp"], m["speaker"], preview)
+            )
+
+    def _clear_message_edit(self):
+        self.selected_message_id = None
+        self.msg_timestamp_var.set("")
+        self.msg_speaker_var.set("")
+        self.msg_text_box.delete("1.0", "end")
+
+    def _on_message_select(self, event):
+        selection = self.messages_tree.selection()
+        if not selection:
+            return
+        msg_id = int(selection[0])
+        message = next((m for m in self._current_messages if m["id"] == msg_id), None)
+        if not message:
+            return
+        self.selected_message_id = msg_id
+        self.msg_timestamp_var.set(message["timestamp"])
+        self.msg_speaker_var.set(message["speaker"])
+        self.msg_text_box.delete("1.0", "end")
+        self.msg_text_box.insert("end", message["text"])
+
+    def new_message(self):
+        if not self.displayed_voice:
+            return
+        self._clear_message_edit()
+        self.msg_timestamp_var.set(datetime.now().isoformat(timespec="seconds"))
+        self.msg_speaker_var.set(self.displayed_voice)
+
+    def save_message(self):
+        if not self.displayed_voice:
+            return
+        timestamp = self.msg_timestamp_var.get().strip()
+        speaker = self.msg_speaker_var.get().strip()
+        text = self.msg_text_box.get("1.0", "end-1c")
+        if not timestamp or not speaker:
+            messagebox.showerror("Fenra", "Timestamp and speaker can't be empty.")
+            return
+        if self.selected_message_id is not None:
+            for m in self._current_messages:
+                if m["id"] == self.selected_message_id:
+                    m["timestamp"], m["speaker"], m["text"] = timestamp, speaker, text
+                    break
+        else:
+            next_id = max((m["id"] for m in self._current_messages), default=0) + 1
+            self._current_messages.append(
+                {"id": next_id, "timestamp": timestamp, "speaker": speaker, "text": text}
+            )
+            self.selected_message_id = next_id
+        state = load_voice_state(self.world_name, self.displayed_voice)
+        state["messages"] = self._current_messages
+        save_voice_state(self.world_name, self.displayed_voice, state)
+        self._populate_messages_tree()
+        self.status_var.set("Message saved")
+
+    def delete_message(self):
+        if not self.displayed_voice or self.selected_message_id is None:
+            return
+        if not messagebox.askyesno("Fenra", "Delete this message? This can't be undone."):
+            return
+        self._current_messages = [m for m in self._current_messages if m["id"] != self.selected_message_id]
+        state = load_voice_state(self.world_name, self.displayed_voice)
+        state["messages"] = self._current_messages
+        save_voice_state(self.world_name, self.displayed_voice, state)
+        self._populate_messages_tree()
+        self._clear_message_edit()
 
     def _save_voice_snapshot(self, name):
+        try:
+            currency = float(self.currency_var.get())
+        except ValueError:
+            currency = load_voice_state(self.world_name, name).get("currency", 0.0)
         state = {
             "model": self.model_var.get(),
             "identity": self.identity_box.get("1.0", "end-1c"),
-            "context": self.context_box.get("1.0", "end-1c"),
+            "messages": self._current_messages,
+            "currency": currency,
         }
         save_voice_state(self.world_name, name, state)
 
@@ -1004,6 +1211,48 @@ class FenraApp:
         self.group_add_voice_combo.pack(side="left", padx=(4, 4))
         ttk.Button(add_row, text="Add", command=self.add_group_member).pack(side="left")
 
+        board_frame = ttk.LabelFrame(right, text="Board")
+        board_frame.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+
+        board_top_bar = ttk.Frame(board_frame)
+        board_top_bar.pack(fill="x", padx=4, pady=(4, 0))
+        ttk.Button(board_top_bar, text="New post", command=self.new_board_post).pack(side="left", padx=2)
+        ttk.Button(board_top_bar, text="Save post", command=self.save_board_post).pack(side="left", padx=2)
+        ttk.Button(board_top_bar, text="Delete post", command=self.delete_board_post).pack(side="left", padx=2)
+
+        board_tree_frame = ttk.Frame(board_frame)
+        board_tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        board_scrollbar = ttk.Scrollbar(board_tree_frame, orient="vertical")
+        self.board_tree = ttk.Treeview(
+            board_tree_frame,
+            columns=("id", "subject", "author", "timestamp", "text"),
+            show="headings",
+            yscrollcommand=board_scrollbar.set,
+            height=6,
+        )
+        for col, width in (("id", 40), ("subject", 140), ("author", 90), ("timestamp", 130), ("text", 260)):
+            self.board_tree.heading(col, text=col.capitalize())
+            self.board_tree.column(col, width=width, stretch=(col == "text"))
+        board_scrollbar.config(command=self.board_tree.yview)
+        self.board_tree.pack(side="left", fill="both", expand=True)
+        board_scrollbar.pack(side="right", fill="y")
+        self.board_tree.bind("<<TreeviewSelect>>", self._on_board_select)
+
+        board_edit_frame = ttk.Frame(board_frame)
+        board_edit_frame.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Label(board_edit_frame, text="Subject:").grid(row=0, column=0, sticky="w")
+        self.board_subject_var = tk.StringVar(value="")
+        ttk.Entry(board_edit_frame, textvariable=self.board_subject_var, width=24).grid(row=0, column=1, sticky="w", padx=(2, 12))
+        ttk.Label(board_edit_frame, text="Author:").grid(row=0, column=2, sticky="w")
+        self.board_author_var = tk.StringVar(value="")
+        ttk.Entry(board_edit_frame, textvariable=self.board_author_var, width=14).grid(row=0, column=3, sticky="w", padx=(2, 12))
+        ttk.Label(board_edit_frame, text="Timestamp:").grid(row=0, column=4, sticky="w")
+        self.board_timestamp_var = tk.StringVar(value="")
+        ttk.Entry(board_edit_frame, textvariable=self.board_timestamp_var, width=20).grid(row=0, column=5, sticky="w", padx=(2, 0))
+        self.board_text_box = scrolledtext.ScrolledText(board_edit_frame, wrap="word", height=4)
+        self.board_text_box.grid(row=1, column=0, columnspan=6, sticky="nsew", pady=(4, 0))
+        board_edit_frame.grid_columnconfigure(5, weight=1)
+
     def _populate_groups_list(self):
         self._current_group_names = list_groups(self.world_name)
         self.groups_listbox.delete(0, "end")
@@ -1024,6 +1273,89 @@ class FenraApp:
         for voice in state.get("members", []):
             self.group_members_listbox.insert("end", voice)
         self._refresh_group_member_candidates()
+        self._current_board = state.get("board", [])
+        self._populate_board_tree()
+        self._clear_board_edit()
+
+    def _populate_board_tree(self):
+        self.board_tree.delete(*self.board_tree.get_children())
+        for p in sorted(self._current_board, key=lambda p: p["id"]):
+            preview = p["text"].replace("\n", " ")
+            if len(preview) > 100:
+                preview = preview[:100] + "..."
+            self.board_tree.insert(
+                "", "end", iid=str(p["id"]),
+                values=(p["id"], p["subject"], p["author"], p["timestamp"], preview),
+            )
+
+    def _clear_board_edit(self):
+        self.selected_post_id = None
+        self.board_subject_var.set("")
+        self.board_author_var.set("")
+        self.board_timestamp_var.set("")
+        self.board_text_box.delete("1.0", "end")
+
+    def _on_board_select(self, event):
+        selection = self.board_tree.selection()
+        if not selection:
+            return
+        post_id = int(selection[0])
+        post = next((p for p in self._current_board if p["id"] == post_id), None)
+        if not post:
+            return
+        self.selected_post_id = post_id
+        self.board_subject_var.set(post["subject"])
+        self.board_author_var.set(post["author"])
+        self.board_timestamp_var.set(post["timestamp"])
+        self.board_text_box.delete("1.0", "end")
+        self.board_text_box.insert("end", post["text"])
+
+    def new_board_post(self):
+        if not self.displayed_group:
+            return
+        self._clear_board_edit()
+        self.board_author_var.set(self.displayed_group)
+        self.board_timestamp_var.set(datetime.now().isoformat(timespec="seconds"))
+
+    def save_board_post(self):
+        if not self.displayed_group:
+            return
+        subject = self.board_subject_var.get().strip()
+        author = self.board_author_var.get().strip()
+        timestamp = self.board_timestamp_var.get().strip()
+        text = self.board_text_box.get("1.0", "end-1c")
+        if not subject or not author or not timestamp:
+            messagebox.showerror("Fenra", "Subject, author, and timestamp can't be empty.")
+            return
+        if self.selected_post_id is not None:
+            for p in self._current_board:
+                if p["id"] == self.selected_post_id:
+                    p["subject"], p["author"], p["timestamp"], p["text"] = subject, author, timestamp, text
+                    break
+        else:
+            next_id = max((p["id"] for p in self._current_board), default=0) + 1
+            self._current_board.append({
+                "id": next_id, "subject": subject, "author": author,
+                "timestamp": timestamp, "text": text, "seen": {},
+            })
+            self.selected_post_id = next_id
+        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        state["board"] = self._current_board
+        save_group_state(self.world_name, self.displayed_group, state)
+        self._populate_board_tree()
+        self.status_var.set("Post saved")
+
+    def delete_board_post(self):
+        if not self.displayed_group or self.selected_post_id is None:
+            return
+        if not messagebox.askyesno("Fenra", "Delete this post? This can't be undone."):
+            return
+        self._current_board = [p for p in self._current_board if p["id"] != self.selected_post_id]
+        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        state["board"] = self._current_board
+        save_group_state(self.world_name, self.displayed_group, state)
+        self._populate_board_tree()
+        self._clear_board_edit()
 
     def _refresh_group_member_candidates(self):
         """The 'Add voice' combobox - every world voice not already a
@@ -1084,6 +1416,9 @@ class FenraApp:
         self._populate_groups_list()
         self.group_name_var.set("")
         self.group_members_listbox.delete(0, "end")
+        self._current_board = []
+        self.board_tree.delete(*self.board_tree.get_children())
+        self._clear_board_edit()
 
     def add_group_member(self):
         if not self.displayed_group:
@@ -1174,7 +1509,16 @@ class FenraApp:
         self.group_name_var.set("")
         self.group_members_listbox.delete(0, "end")
         self.identity_box.delete("1.0", "end")
-        self.context_box.delete("1.0", "end")
+        self.currency_var.set("10.00")
+        self.hud_summary_box.config(state="normal")
+        self.hud_summary_box.delete("1.0", "end")
+        self.hud_summary_box.config(state="disabled")
+        self._current_messages = []
+        self.messages_tree.delete(*self.messages_tree.get_children())
+        self._clear_message_edit()
+        self._current_board = []
+        self.board_tree.delete(*self.board_tree.get_children())
+        self._clear_board_edit()
         self.status_var.set("Idle")
         self._rebuild_worlds_menu()
 
@@ -1283,7 +1627,7 @@ class FenraApp:
 
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
-        prompt = f"{state.get('context', '')}\n\n{build_hud(self.world_name, active_voice)}"
+        prompt = f"{render_messages(state.get('messages', []))}\n\n{build_hud(self.world_name, active_voice)}"
         try:
             response = call_ollama(self.host_var.get(), model, prompt)
         except requests.RequestException as exc:
@@ -1295,14 +1639,12 @@ class FenraApp:
         full_response, masked_response = run_function_calls(self.world_name, active_voice, response)
 
         timestamp = datetime.now().isoformat(timespec="seconds")
-        full_line = f"[{timestamp}] {active_voice}: {full_response}"
-        masked_line = f"[{timestamp}] {active_voice}: {masked_response}"
 
         # The speaker's own record - the real thing, calls and results
         # both. Everyone else sees the masked version (see
         # run_function_calls) - that a call happened, never its
         # arguments or result.
-        append_to_context(self.world_name, active_voice, full_line)
+        append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
 
         # Every OTHER member of every group the speaker belongs to - one
         # append per listener max, even if they share more than one
@@ -1314,7 +1656,7 @@ class FenraApp:
                 if member in already_notified:
                     continue
                 already_notified.add(member)
-                append_to_context(self.world_name, member, masked_line)
+                append_message(self.world_name, member, active_voice, masked_response, timestamp)
 
         if active_voice == self.displayed_voice:
             self.root.after(0, self._load_voice, active_voice)
