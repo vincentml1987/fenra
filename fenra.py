@@ -27,23 +27,25 @@ THE MODEL, exactly as specified:
   group member's thought lands, one line gets appended: "[timestamp]
   name: text" - the SAME format whether it's the voice's own thought or
   an incoming one, no special case for self vs. other.
-- Group - exactly two fields: name, members (a list of voice names).
-  No owner, no join_policy, no visibility, no direction - manually
-  managed only, entirely from the GUI. No voice-driven join/invite/kick
-  since there are no functions yet for a voice to call at all.
+- Group - name, members (a list of voice names), and `board` (2026-09-10
+  - see FUNCTIONS below). No owner, no join_policy, no visibility, no
+  direction on membership itself - manually managed only, entirely from
+  the GUI.
 
 THE LOOP: one voice per tick, simple round-robin across the world's
 voice list. Build the prompt as context + HUD (`build_hud()`), call
 Ollama, get the raw response, run it through `run_function_calls()`
 (2026-09-09 - functions are back, no permission layer this round, every
-voice can call everything). That returns two versions of the response
-(2026-09-10): the real one, with any `⟦function_name(args)⟧` calls
+voice can call everything). That returns two versions of the response:
+the real one (`full_text`), with any `⟦function_name(args)⟧` calls
 resolved into `⟦RESULT: ...⟧` text folded in - that's what the speaker's
-own context gets - and a masked one, where every call becomes a plain
-"(*speaker called name*)" notice with no arguments and no result at all
-- that's what every OTHER member of every group the speaker belongs to
-gets instead (deduped across overlapping groups). A voice can always see
-what it did; bystanders only see that something happened, not what.
+own context gets - and a masked one (`masked_text`), where every call
+becomes that function's own flavored action mask (2026-09-10 - see
+FUNCTION_REGISTRY's `"mask"` key, `_mask_for_call`) with no arguments and
+no result ever shown - that's what every OTHER member of every group the
+speaker belongs to gets instead (deduped across overlapping groups). A
+voice can always see what it did; bystanders only see roughly what kind
+of thing happened, never the details.
 
 THE HUD: the last thing in every prompt, computed fresh every tick and
 never persisted to context (Teddy's call, 2026-09-09 - it reflects live
@@ -70,6 +72,22 @@ delivers straight into the target's real `context` via the existing
 message rather than ordinary group chatter - not a separate, transitory
 mechanism. `give_currency` moves real balance between two voices'
 `currency` fields. `functions()` lists what's callable.
+
+BOARDS (2026-09-10): a group's `board` is a list of posts
+(`{id, subject, text, author, timestamp, seen}`, `seen` a
+`{voice: "skimmed"|"read"}` map - absence means unread), gated only by
+group membership, no ownership checks. Built after watching voices
+repeatedly invent fictional functions for the same underlying want - a
+way to deliberately notify/post to a specific group as a real action,
+not just by talking, which already broadcasts automatically. Group chat
+is push (lands in context whether you looked or not); a board is pull
+(exists whether or not you check it). `post_board` adds a post,
+`skim_board` lists subject + first/last-sentence summaries and marks
+posts "skimmed", `read_board` returns one post's full text and marks it
+"read" (never downgrades a "read" post back to "skimmed"), `delete_board`
+removes a post outright - genuinely anyone in the group, not just the
+original author. The HUD reports per-group unread/skimmed counts for a
+voice's own groups only, never content.
 """
 
 import json
@@ -277,7 +295,7 @@ def list_groups(world_name):
 
 
 def default_group_state(name):
-    return {"name": name, "members": []}
+    return {"name": name, "members": [], "board": []}
 
 
 def load_group_state(world_name, name):
@@ -333,6 +351,18 @@ def build_hud(world_name, voice_name):
 
     unseen = [v for v in list_voices(world_name) if v != voice_name and v not in seen]
 
+    # Board unread/skimmed counts, own groups only - same privacy
+    # boundary as "Voices you can see": a voice shouldn't know about
+    # board activity in a group it isn't in.
+    board_counts = []
+    for gname in own_groups:
+        gstate = load_group_state(world_name, gname) or {}
+        board = gstate.get("board", [])
+        unread = sum(1 for p in board if voice_name not in p.get("seen", {}))
+        skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
+        board_counts.append(f"{gname}: {unread} unread, {skimmed} skimmed")
+    board_line = "Board activity: " + (", ".join(board_counts) if board_counts else "none")
+
     # Everyone's balance, not just your own (Teddy's call, 2026-09-10) -
     # full transparency rather than a private number, deliberately with
     # no goal attached. Sorted by balance so it reads as a standing.
@@ -353,6 +383,7 @@ def build_hud(world_name, voice_name):
         f"All groups in this world: {', '.join(all_groups) if all_groups else 'none'}",
         f"Voices you can see: {', '.join(sorted(seen)) if seen else 'none'}",
         f"Voices that exist but you cannot see: {', '.join(unseen) if unseen else 'none'}",
+        board_line,
         currency_line,
         "You can call functions by writing ⟦function_name(args)⟧ in your "
         "response - try ⟦functions()⟧ to see everything available to you.",
@@ -367,12 +398,52 @@ FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧
 
 
 def _parse_target_and_rest(args_text):
-    """Every current function takes "target|rest" - split once on the
+    """Every two-part function takes "target|rest" - split once on the
     first '|', both sides stripped. Raises if the '|' is missing."""
     if "|" not in args_text:
         raise ValueError("expected 'target|...' - got no '|' separator")
     target, rest = args_text.split("|", 1)
     return target.strip(), rest.strip()
+
+
+def _first_pipe_arg(args_text):
+    """The first '|'-delimited argument, or the whole trimmed string if
+    there's no '|' at all - used only to fill the {arg0} placeholder in
+    an action mask (see FUNCTION_REGISTRY/run_function_calls), so it
+    covers two-part calls (send_message's target) and single-arg calls
+    (skim_board's group) the same way."""
+    if not args_text:
+        return ""
+    return args_text.split("|", 1)[0].strip()
+
+
+def _require_group_member(world_name, group, caller_name):
+    """Every board function starts here: resolves the (possibly
+    unsanitized) group name, loads its state, and raises unless the
+    caller is actually a member - the only gating boards have at all
+    (Teddy's call: no ownership checks beyond that). Returns
+    (sanitized_group_name, group_state) so the caller can mutate
+    group_state["board"] and save it back."""
+    group = sanitize_name(group)
+    state = load_group_state(world_name, group)
+    if not state or caller_name not in state.get("members", []):
+        raise ValueError(f"'{group}' isn't a group you're in")
+    return group, state
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _first_and_last_sentence(text):
+    """A naive skim-summary for a board post - not linguistically
+    careful, just enough of a taste to decide whether to read_board the
+    full thing."""
+    sentences = [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s]
+    if not sentences:
+        return ""
+    if len(sentences) == 1:
+        return sentences[0]
+    return f"{sentences[0]} [...] {sentences[-1]}"
 
 
 def fn_send_message(world_name, caller_name, args_text):
@@ -431,6 +502,94 @@ def fn_give_currency(world_name, caller_name, args_text):
     return f"sent ${amount:.2f} to {target}"
 
 
+def fn_post_board(world_name, caller_name, args_text):
+    """Post a new message to a group's board - a real, pull-based
+    artifact external to the group's normal push-everything-into-
+    context chat. Needs three pieces, not two - the only function so
+    far that does."""
+    parts = args_text.split("|", 2)
+    if len(parts) != 3:
+        raise ValueError("expected 'group|subject|text'")
+    group_raw, subject, text = (p.strip() for p in parts)
+    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+    if not subject or not text:
+        raise ValueError("subject and text can't be empty")
+    board = gstate.get("board", [])
+    next_id = max((p["id"] for p in board), default=0) + 1
+    board.append({
+        "id": next_id,
+        "subject": subject,
+        "text": text,
+        "author": caller_name,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "seen": {},
+    })
+    gstate["board"] = board
+    save_group_state(world_name, group, gstate)
+    return f"posted to {group} board (id {next_id})"
+
+
+def fn_skim_board(world_name, caller_name, args_text):
+    """Subject + first/last-sentence summary of every post on a group's
+    board - not the full text (see read_board for that). Marks any post
+    not already in the caller's seen map as "skimmed"; never downgrades
+    an already-"read" post back to "skimmed"."""
+    group, gstate = _require_group_member(world_name, args_text, caller_name)
+    board = gstate.get("board", [])
+    if not board:
+        return f"{group} board is empty"
+    lines = []
+    changed = False
+    for post in board:
+        seen = post.setdefault("seen", {})
+        if caller_name not in seen:
+            seen[caller_name] = "skimmed"
+            changed = True
+        summary = _first_and_last_sentence(post["text"])
+        lines.append(f"[{post['id']}] {post['subject']} (by {post['author']}): {summary}")
+    if changed:
+        gstate["board"] = board
+        save_group_state(world_name, group, gstate)
+    return "\n".join(lines)
+
+
+def fn_read_board(world_name, caller_name, args_text):
+    """Full text of one specific board post. Marks it "read" for the
+    caller, upgrading from any prior state."""
+    group_raw, post_id_text = _parse_target_and_rest(args_text)
+    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+    try:
+        post_id = int(post_id_text)
+    except ValueError:
+        raise ValueError(f"'{post_id_text}' isn't a valid post id")
+    board = gstate.get("board", [])
+    post = next((p for p in board if p["id"] == post_id), None)
+    if not post:
+        raise ValueError(f"no post {post_id} on {group} board")
+    post.setdefault("seen", {})[caller_name] = "read"
+    gstate["board"] = board
+    save_group_state(world_name, group, gstate)
+    return f"[{post['id']}] {post['subject']} (by {post['author']}, {post['timestamp']}): {post['text']}"
+
+
+def fn_delete_board(world_name, caller_name, args_text):
+    """Delete a post from a group's board. No ownership check - anyone
+    in the group can delete anyone's post (Teddy's explicit call)."""
+    group_raw, post_id_text = _parse_target_and_rest(args_text)
+    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+    try:
+        post_id = int(post_id_text)
+    except ValueError:
+        raise ValueError(f"'{post_id_text}' isn't a valid post id")
+    board = gstate.get("board", [])
+    new_board = [p for p in board if p["id"] != post_id]
+    if len(new_board) == len(board):
+        raise ValueError(f"no post {post_id} on {group} board")
+    gstate["board"] = new_board
+    save_group_state(world_name, group, gstate)
+    return f"deleted post {post_id} from {group} board"
+
+
 def fn_functions(world_name, caller_name, args_text):
     """Lists the registry, optionally filtered by a substring in the
     name or description."""
@@ -449,18 +608,61 @@ FUNCTION_REGISTRY = {
         "fn": fn_send_message,
         "params": "target|text",
         "description": "Send a direct message to one specific voice - delivered into their context.",
+        "mask": "{caller} whispers to {arg0}.",
     },
     "give_currency": {
         "fn": fn_give_currency,
         "params": "target|amount",
         "description": "Give some of your own currency to another voice.",
+        "mask": "{caller} hands some currency to {arg0}.",
     },
     "functions": {
         "fn": fn_functions,
         "params": "[search term]",
         "description": "List everything you can call, optionally filtered by a search term.",
+        "mask": "{caller} considers their actions.",
+    },
+    "post_board": {
+        "fn": fn_post_board,
+        "params": "group|subject|text",
+        "description": "Post a new message to a group's board (subject + text). You must be a member of the group.",
+        "mask": "{caller} posts a message to the {arg0} board.",
+    },
+    "skim_board": {
+        "fn": fn_skim_board,
+        "params": "group",
+        "description": "See every post currently on a group's board (subject + first/last sentence only). Marks unread posts as skimmed.",
+        "mask": "{caller} skims the {arg0} board.",
+    },
+    "read_board": {
+        "fn": fn_read_board,
+        "params": "group|post_id",
+        "description": "Read one specific post on a group's board in full. Marks it as read.",
+        "mask": "{caller} reads a message on the {arg0} board.",
+    },
+    "delete_board": {
+        "fn": fn_delete_board,
+        "params": "group|post_id",
+        "description": "Delete a post from a group's board. Anyone in the group can delete any post.",
+        "mask": "{caller} removes a message from the {arg0} board.",
     },
 }
+
+
+def _mask_for_call(caller_name, name, args_text):
+    """The bystander-facing text for one function call - a flavored,
+    per-function action mask (FUNCTION_REGISTRY[name]["mask"]),
+    rendered with {caller} and {arg0} (see _first_pipe_arg). An
+    unrecognized function name (no registry entry - a hallucinated
+    call) falls back to the old generic "(*caller called name*)"
+    notice, since there's no mask template to pull from."""
+    meta = FUNCTION_REGISTRY.get(name)
+    if not meta or "mask" not in meta:
+        return f"(*{caller_name} called {name}*)"
+    try:
+        return meta["mask"].format(caller=caller_name, arg0=_first_pipe_arg(args_text))
+    except (KeyError, IndexError):
+        return f"(*{caller_name} called {name}*)"
 
 
 def run_function_calls(world_name, caller_name, response_text):
@@ -470,13 +672,14 @@ def run_function_calls(world_name, caller_name, response_text):
     - full_text: response_text with a ⟦RESULT: ...⟧ line appended per
       call - what the caller's own context gets (they made the call,
       they see what it actually did).
-    - masked_text: response_text with each call replaced by a plain
-      "(*caller called name*)" notice - no arguments, no result, ever -
-      what gets broadcast to everyone else in a shared group (Teddy's
-      call, 2026-09-10: calling a function shouldn't be any more visible
-      to bystanders than a real action is - they can see *that* it
-      happened, not the details, unless the caller chooses to say so in
-      their own words).
+    - masked_text: response_text with each call replaced by that
+      function's own flavored action mask (see _mask_for_call) - never
+      the arguments, never the result - what gets broadcast to everyone
+      else in a shared group (Teddy's call, 2026-09-10: calling a
+      function shouldn't be any more visible to bystanders than a real
+      action is - they can see *that* it happened, roughly what kind of
+      thing it was, not the details, unless the caller chooses to say so
+      in their own words).
 
     No calls found -> both entries are response_text unchanged."""
     matches = list(FUNCTION_CALL_RE.finditer(response_text))
@@ -498,7 +701,7 @@ def run_function_calls(world_name, caller_name, response_text):
 
     full_text = response_text + "\n" + "\n".join(result_lines)
     masked_text = FUNCTION_CALL_RE.sub(
-        lambda m: f"(*{caller_name} called {m.group(1)}*)", response_text
+        lambda m: _mask_for_call(caller_name, m.group(1), m.group(2)), response_text
     )
     return full_text, masked_text
 
