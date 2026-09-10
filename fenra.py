@@ -387,8 +387,13 @@ def fn_give_currency(world_name, caller_name, args_text):
         raise ValueError(f"'{target}' isn't a voice in this world")
     if target == caller_name:
         raise ValueError("you can't give_currency to yourself")
+    # The HUD shows currency as "$10.00" - naturally, a voice copies that
+    # formatting back when giving an amount (real case: Amanda wrote
+    # "$2.00", 2026-09-09). Strip a leading $ and thousands-separator
+    # commas so that still works instead of erroring.
+    cleaned = amount_text.strip().lstrip("$").replace(",", "")
     try:
-        amount = float(amount_text)
+        amount = float(cleaned)
     except ValueError:
         raise ValueError(f"'{amount_text}' isn't a number")
     if amount <= 0:
