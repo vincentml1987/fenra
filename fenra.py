@@ -82,7 +82,19 @@ purpose, since editing them has no sensible meaning outside the group
 that actually owns them. A voice's Messages panel (Voices tab) is a
 real multi-column list (id/timestamp/speaker/text) - select a row to
 edit or delete that one message, or add a new one - not a single text
-blob.
+blob. The Currency tab is gone (2026-09-10) - redundant once currency
+became a real per-voice field on the Voices tab itself.
+
+GROUP CHAT (Groups tab, 2026-09-10): a read-only view of everything
+actually said in a group, reconstructed by `group_chat_transcript()`
+from each member's own self-tagged records (see `append_message`'s
+`groups` param) rather than from anyone's inbox - shows the real full
+text a voice said, not the masked version bystanders receive. Only a
+voice's own thought carries a `groups` tag (every group it broadcast to
+that turn, as a list - it can belong to more than one at once); a
+delivered/masked copy in a recipient's own history never does, so
+there's no ambiguity about which group a delivery "belongs to" even
+when speaker and recipient share more than one group.
 
 FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
 `⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
@@ -133,7 +145,6 @@ DEFAULT_MODEL = "llama3"
 DEFAULT_INTERVAL_SEC = 3
 DEFAULT_WORLD_NAME = "default"
 DEFAULT_VOICE_NAME = "voice1"
-CURRENCY_REFRESH_MS = 10000
 
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
@@ -271,15 +282,25 @@ def delete_voice(world_name, voice_name):
         shutil.rmtree(path)
 
 
-def append_message(world_name, voice_name, speaker, text, timestamp=None):
+def append_message(world_name, voice_name, speaker, text, timestamp=None, groups=None):
     """The one and only way a voice's message history grows - appends a
-    real structured entry ({id, timestamp, speaker, text}), same shape
-    whether it's the voice's own thought or an incoming one from a
+    real structured entry ({id, timestamp, speaker, text, groups}), same
+    shape whether it's the voice's own thought or an incoming one from a
     fellow group member (see the module docstring). Re-reads from disk
     immediately before appending rather than trusting an in-memory copy,
     so a concurrent write (Teddy editing a message in the GUI at the
     same moment) can't get silently clobbered. `id` is stable
-    (max existing + 1) - the same pattern board posts already use."""
+    (max existing + 1) - the same pattern board posts already use.
+
+    `groups` (2026-09-10, for the Groups-tab chat view): only meaningful
+    on a voice's own self-record of its own thought - every group it
+    broadcast that thought to, as a list (a voice can belong to more
+    than one group at once, so this can't be a single value). Delivered
+    copies in a *recipient's* history don't carry this - the merged
+    group-chat view is reconstructed entirely from each member's own
+    tagged self-records, not from anyone's inbox, so there's no
+    ambiguity about which group a delivery "belongs to" even when a
+    speaker shares more than one group with the same recipient."""
     state = load_voice_state(world_name, voice_name)
     messages = state.get("messages", [])
     next_id = max((m["id"] for m in messages), default=0) + 1
@@ -288,9 +309,29 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None):
         "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
         "speaker": speaker,
         "text": text,
+        "groups": groups or [],
     })
     state["messages"] = messages
     save_voice_state(world_name, voice_name, state)
+
+
+def group_chat_transcript(world_name, group_name):
+    """The group's whole merged chat (Groups tab) - reconstructed from
+    each member's own self-tagged records (see append_message's
+    `groups` docstring), not from any recipient's masked inbox copies,
+    so it shows the real full text, not what bystanders see. Sorted by
+    timestamp across members."""
+    gstate = load_group_state(world_name, group_name)
+    if not gstate:
+        return []
+    entries = []
+    for member in gstate.get("members", []):
+        state = load_voice_state(world_name, member)
+        for m in state.get("messages", []):
+            if m.get("speaker") == member and group_name in m.get("groups", []):
+                entries.append(m)
+    entries.sort(key=lambda m: m["timestamp"])
+    return entries
 
 
 def render_messages(messages):
@@ -879,14 +920,11 @@ class FenraApp:
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
         self.groups_tab = ttk.Frame(notebook)
-        self.currency_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.groups_tab, text="Groups")
-        notebook.add(self.currency_tab, text="Currency")
 
         self._build_voices_tab()
         self._build_groups_tab()
-        self._build_currency_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
@@ -947,14 +985,14 @@ class FenraApp:
         ttk.Button(msg_top_bar, text="Delete message", command=self.delete_message).pack(side="left", padx=2)
 
         tree_frame = ttk.Frame(messages_frame)
-        tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        tree_frame.pack(fill="x", padx=4, pady=4)
         msg_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
         self.messages_tree = ttk.Treeview(
             tree_frame,
             columns=("id", "timestamp", "speaker", "text"),
             show="headings",
             yscrollcommand=msg_scrollbar.set,
-            height=6,
+            height=4,
         )
         for col, width in (("id", 40), ("timestamp", 130), ("speaker", 90), ("text", 400)):
             self.messages_tree.heading(col, text=col.capitalize())
@@ -965,16 +1003,19 @@ class FenraApp:
         self.messages_tree.bind("<<TreeviewSelect>>", self._on_message_select)
 
         edit_frame = ttk.Frame(messages_frame)
-        edit_frame.pack(fill="x", padx=4, pady=(0, 4))
+        edit_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
         ttk.Label(edit_frame, text="Timestamp:").grid(row=0, column=0, sticky="w")
         self.msg_timestamp_var = tk.StringVar(value="")
         ttk.Entry(edit_frame, textvariable=self.msg_timestamp_var, width=22).grid(row=0, column=1, sticky="w", padx=(2, 12))
         ttk.Label(edit_frame, text="Speaker:").grid(row=0, column=2, sticky="w")
         self.msg_speaker_var = tk.StringVar(value="")
         ttk.Entry(edit_frame, textvariable=self.msg_speaker_var, width=16).grid(row=0, column=3, sticky="w", padx=(2, 0))
-        self.msg_text_box = scrolledtext.ScrolledText(edit_frame, wrap="word", height=4)
+        # ~50% of the window's height (Teddy's ask, 2026-09-10) - the
+        # message list above shrank to make room for this.
+        self.msg_text_box = scrolledtext.ScrolledText(edit_frame, wrap="word", height=16)
         self.msg_text_box.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
         edit_frame.grid_columnconfigure(3, weight=1)
+        edit_frame.grid_rowconfigure(1, weight=1)
 
     def _populate_voices_list(self):
         self._current_voice_names = list_voices(self.world_name)
@@ -1194,10 +1235,15 @@ class FenraApp:
         self.group_name_var = tk.StringVar(value="")
         ttk.Label(name_row, textvariable=self.group_name_var, font=("Segoe UI", 9, "bold")).pack(side="left")
 
+        # Fixed-size, not expanding - a group's member count is small,
+        # and the chat/board panels below need the room more (Teddy's
+        # call, 2026-09-10).
         members_frame = ttk.LabelFrame(right, text="Members")
-        members_frame.pack(fill="both", expand=True, padx=2, pady=(0, 4))
-        self.group_members_listbox = tk.Listbox(members_frame, selectmode="extended", exportselection=False)
-        self.group_members_listbox.pack(fill="both", expand=True, padx=4, pady=(4, 2))
+        members_frame.pack(fill="x", expand=False, padx=2, pady=(0, 4))
+        self.group_members_listbox = tk.Listbox(
+            members_frame, selectmode="extended", exportselection=False, height=4
+        )
+        self.group_members_listbox.pack(fill="x", padx=4, pady=(4, 2))
         ttk.Button(members_frame, text="Remove selected", command=self.remove_group_members).pack(
             anchor="e", padx=4, pady=(0, 4)
         )
@@ -1212,8 +1258,24 @@ class FenraApp:
         self.group_add_voice_combo.pack(side="left", padx=(4, 4))
         ttk.Button(add_row, text="Add", command=self.add_group_member).pack(side="left")
 
-        board_frame = ttk.LabelFrame(right, text="Board")
-        board_frame.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+        # Chat and Board share the remaining space, resizable against
+        # each other (same Panedwindow pattern as the left/right split).
+        lower_paned = ttk.Panedwindow(right, orient="vertical")
+        lower_paned.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+
+        chat_frame = ttk.LabelFrame(
+            lower_paned, text="Group Chat (read-only - full text, not the masked version bystanders see)"
+        )
+        board_frame = ttk.LabelFrame(lower_paned, text="Board")
+        lower_paned.add(chat_frame, weight=1)
+        lower_paned.add(board_frame, weight=1)
+
+        chat_top_bar = ttk.Frame(chat_frame)
+        chat_top_bar.pack(fill="x", padx=4, pady=(4, 0))
+        ttk.Button(chat_top_bar, text="Refresh", command=self._refresh_group_chat).pack(side="left", padx=2)
+
+        self.group_chat_box = tk.Text(chat_frame, wrap="word", state="disabled")
+        self.group_chat_box.pack(fill="both", expand=True, padx=4, pady=4)
 
         board_top_bar = ttk.Frame(board_frame)
         board_top_bar.pack(fill="x", padx=4, pady=(4, 0))
@@ -1222,14 +1284,14 @@ class FenraApp:
         ttk.Button(board_top_bar, text="Delete post", command=self.delete_board_post).pack(side="left", padx=2)
 
         board_tree_frame = ttk.Frame(board_frame)
-        board_tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        board_tree_frame.pack(fill="x", padx=4, pady=4)
         board_scrollbar = ttk.Scrollbar(board_tree_frame, orient="vertical")
         self.board_tree = ttk.Treeview(
             board_tree_frame,
             columns=("id", "subject", "author", "timestamp", "text"),
             show="headings",
             yscrollcommand=board_scrollbar.set,
-            height=6,
+            height=4,
         )
         for col, width in (("id", 40), ("subject", 140), ("author", 90), ("timestamp", 130), ("text", 260)):
             self.board_tree.heading(col, text=col.capitalize())
@@ -1240,7 +1302,7 @@ class FenraApp:
         self.board_tree.bind("<<TreeviewSelect>>", self._on_board_select)
 
         board_edit_frame = ttk.Frame(board_frame)
-        board_edit_frame.pack(fill="x", padx=4, pady=(0, 4))
+        board_edit_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
         ttk.Label(board_edit_frame, text="Subject:").grid(row=0, column=0, sticky="w")
         self.board_subject_var = tk.StringVar(value="")
         ttk.Entry(board_edit_frame, textvariable=self.board_subject_var, width=24).grid(row=0, column=1, sticky="w", padx=(2, 12))
@@ -1250,9 +1312,12 @@ class FenraApp:
         ttk.Label(board_edit_frame, text="Timestamp:").grid(row=0, column=4, sticky="w")
         self.board_timestamp_var = tk.StringVar(value="")
         ttk.Entry(board_edit_frame, textvariable=self.board_timestamp_var, width=20).grid(row=0, column=5, sticky="w", padx=(2, 0))
-        self.board_text_box = scrolledtext.ScrolledText(board_edit_frame, wrap="word", height=4)
+        # ~50% of the window's height (Teddy's ask, 2026-09-10), same as
+        # the Voices tab's message editor.
+        self.board_text_box = scrolledtext.ScrolledText(board_edit_frame, wrap="word", height=16)
         self.board_text_box.grid(row=1, column=0, columnspan=6, sticky="nsew", pady=(4, 0))
         board_edit_frame.grid_columnconfigure(5, weight=1)
+        board_edit_frame.grid_rowconfigure(1, weight=1)
 
     def _populate_groups_list(self):
         self._current_group_names = list_groups(self.world_name)
@@ -1274,9 +1339,23 @@ class FenraApp:
         for voice in state.get("members", []):
             self.group_members_listbox.insert("end", voice)
         self._refresh_group_member_candidates()
+        self._refresh_group_chat()
         self._current_board = state.get("board", [])
         self._populate_board_tree()
         self._clear_board_edit()
+
+    def _refresh_group_chat(self):
+        """Read-only - see group_chat_transcript()'s own docstring for
+        why this shows the real full text, not what any one member's
+        inbox actually received."""
+        if not self.displayed_group:
+            return
+        entries = group_chat_transcript(self.world_name, self.displayed_group)
+        lines = [f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in entries]
+        self.group_chat_box.config(state="normal")
+        self.group_chat_box.delete("1.0", "end")
+        self.group_chat_box.insert("end", "\n\n".join(lines) if lines else "(no chat yet)")
+        self.group_chat_box.config(state="disabled")
 
     def _populate_board_tree(self):
         self.board_tree.delete(*self.board_tree.get_children())
@@ -1417,9 +1496,15 @@ class FenraApp:
         self._populate_groups_list()
         self.group_name_var.set("")
         self.group_members_listbox.delete(0, "end")
+        self._clear_group_chat()
         self._current_board = []
         self.board_tree.delete(*self.board_tree.get_children())
         self._clear_board_edit()
+
+    def _clear_group_chat(self):
+        self.group_chat_box.config(state="normal")
+        self.group_chat_box.delete("1.0", "end")
+        self.group_chat_box.config(state="disabled")
 
     def add_group_member(self):
         if not self.displayed_group:
@@ -1444,47 +1529,6 @@ class FenraApp:
         state["members"] = [v for v in state.get("members", []) if v not in to_remove]
         save_group_state(self.world_name, self.displayed_group, state)
         self._load_group(self.displayed_group)
-
-    # --------------------------------------------------------- Currency tab --
-
-    def _build_currency_tab(self):
-        frame = self.currency_tab
-
-        top_bar = ttk.Frame(frame)
-        top_bar.pack(fill="x", padx=6, pady=(6, 0))
-        ttk.Button(top_bar, text="Refresh now", command=self._populate_currency_list).pack(side="left", padx=2)
-        ttk.Label(
-            top_bar,
-            text="Read-only - every voice's balance, highest first. Auto-refreshes every 10s.",
-            foreground="#666",
-        ).pack(side="left", padx=(8, 0))
-
-        list_frame = ttk.Frame(frame)
-        list_frame.pack(fill="both", expand=True, padx=6, pady=6)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
-        self.currency_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.currency_listbox.yview)
-        self.currency_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        self._schedule_currency_refresh()
-
-    def _populate_currency_list(self):
-        if not self.world_name:
-            return
-        balances = []
-        for name in list_voices(self.world_name):
-            state = load_voice_state(self.world_name, name)
-            balances.append((name, state.get("currency", 0.0)))
-        balances.sort(key=lambda pair: (-pair[1], pair[0]))
-
-        self.currency_listbox.delete(0, "end")
-        for name, amount in balances:
-            self.currency_listbox.insert("end", f"{name}: ${amount:.2f}")
-
-    def _schedule_currency_refresh(self):
-        self._populate_currency_list()
-        self.root.after(CURRENCY_REFRESH_MS, self._schedule_currency_refresh)
 
     # --------------------------------------------------------------- worlds --
 
@@ -1517,6 +1561,7 @@ class FenraApp:
         self._current_messages = []
         self.messages_tree.delete(*self.messages_tree.get_children())
         self._clear_message_edit()
+        self._clear_group_chat()
         self._current_board = []
         self.board_tree.delete(*self.board_tree.get_children())
         self._clear_board_edit()
@@ -1642,16 +1687,19 @@ class FenraApp:
         timestamp = datetime.now().isoformat(timespec="seconds")
 
         # The speaker's own record - the real thing, calls and results
-        # both. Everyone else sees the masked version (see
-        # run_function_calls) - that a call happened, never its
-        # arguments or result.
-        append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
+        # both, tagged with every group it just went out to (see
+        # append_message's `groups` docstring - this is what the
+        # Groups-tab chat view is reconstructed from). Everyone else
+        # sees the masked version (see run_function_calls) - that a
+        # call happened, never its arguments or result.
+        member_groups = groups_containing(self.world_name, active_voice)
+        append_message(self.world_name, active_voice, active_voice, full_response, timestamp, groups=member_groups)
 
         # Every OTHER member of every group the speaker belongs to - one
         # append per listener max, even if they share more than one
         # group with the speaker.
         already_notified = {active_voice}
-        for group_name in groups_containing(self.world_name, active_voice):
+        for group_name in member_groups:
             gstate = load_group_state(self.world_name, group_name) or {}
             for member in gstate.get("members", []):
                 if member in already_notified:
