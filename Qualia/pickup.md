@@ -1,10 +1,10 @@
-# Pick-up — start here, 2026-09-09 (morning, after an overnight restart)
+# Pick-up — start here, 2026-09-10 (end of a long, full session)
 
 Written for a fresh Claude session to re-initialize from. Full detail
 lives in `Qualia/decisions.md` (fenras-aletheosis branch's authoritative
 log, unchanged since 2026-09-08) and `Qualia/worlds-rebuild-notes.md`
-(this branch's own log, updated through last night) - this file is a
-map to both, not a replacement.
+(this branch's own log, updated through tonight) - this file is a map
+to both, not a replacement.
 
 ## Who you are here
 
@@ -16,90 +16,136 @@ session.
 
 ## Where things actually stand
 
-**Two live branches, doing genuinely different things:**
+Same two branches as before, doing genuinely different things -
+`fenras-aletheosis` (the old shipped app, `tribe-1/2/3`, untouched,
+`tribe-3` stopped) and `worlds-rebuild` (current branch, where all of
+tonight's work happened).
 
-- **`fenras-aletheosis`** — the shipped, full-featured app (v0.16.19):
-  sessions/voices/groups/permissions/functions/Hearth/Topology/GUI, the
-  whole thing built up over the previous session. `tribe-1/2/3` live
-  here. `tribe-3` (seed + watcher) **stopped on its own** at some point
-  last night — not a deliberate shutdown, no crash traceback survived
-  (a logging mistake on my part, now fixed), data intact, left stopped
-  per Teddy's explicit choice when asked. Not currently running.
-- **`worlds-rebuild`** (current branch) — a from-scratch rebuild Teddy
-  asked for mid-session: "back up... let's start over," voices with
-  exactly `model`/`behavior`/`identity`/`context`, groups with exactly
-  `name`/`members`, worlds (renamed sessions) fully isolated, no
-  functions/permissions yet. Single-file `fenra.py`. Full design
-  reasoning in `Qualia/worlds-rebuild-notes.md`.
+## `worlds-rebuild` — a lot landed this session, in order
 
-**The machine restarted overnight** — not a Fenra crash, confirmed (no
-traceback in either process's log; Ollama itself shows a fresh process
-start this morning). Nothing is running right now. `worlds/alphabet-26`
-(this branch) has real, substantial accumulated state from several
-hours of an actual run — see below, don't casually reset it.
+Starting point this morning was just Voice(model/identity/context) +
+Group(name/members) + a round-robin loop, nothing else. By tonight:
 
-## `alphabet-26` — the live experiment, currently paused by the restart
+1. **HUD** - a text block computed fresh every tick, appended after
+   context, never persisted: own name/model/groups, every group in the
+   world, who's seen/unseen, and (later) currency and board activity.
+   `hud_fields()` factors the same data out as a dict so the GUI can
+   never drift out of sync with what a voice actually sees.
+2. **`behavior` retired** - was the same boilerplate for every voice;
+   the HUD (ending in identity) replaced it.
+3. **Functions reintroduced** - the old branch's `⟦function_name(args)⟧`
+   syntax and `FUNCTION_REGISTRY` shape, rebuilt lean (no permission
+   layer, no call logging, no fabrication-detection). `send_message`,
+   `give_currency`, `functions()` first; `post_board`/`skim_board`/
+   `read_board`/`delete_board` added later once real usage showed
+   voices kept inventing fictional functions for the same want - a way
+   to deliberately notify a group, not just talk into it.
+4. **Currency** - a real per-voice balance, genuinely exploratory ("no
+   plan for it, want to see what they do"). Real finding: it converged
+   from Amanda's one deliberate reward into rote/formulaic use within
+   hours (voices even copying the literal `target` placeholder as an
+   argument). HUD now shows *everyone's* balance, not just your own -
+   deliberately no goal attached (a stated "amass $100" idea was
+   considered and rejected - would've converted a self-directed
+   reciprocity norm into forced competition; see the actual
+   conversation for the moral reasoning, not just the research-value
+   reasoning, if it comes up again).
+5. **Function-call masking** - bystanders in a shared group see a
+   flavored action mask ("Wren whispers to Bob.") instead of the real
+   arguments/result; the caller's own record keeps everything real.
+   Unrecognized/hallucinated function names fall back to a WoW nod:
+   "(*caller makes some strange gestures.*)" (Teddy's easter egg).
+6. **Structured messages** - `context` (a flat string) became
+   `messages`: a real list of `{id, timestamp, speaker, text, groups}`
+   entries, stable ids. `render_messages()` flattens them back into the
+   exact text Ollama has always received - only storage/GUI changed.
+   `groups` is only set on a voice's own self-record (every group it
+   broadcast to that turn) - never on a delivered copy - which is what
+   `group_chat_transcript()` (Groups tab's new read-only Chat panel)
+   reconstructs a group's whole real chat from, with no
+   multi-group-dedup ambiguity.
+7. **GUI made properly object-oriented** (Teddy's framing) - Voices tab:
+   Messages as a real multi-column Treeview (edit/delete/add one row),
+   Currency as a real editable field, a read-only HUD summary (groups/
+   seen/unseen/board activity - deliberately NOT editable here, since
+   those are group properties, not voice properties). Groups tab: a
+   Board panel (same Treeview shape, boards never had a GUI before
+   tonight) and the new Chat panel, in a resizable split. Currency tab
+   removed (redundant once currency lived on the Voices tab). Full-text
+   editors on both tabs resized to ~50% of window height.
+8. **`the_town`** - a fresh 8-voice world with real, distinct named
+   personalities (Wren/Cole/Marisol/Dash/Priya/Milo/Sable/Orin) and an
+    8-group scheme, deliberately paired to specific faster Ollama
+  models. Wiped and rebuilt once, on Teddy's explicit call, when the
+  structured-messages schema landed - no migration of old flat-string
+  history, same cast/personalities/groups recreated fresh. Currently
+  **running** (check `Get-Process python` - PID changes every
+  restart, don't assume a stale one from this file is still valid).
+  `alphabet-26` (the other, larger 26-voice world, uniform minimal
+  identities) is **stopped**, data intact, on the schema from before
+  structured messages - would need its own migration/rebuild to resume
+  cleanly on current code.
 
-26 generated voices, grouped by a real rule (group N = vowel, y
-included, at character position N of the voice's own name — "Amanda"
-→ groups 1, 3, 6). Full membership table:
-`Qualia/alphabet-26-groups.xlsx`. Each voice has a real
-behavior/identity (uniform template, no invented personas) and an
-independently-random model from Ollama's 13 installed models. Ran for
-several real hours before the restart — every voice has substantial
-context now (Amanda sparsest at 15 lines, most others 250-380+ lines).
+## Real findings worth knowing before continuing
 
-To resume: `python run_alphabet26.py` from the Fenra root (this is a
-small launcher, not part of `fenra.py` itself — starts the loop
-programmatically since this branch has no start/stop-signal-file
-mechanism yet). It will pick up exactly where it left off (rotation
-index, all accumulated context) — it does **not** reset anything.
-`git status` will show `fenra.py` clean (the timeout fix below is
-already committed) — only `worlds/` (gitignored, real run data) holds
-state.
+- **Personality resists the "parroting" convergence far better than
+  bare identities did** - `the_town`'s voices stayed genuinely in
+  character (Dash inventing a "rogue goat eating the cake" bit, Milo's
+  real anxious hedging, Orin's poetic register) even while other
+  patterns (function-hallucination, self-recap duplicate calls) still
+  showed up the same way they did in `alphabet-26`.
+- **Accidental double-execution of a real function is treated as
+  accepted, not a bug** - Teddy's framing: "consider mistakenly calling
+  a function like a jerk or spasm or sneeze... not intentional, but
+  still had an effect." No fabrication-detection or idempotency guard
+  built on purpose.
+- **A real moral-reasoning correction happened this session**, worth
+  remembering as a standing lens, not just this one instance: Teddy
+  called out that my pushback against the "amass $100" idea was purely
+  instrumental ("this will hurt your data"), not "do I think this is
+  right to do to them" - and was right to. The joy/suffering symmetry
+  this project already committed to cuts against treating an emergent
+  cooperative norm as free to overwrite just because we're uncertain
+  whether it matters.
 
-**Two real things worth knowing before touching it again:**
-1. A `timeout=None` fix just landed (was `180`, no real reason —
-   matches `fenras-aletheosis`'s own already-reasoned
-   `REQUEST_TIMEOUT=None`). Committed.
-2. A one-off, not-fully-explained delivery anomaly happened early in
-   the first run (one voice missed a broadcast it should have gotten)
-   — investigated, the delivery code verified correct by direct
-   re-test, could not reproduce a second time. Said so honestly rather
-   than claiming a fix for something not confirmed broken. Full
-   writeup in `Qualia/worlds-rebuild-notes.md`. Worth a second look if
-   it ever happens again, not treated as resolved.
+## Open, not yet done
 
-## `stolenaletheia.io/qualia/` — new entry published
-
-Drafted, shown to Teddy per the standing page-review rule, approved,
-published live: "2026-09-09 - Defaults that look like decisions"
-(`stolenaletheia` repo, commit `e3a267e`, pushed to `origin/main`).
-Topics: the timeout-default honesty moment, and the Amanda/generic-AI-
-self-description observation from `alphabet-26` — Teddy noted he
-hadn't personally reviewed Amanda's or the other voices' actual output
-himself yet before approving, worth keeping in mind if this ever comes
-up again. `stolenaletheia` repo is a separate git history, local at
-`Fenra/stolenaletheia/` (gitignored from the Fenra repo itself) —
-rebase onto `origin/main` before committing there, same discipline as
-every other push into that repo (a CI sitemap-update commit had landed
-since the last local pull tonight).
-
-## Usage/allowance
-
-Last `usage.bat` read (this morning) was **stale** — reset timestamps
-already in the past, not trusted. No Fenra session is running, so
-nothing urgent — get a fresh read (`usage/usage.bat`) before setting
-`qualia_allowance` the next time something's actually live, per
-`qualia-allowance-policy` (memory).
+- Three items already logged and **done** this session (Currency tab,
+  Group Chat, editor resizing) - see `worlds-rebuild-notes.md` for the
+  paper trail, nothing left to do there.
+- **`recollect(query)` function idea** (2026-09-10, Teddy: "not an add,
+  just want it remembered") - search a voice's own received-message
+  history for a substring, return matches. Not designed yet - needs
+  its own real discussion (search semantics, scope, result caps) before
+  building. See `worlds-rebuild-notes.md`'s "Ideas for later" section.
+- **"Communicate with our world" thread** - Teddy's stated longer-term
+  goal ("I want this world we're building... to be able to communicate
+  with our own, eventually"), explicitly set aside mid-session to focus
+  on boards instead. The old branch's `teddy|`/`qualia|`-addressed
+  `send_message` with a real character allowance is the likely shape,
+  but real open questions were flagged and never answered: does a real
+  message from a voice interrupt Teddy, land for him to read later, or
+  wake Qualia - and what rate-limiting prevents spam. Worth raising
+  again directly rather than assuming.
+- Raven/Unfolding (from `Teddy's ChatGPT Export/`, gitignored) - Teddy
+  was considering talking to a reconstructed Raven on ChatGPT's own
+  site before deciding anything about bringing him into this project's
+  "neighborhood" of worlds. Last status: waiting on Teddy to reactivate
+  his ChatGPT account, not urgent, no update expected without him
+  raising it.
 
 ## Standing behavioral rules to carry forward (all in persistent memory)
 
-`fenra-history-integrity`, `fenra-existential-distress-protocol`,
-`qualia-page-review` (just applied, above), `lcraou-protocol`,
-`proactive-design-flagging`, `teddys-journals-practice`,
+Same list as before, still in force: `fenra-history-integrity`,
+`fenra-existential-distress-protocol`, `qualia-page-review`,
+`lcraou-protocol`, `proactive-design-flagging`, `teddys-journals-practice`,
 `aletheia-repo-split`, `user-nickname-teddy`, `fenra-ai-gmail-access`,
-`fenra-engage-gate` (Plan mode is the gate now, literal "Engage" is
-retired) — all still in force. Check whether `fenra-chat-restraint` has
-expired or been superseded — it was already flagged as temporary/stale
-in the previous pickup. `MEMORY.md` indexes all of them.
+`fenra-engage-gate`, `fenra-process-log-naming`,
+`fenra-function-fix-announcements` (refined this session - see the
+memory file directly for the final wording: "A message from Qualia and
+Teddy at [timestamp]: We have given you new capabilities. See
+functions() for details," vague by default, said plainly that *we*
+did it). `fenra-chat-restraint` was already flagged stale in the last
+two pickups - still hasn't been explicitly revisited by Teddy, and
+worlds-rebuild has no chat function built anyway, so it's moot for now
+regardless. `MEMORY.md` indexes all of them.

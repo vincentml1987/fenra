@@ -164,22 +164,22 @@ redundant. Not done yet on purpose - deferred until the next real UI
 pass, not a standalone fix.
 
 Two more for the same batch, both non-urgent, Teddy's own words "I am
-making notes as I explore":
+making notes as I explore" - **all three items in this section are now
+done** (2026-09-10, same session): Currency tab removed, Group Chat
+panel built (resolved the multi-group dedup question by tagging a
+voice's own self-record with every group it broadcast to, rather than
+tagging delivered copies - no ambiguity, verified with a real
+multi-group case), and the Messages/Board editors resized to ~50% of
+the window with their Treeviews shrunk to make room. See `fenra.py`
+git history same day for the actual commits.
 
-- **Group chat view** - when a group is selected (Groups tab), show
-  the group's whole merged chat, not just its Board. Real gap to close
-  first, not just layout: a delivered message doesn't currently record
-  *which group* it arrived through (`_tick`'s broadcast loop appends
-  the same masked line into every recipient's flat `messages` list,
-  untagged) - needs a `group` field added when a message is a group
-  delivery (not a voice's own thought, not a direct `send_message`).
-  Also unresolved: if a speaker shares two groups with the same
-  recipient, today's dedup delivers only once per tick - which group
-  that single delivery "belongs to" needs an actual answer, not an
-  assumption, before this is buildable. Confirmed scope: Groups tab,
-  not Voices - the Members list there has more room than a typical
-  small group's member count needs.
-- **Message-editor sizing** (Voices tab, and presumably the matching
-  Board editor on Groups tab too) - the full-text edit box should be
-  about 50% of the window's height; shrink the Messages/Board Treeview
-  to make room for it.
+## Ideas for later, not scoped yet (2026-09-10)
+
+- **`recollect(query)` function** - Teddy's idea, explicitly "not an
+  add, just want it remembered": pass a string, get back every message
+  a voice has ever *received* containing that string - a real search
+  over a voice's own message history, not a group-wide search. Not
+  designed yet (matching semantics - substring? case-sensitive? search
+  a voice's own thoughts too, or only incoming messages? cap on result
+  count for a long history?) - needs its own real discussion before
+  building, same as boards/currency did.
