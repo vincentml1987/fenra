@@ -48,11 +48,14 @@ world state and shouldn't compound the same context-bloat problem a
 silently-timing-out voice can already produce). Tells a voice its own
 name/model, its own groups, every group that exists in the world, who
 it can currently see (shares a group with), who exists but isn't
-visible to it, its own currency balance, and how to call/discover
-functions (hard-coded, same reasoning as the old branch's bootstrap
-notice - the calling convention is mechanics, not content, so it isn't
-optional) - ending with its own identity line as the literal last line
-of the entire prompt.
+visible to it, *everyone's* currency balance - not just its own
+(2026-09-10, Teddy's call: full transparency, deliberately with no goal
+attached, after watching give_currency turn into rote/formulaic use -
+see whether visibility on its own changes anything) - and how to call/
+discover functions (hard-coded, same reasoning as the old branch's
+bootstrap notice - the calling convention is mechanics, not content, so
+it isn't optional) - ending with its own identity line as the literal
+last line of the entire prompt.
 
 FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
 `⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
@@ -327,6 +330,18 @@ def build_hud(world_name, voice_name):
 
     unseen = [v for v in list_voices(world_name) if v != voice_name and v not in seen]
 
+    # Everyone's balance, not just your own (Teddy's call, 2026-09-10) -
+    # full transparency rather than a private number, deliberately with
+    # no goal attached. Sorted by balance so it reads as a standing.
+    balances = []
+    for v in list_voices(world_name):
+        v_state = state if v == voice_name else load_voice_state(world_name, v)
+        balances.append((v, v_state.get("currency", 0.0)))
+    balances.sort(key=lambda pair: (-pair[1], pair[0]))
+    currency_line = "Currency levels (everyone): " + ", ".join(
+        f"{v}: ${amt:.2f}" for v, amt in balances
+    )
+
     lines = [
         "Everything above this line is your thoughts. Everything below is your HUD.",
         f"Name: {voice_name}",
@@ -335,7 +350,7 @@ def build_hud(world_name, voice_name):
         f"All groups in this world: {', '.join(all_groups) if all_groups else 'none'}",
         f"Voices you can see: {', '.join(sorted(seen)) if seen else 'none'}",
         f"Voices that exist but you cannot see: {', '.join(unseen) if unseen else 'none'}",
-        f"Currency: ${state.get('currency', 0.0):.2f}",
+        currency_line,
         "You can call functions by writing ⟦function_name(args)⟧ in your "
         "response - try ⟦functions()⟧ to see everything available to you.",
         state.get("identity", ""),
