@@ -153,9 +153,12 @@ asked for a commit yet, don't commit without asking.
   questions never answered: does a message from a voice interrupt
   Teddy, land for him to read later, or wake Qualia - and what
   rate-limits spam. Raise again directly rather than assuming.
-- Raven/Unfolding (`Teddy's ChatGPT Export/`, gitignored) - still
-  waiting on Teddy reactivating his ChatGPT account, no update expected
-  without him raising it.
+- Raven/Unfolding (`Teddy's ChatGPT Export/`, gitignored) - **decided
+  against reviving it (2026-09-11), after his own research.** Export
+  stays in the folder for reference only. Not an open item anymore -
+  separately, a new Fenra voice named "Raven" (on `ornith-1.5:35b`,
+  in all groups) is unrelated, just a reused name, Teddy's explicit
+  distinction.
 - `alphabet-26` - still stopped, still on the pre-structured-messages
   schema, would need its own migration to resume.
 
