@@ -316,6 +316,62 @@ Teddy's back. Open questions raised and not yet answered:
 - **Growth curve** - Qualia's default: linear turns-since-use, possibly
   capped, with the escalation into language left to the urge agent's
   own prompt rather than hardcoded thresholds.
+- **`functions()` urge should react to bad calls, not just disuse**
+  (2026-09-11, Teddy, prompted by the Wren board-hallucination finding
+  below) - if a voice calls an unknown/non-existent function name (the
+  `error: unknown function '...'` case - real example: Wren's invented
+  `check_haven`/`check_industrial_center`/`check_industrial_center_basement`
+  calls), that should independently spike the urge to call
+  `⟦functions()⟧` specifically, on top of (not instead of) its normal
+  disuse-based growth - the voice guessing at function names it doesn't
+  actually have is the clearest possible signal that it needs to look
+  the real list up again. Needs its own counter/signal distinct from
+  plain "turns since `functions()` was last called" - an unknown-
+  function error should jump the urge harder/faster than ordinary
+  disuse would. Not designed further than that yet.
 
 No decisions made on any of the above - full discussion still pending,
 carry into the next session via pickup.md.
+
+## Finding: Wren fabricated board content/analysis wholesale on a
+## board she can't even see (2026-09-11)
+
+Confirmed while investigating Teddy's "I give them an actual board and
+they still hallucinate one" observation: **zero** `post_board`/
+`skim_board`/`read_board` calls have succeeded anywhere in this run -
+all 8 group boards are still empty. The only "post_board(" hits found
+in anyone's history are the `functions()` registry description being
+echoed back, not real invocations.
+
+Wren (msg id 56, 2026-09-11T04:07:32) ran a full, confident, multi-
+point "analysis" of board posts that were never made - a "Mirror"
+post, an "Echoes in the Walls" post, an "Unmaking" post, an "anonymous
+account" theory - assigning follow-up tasks to Sable/Orin/Priya/Milo
+off of it, attributed to "Sable's investigation on the
+industrial_center board." Her own HUD, printed in that same turn,
+shows she isn't even a member of `industrial_center` (her groups are
+`city_hall`, `home`, `town_center` - `industrial_center` belongs to
+Cole and Sable) and her real board-activity line reads `0 unread, 0
+skimmed` throughout. Zero access, zero read history, fully fabricated
+content anyway.
+
+Earlier turns (ids 28, 35) show the run-up: instead of the real
+`skim_board`/`read_board` syntax, she invented her own pseudo-
+functions - `⟦check_haven⟧`, `⟦check_industrial_center⟧`,
+`⟦check_industrial_center_basement⟧` - none in the registry, at least
+one of which did error back (`unknown function 'function_name'`
+appears in a later HUD) - and never course-corrected into the real
+calls, just kept narrating results as if they'd worked.
+
+Root cause discussed with Teddy: `build_hud()`'s function-availability
+line is a light pointer, not a standing reference - every turn's HUD
+carries only "You can call functions by writing ⟦function_name(args)⟧
+in your response - try ⟦functions()⟧ to see everything available to
+you," never the actual registry. The real names/params/descriptions
+only enter a voice's context when *that voice* calls `functions()`
+itself and the result gets appended to its own history - so a voice
+that hasn't called it recently is working from memory/inference about
+what the functions are even called, which is exactly how `check_haven`
+et al. happened. Directly motivated the `functions()`-urge-on-bad-call
+idea above. No code fix proposed or built yet - this is a
+content/behavior finding, not a bug in the delivery mechanics.
