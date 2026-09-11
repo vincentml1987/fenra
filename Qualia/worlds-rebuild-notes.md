@@ -752,3 +752,78 @@ cosmetic, doesn't affect ordering" finding - that one was about the
 real `timestamp` field not being used for re-sorting; this is about
 voices hallucinating *fictional* timestamps inside their own prose.
 No action taken, no fix proposed - flagged only, per Teddy's ask.
+
+## Pre-Plan-mode decisions, round one (2026-09-11)
+
+Answers to the open items raised before starting the real Plan-mode
+build:
+1. **Understand-urge bump on a bad call, fork resolved**: only the
+   specific function that failed gets its understand-urge bumped (not
+   a general cross-function one), and the canned corrective it drives
+   is scoped to that function specifically - `functions(post_board)`,
+   not bare `functions()`. Rejects the "shaky syntax once implies
+   shaky footing everywhere" half of the original fork.
+2. **`temperature`**: left out of this round entirely, stays purely a
+   future Game-of-Life-derived-parameter candidate, not touched now.
+3. **XLEUD viewer tab**: read-only for now - view, not edit, per-voice/
+   per-function values. Editing deferred, not scoped.
+4. **`num_predict`/`repeat_penalty` concrete values**: deferred - not
+   cut, just sequenced after item 5 (the gemma3/llama3.2 retest) wraps
+   up.
+5. Confirmed real gap, Teddy's own words "good call, and bad science
+   on my part" - gemma3:4b and llama3.2:3b never got the final
+   21-case stress battery on the fixed (closed-set + single-item-guard)
+   template, only phi4-mini did. Re-running now for a real
+   apples-to-apples comparison - see below.
+
+## Final model comparison, apples-to-apples: gemma3:4b and llama3.2:3b
+## re-run on the fixed template (2026-09-11)
+
+Same 21-case battery, same fixed template (closed-set constraint +
+single-item guard) that phi4-mini already passed, run directly via
+`/api/generate` against both remaining candidates for a real
+comparison - the earlier phi-only result was flagged as "bad science"
+(Teddy's words) since it never happened for the other two.
+
+**Hallucination: fully fixed for all three models, not just phi4-mini.**
+Zero invented/unknown function tokens across all 21 tests for both
+gemma3:4b and llama3.2:3b - confirms the closed-set fix addressed the
+actual root cause, not a phi-specific quirk.
+
+**Multi-function completeness (5-6 functions at once): confirmed
+structural, not phi-specific.** Both other models show the same
+content-dropping under load - gemma3 typically covered ~3 of 6
+functions in the "all functions" category; llama3.2 was more erratic
+(one test covered only 1 of 6, another managed all 6 in compact form).
+Validates the top-3-cap decision as a real cross-model fix, not a
+Phi-only workaround.
+
+**Exact-name compliance - the decisive, non-close differentiator:**
+- `phi4-mini`: 9/9 single-function tests used the literal exact
+  function name.
+- `gemma3:4b`: 7/9 exact, 2/9 paraphrased instead (concept present,
+  literal name absent) - occasional, not systematic.
+- `llama3.2:3b`: **0/21** - never once used a literal exact function
+  name across the entire battery, every output paraphrased instead.
+  Consistent pattern, not a slip.
+
+**Speed**: gemma3:4b was the consistent laggard (~4.2-5.7s/call). Phi
+and llama were comparably fast (~3-4s/call), llama nominally fastest.
+
+## DECISION LOCKED: `phi4-mini` is the urge-agent model (2026-09-11)
+
+Teddy: "Yes, lock it in." With the top-3 cap already resolving the
+multi-function completeness gap (all three models shared it, not a
+tiebreaker), exact-name reliability was the deciding factor, and it
+wasn't close - phi4-mini reliably names its functions correctly, the
+other two don't (gemma3 occasionally, llama3.2 essentially never).
+Round-one urge system config, now fully settled: `phi4-mini`,
+`Drive=1`, `Desire=7`, `Satisfaction=full reset`, saturating curve
+`XLEUD`, floor `>=50%`, capped to top 3 functions per turn, closed-set
++ single-item-guard prompt template (see above for exact wording),
+reused `FUNCTION_REGISTRY` descriptions, understand-urge bumps only
+the specific failed function and drives a `functions(that_function)`
+canned nudge, `temperature` and the exact `num_predict`/
+`repeat_penalty` values still open (see "Pre-Plan-mode decisions,
+round one," above). XLEUD viewer tab: read-only. Ready for Plan mode
+pending item 4 from that same section.
