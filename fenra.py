@@ -125,6 +125,7 @@ voice's own groups only, never content.
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -189,6 +190,10 @@ def default_world_state():
         "model_default": DEFAULT_MODEL,
         "voices": [],
         "voice_rotation_index": 0,
+        "urge_model": DEFAULT_URGE_MODEL,
+        "num_predict": 1500,
+        "urge_num_predict": 250,
+        "repeat_penalty": 1.3,
     }
 
 
@@ -252,6 +257,9 @@ def default_voice_state():
         "identity": "",
         "messages": [],
         "currency": 10.0,
+        "urge": {name: 0.0 for name in URGE_FUNCTIONS},
+        "understand_urge": {name: 0.0 for name in URGE_FUNCTIONS},
+        "understand_urge_general": 0.0,
     }
 
 
@@ -748,6 +756,26 @@ FUNCTION_REGISTRY = {
 }
 
 
+# --------------------------------------------------------------------- urge --
+# Round-one urge-system constants (2026-09-11 design, locked with Teddy after
+# extensive live model testing - see Qualia/worlds-rebuild-notes.md). Every
+# real function except bare `functions()` (pure introspection, not something
+# a voice "does") tracks a felt "Urge" that grows the longer it goes unused
+# and resets on a successful call - see xleud()/apply_urge_tick() below for
+# the actual mechanics.
+
+URGE_FUNCTIONS = tuple(name for name in FUNCTION_REGISTRY if name != "functions")
+
+URGE_DESIRE = 7            # denominator in the XLEUD saturating curve
+URGE_DRIVE = 1              # Urge growth per tick a function goes unused
+URGE_FLOOR_PCT = 50         # perform-urge must be at/above this XLEUD% to be felt
+URGE_TOP_N = 3              # cap on functions handed to the urge agent per turn
+UNDERSTAND_URGE_BUMP = 3    # added to understand-urge on a real (non-hallucinated) error
+DEFAULT_URGE_MODEL = "phi4-mini"
+
+URGE_VIEWER_CATEGORIES = ("Perform Urges", "Understand Urges", "This Turn")
+
+
 def _mask_for_call(caller_name, name, args_text):
     """The bystander-facing text for one function call - a flavored,
     per-function action mask (FUNCTION_REGISTRY[name]["mask"]),
@@ -767,7 +795,8 @@ def _mask_for_call(caller_name, name, args_text):
 
 def run_function_calls(world_name, caller_name, response_text):
     """Scans response_text for every ⟦function_name(args)⟧ call and runs
-    each one for real. Returns a (full_text, masked_text) pair:
+    each one for real. Returns a (full_text, masked_text, outcomes)
+    triple:
 
     - full_text: response_text with a ⟦RESULT: ...⟧ line appended per
       call - what the caller's own context gets (they made the call,
@@ -780,43 +809,185 @@ def run_function_calls(world_name, caller_name, response_text):
       action is - they can see *that* it happened, roughly what kind of
       thing it was, not the details, unless the caller chooses to say so
       in their own words).
+    - outcomes: a list of (name, "ok" | "error" | "unknown") pairs, one
+      per call found, in order - captured here rather than re-parsed
+      from the RESULT lines later, since this is the one place that
+      already knows each call's real outcome first-hand. Feeds the
+      urge system (see apply_urge_tick(), 2026-09-11).
 
-    No calls found -> both entries are response_text unchanged."""
+    No calls found -> full_text/masked_text are response_text
+    unchanged, outcomes is empty."""
     matches = list(FUNCTION_CALL_RE.finditer(response_text))
     if not matches:
-        return response_text, response_text
+        return response_text, response_text, []
 
     result_lines = []
+    outcomes = []
     for match in matches:
         name, args_text = match.group(1), match.group(2)
         meta = FUNCTION_REGISTRY.get(name)
         if not meta:
             result_lines.append(f"⟦RESULT: {name} -> error: unknown function '{name}'⟧")
+            outcomes.append((name, "unknown"))
             continue
         try:
             result = meta["fn"](world_name, caller_name, args_text)
             result_lines.append(f"⟦RESULT: {name} -> ok: {result}⟧")
+            outcomes.append((name, "ok"))
         except Exception as exc:
             result_lines.append(f"⟦RESULT: {name} -> error: {exc}⟧")
+            outcomes.append((name, "error"))
 
     full_text = response_text + "\n" + "\n".join(result_lines)
     masked_text = FUNCTION_CALL_RE.sub(
         lambda m: _mask_for_call(caller_name, m.group(1), m.group(2)), response_text
     )
-    return full_text, masked_text
+    return full_text, masked_text, outcomes
+
+
+def xleud(urge_value, desire=URGE_DESIRE):
+    """The felt-urge percentage (Teddy's coinage, backronym: eXponential
+    Level of Euler-damped Urge over Desire) - a saturating curve bounded
+    [0, 1), so it decelerates rather than blowing up under heavy neglect
+    instead of growing unboundedly the way a raw ratio would. Never
+    persisted - always computed fresh from the persisted raw Urge value
+    (same "computed, not saved" spirit as build_hud())."""
+    return 1 - math.exp(-urge_value / desire)
+
+
+def apply_urge_tick(world_name, voice_name, outcomes):
+    """Called once per tick for the ACTIVE voice, right after
+    run_function_calls returns its outcomes list. Updates both urge
+    tracks in one load/save round-trip:
+
+    - perform-urge (state["urge"]): a successfully-called function
+      resets fully to 0 (Teddy's round-one Satisfaction rule); every
+      other real function grows by URGE_DRIVE, whether it errored or
+      simply wasn't touched this turn - only success counts as
+      "using" it.
+    - understand-urge (state["understand_urge"] /
+      state["understand_urge_general"]): a real function that errored
+      bumps THAT function's own understand-urge specifically (not a
+      general one - Teddy's call, 2026-09-11). A call to a name that
+      isn't in FUNCTION_REGISTRY at all has no real function to
+      attribute the bump to, so it bumps the aggregate
+      understand_urge_general slot instead."""
+    ok_names = {name for name, outcome in outcomes if outcome == "ok"}
+    errored_real_names = {name for name, outcome in outcomes if outcome == "error"}
+    unknown_called = any(outcome == "unknown" for _, outcome in outcomes)
+
+    state = load_voice_state(world_name, voice_name)
+
+    urge = state.get("urge", {})
+    for name in URGE_FUNCTIONS:
+        urge[name] = 0.0 if name in ok_names else urge.get(name, 0.0) + URGE_DRIVE
+    state["urge"] = urge
+
+    if errored_real_names or unknown_called:
+        understand = state.get("understand_urge", {})
+        for name in errored_real_names:
+            understand[name] = understand.get(name, 0.0) + UNDERSTAND_URGE_BUMP
+        state["understand_urge"] = understand
+        if unknown_called:
+            state["understand_urge_general"] = (
+                state.get("understand_urge_general", 0.0) + UNDERSTAND_URGE_BUMP
+            )
+
+    save_voice_state(world_name, voice_name, state)
+
+
+def compute_urge_snapshot(state):
+    """Pure function of a voice's persisted state -> everything the
+    per-tick urge decision (and the Urge Viewer GUI panel) needs.
+    Never mutates, never touches disk.
+
+    Understand-urge deliberately has no floor before it can "win" -
+    an error is a discrete, meaningful event, not gradual disuse, so
+    even a single fresh one should be able to override the roleplay
+    urge agent immediately if it's the highest signal right now
+    (confirmed with Teddy, 2026-09-11). Perform-urge keeps its
+    URGE_FLOOR_PCT floor - it isn't felt at all below that."""
+    urge = state.get("urge", {})
+    understand = state.get("understand_urge", {})
+    general = state.get("understand_urge_general", 0.0)
+
+    perform = [(name, xleud(urge.get(name, 0.0))) for name in URGE_FUNCTIONS]
+    understand_signals = [(name, xleud(understand.get(name, 0.0))) for name in URGE_FUNCTIONS]
+    understand_signals.append((None, xleud(general)))  # None = aggregate/general
+
+    top_understand = max(understand_signals, key=lambda pair: pair[1])
+    top_perform = sorted(
+        (p for p in perform if p[1] * 100 >= URGE_FLOOR_PCT), key=lambda p: -p[1]
+    )[:URGE_TOP_N]
+
+    highest_perform = max((p[1] for p in perform), default=0.0)
+    understand_wins = top_understand[1] > 0 and top_understand[1] >= highest_perform
+
+    return {
+        "understand_wins": understand_wins,
+        "understand_winner": top_understand,  # (name_or_None, xleud)
+        "top_perform": top_perform,            # up to URGE_TOP_N, only >= floor
+    }
+
+
+URGE_AGENT_INSTRUCTIONS = """You are a small utility model with no memory between calls. Your only job: given a list of "function urges" (a function name, a brief description of what it does, and an intensity percentage), write ONE short paragraph — 2 to 4 sentences — describing what it feels like to carry these urges right now.
+
+The percentage is how strongly this urge is currently felt — the longer a function has gone unused, the higher it climbs, and the harder it becomes to ignore.
+
+Write it in second person ("You feel..."), as an embodied, organic sensation — not a command, not a to-do list, not an instruction to act. Never state the raw percentage number in your output.
+
+You may ONLY name the functions listed below — never invent, imply, or reference any function not listed. You MUST name every one of them, using its exact name (e.g. "post_board", not "post to the board"). If only one function is listed, describe only that one function — do not invent or imply any others.
+
+Do not greet, explain what you're doing, or add anything besides the paragraph itself.
+
+Urge values follow:
+"""
+
+
+def build_urge_agent_prompt(top_perform):
+    """The stateless, one-shot prompt sent to the urge agent - fixed
+    instructions plus the top_perform functions' real registry
+    description (reused as-is, no separate urge-specific description
+    field needed) and current XLEUD%. Confirmed via a 21-case stress
+    battery against phi4-mini/gemma3:4b/llama3.2:3b, 2026-09-11."""
+    lines = [
+        f"- {name} ({FUNCTION_REGISTRY[name]['description']}): {round(pct * 100)}%"
+        for name, pct in top_perform
+    ]
+    return URGE_AGENT_INSTRUCTIONS + "\n".join(lines)
+
+
+def build_call_syntax_reminders(names):
+    """Deterministic, never-LLM-generated reminder of each named
+    function's real call syntax, sourced straight from
+    FUNCTION_REGISTRY - appended after the urge agent's own output so
+    a felt urge is never left without a guaranteed-correct path to
+    actually resolve it (the same failure mode as the Wren
+    board-hallucination finding: naming a function isn't the same as
+    knowing how to call it)."""
+    return "\n".join(
+        f"{name} -> ⟦{name}({FUNCTION_REGISTRY[name]['params']})⟧" for name in names
+    )
 
 
 # ------------------------------------------------------------------ model --
 
-def call_ollama(host, model, prompt):
+def call_ollama(host, model, prompt, options=None):
     # No fixed timeout, matching fenras-aletheosis's own REQUEST_TIMEOUT=None
     # (its comment applies here too, unchanged): some models are legitimately
     # slow, and a client-side timeout doesn't cancel server-side generation -
     # it just abandons the connection while the server keeps working anyway,
     # which can pile up rather than help.
+    #
+    # `options` (2026-09-11) - e.g. {"num_predict": ..., "repeat_penalty": ...}
+    # - a generation-limiting guard, motivated by the Phi-3 runaway-generation
+    # and Orin verbatim-repetition findings earlier this branch. Deliberately
+    # left config-agnostic here (a plain dict, no `self.*` access) - callers
+    # build the options from world/voice-specific settings; this function
+    # doesn't know or care where they came from.
     resp = requests.post(
         f"{host}/api/generate",
-        json={"model": model, "prompt": prompt, "stream": False},
+        json={"model": model, "prompt": prompt, "stream": False, "options": options or {}},
         timeout=None,
     )
     resp.raise_for_status()
@@ -848,6 +1019,10 @@ class FenraApp:
 
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
+        self.urge_model_var = tk.StringVar(value=DEFAULT_URGE_MODEL)
+        self.num_predict_var = tk.StringVar(value="1500")
+        self.urge_num_predict_var = tk.StringVar(value="250")
+        self.repeat_penalty_var = tk.StringVar(value="1.3")
         self.status_var = tk.StringVar(value="Idle")
         self.world_var = tk.StringVar(value="")
 
@@ -916,6 +1091,21 @@ class FenraApp:
         self.start_stop_btn.pack(side="left", padx=(0, 10))
         ttk.Label(toolbar, textvariable=self.status_var, foreground="#666").pack(side="left")
 
+        # Second row (2026-09-11) - urge-agent model + generation-limiting
+        # guard, all world.json-backed, same StringVar+Entry pattern as
+        # Host/Interval above. Own row rather than crowding the first -
+        # nine label/entry pairs plus button/status is a lot for one line.
+        toolbar2 = ttk.Frame(self.root)
+        toolbar2.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(toolbar2, text="Urge model:").pack(side="left")
+        ttk.Entry(toolbar2, textvariable=self.urge_model_var, width=14).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar2, text="num_predict:").pack(side="left")
+        ttk.Entry(toolbar2, textvariable=self.num_predict_var, width=6).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar2, text="Urge num_predict:").pack(side="left")
+        ttk.Entry(toolbar2, textvariable=self.urge_num_predict_var, width=6).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar2, text="repeat_penalty:").pack(side="left")
+        ttk.Entry(toolbar2, textvariable=self.repeat_penalty_var, width=6).pack(side="left", padx=(2, 10))
+
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
@@ -929,7 +1119,19 @@ class FenraApp:
     # ----------------------------------------------------------- Voices tab --
 
     def _build_voices_tab(self):
-        frame = self.voices_tab
+        # Inner notebook (2026-09-11) - "Voice Editor" is the entire
+        # existing body below, unmoved; "Urge Viewer" is new, read-only.
+        # Teddy's ask: keep the voice list in the parent Voices tab
+        # (don't duplicate it) - the Urge Viewer reads self.displayed_voice
+        # rather than having its own selector.
+        inner_notebook = ttk.Notebook(self.voices_tab)
+        inner_notebook.pack(fill="both", expand=True)
+        editor_tab = ttk.Frame(inner_notebook)
+        urge_tab = ttk.Frame(inner_notebook)
+        inner_notebook.add(editor_tab, text="Voice Editor")
+        inner_notebook.add(urge_tab, text="Urge Viewer")
+
+        frame = editor_tab
 
         top_bar = ttk.Frame(frame)
         top_bar.pack(fill="x", padx=6, pady=(6, 0))
@@ -1017,6 +1219,83 @@ class FenraApp:
         edit_frame.grid_columnconfigure(3, weight=1)
         edit_frame.grid_rowconfigure(1, weight=1)
 
+        self._build_urge_viewer_tab(urge_tab)
+
+    def _build_urge_viewer_tab(self, parent):
+        """Read-only (2026-09-11, round one - no editing yet). The
+        Outlook-Options-style master-detail Teddy asked for applies here,
+        to the categories *within* one voice's urge breakdown - a
+        vertical category list on the left, clicking one swaps the
+        detail panel on the right. Always reflects self.displayed_voice
+        (see _load_voice's added refresh call) rather than duplicating
+        the voice selector that already exists on the Voice Editor tab."""
+        paned = ttk.Panedwindow(parent, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        left = ttk.Frame(paned, width=160)
+        self._urge_detail_frame = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(self._urge_detail_frame, weight=4)
+
+        self.urge_category_listbox = tk.Listbox(left, exportselection=False)
+        self.urge_category_listbox.pack(fill="both", expand=True)
+        for cat in URGE_VIEWER_CATEGORIES:
+            self.urge_category_listbox.insert("end", cat)
+        self.urge_category_listbox.selection_set(0)
+        self.urge_category_listbox.bind("<<ListboxSelect>>", lambda e: self._refresh_urge_viewer())
+
+    def _refresh_urge_viewer(self):
+        """Called whenever the displayed voice changes (_load_voice) or
+        the category selection changes - always shows
+        self.displayed_voice's current urge state, read-only. No
+        auto-refresh during the running loop - a voice re-selected in
+        the Voice Editor tab (which the existing live-refresh fix
+        already does on delivery/turn) naturally keeps this current
+        without adding overhead to the hot tick path."""
+        for child in self._urge_detail_frame.winfo_children():
+            child.destroy()
+        if not self.displayed_voice:
+            ttk.Label(self._urge_detail_frame, text="No voice selected.").pack(anchor="w", padx=4, pady=4)
+            return
+
+        selection = self.urge_category_listbox.curselection()
+        category = URGE_VIEWER_CATEGORIES[selection[0]] if selection else URGE_VIEWER_CATEGORIES[0]
+
+        state = load_voice_state(self.world_name, self.displayed_voice)
+        snapshot = compute_urge_snapshot(state)
+
+        ttk.Label(
+            self._urge_detail_frame, text=f"{self.displayed_voice} - {category}",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", padx=4, pady=(0, 8))
+
+        if category == "Perform Urges":
+            for name in URGE_FUNCTIONS:
+                u = state.get("urge", {}).get(name, 0.0)
+                ttk.Label(
+                    self._urge_detail_frame, text=f"{name}: Urge={u:.1f}  XLEUD={xleud(u) * 100:.0f}%"
+                ).pack(anchor="w", padx=4)
+        elif category == "Understand Urges":
+            for name in URGE_FUNCTIONS:
+                u = state.get("understand_urge", {}).get(name, 0.0)
+                ttk.Label(
+                    self._urge_detail_frame, text=f"{name}: Urge={u:.1f}  XLEUD={xleud(u) * 100:.0f}%"
+                ).pack(anchor="w", padx=4)
+            general = state.get("understand_urge_general", 0.0)
+            ttk.Label(
+                self._urge_detail_frame,
+                text=f"(general/unknown-function): Urge={general:.1f}  XLEUD={xleud(general) * 100:.0f}%",
+            ).pack(anchor="w", padx=4, pady=(6, 0))
+        else:  # "This Turn"
+            winner_name, _ = snapshot["understand_winner"]
+            if snapshot["understand_wins"]:
+                text = f'Would show the canned nudge: "functions({winner_name or ""})"'
+            elif snapshot["top_perform"]:
+                names = ", ".join(n for n, _ in snapshot["top_perform"])
+                text = f"Would call the urge agent for: {names}"
+            else:
+                text = "Would show nothing (every perform-urge below the floor)."
+            ttk.Label(self._urge_detail_frame, text=text, wraplength=400, justify="left").pack(anchor="w", padx=4)
+
     def _populate_voices_list(self):
         self._current_voice_names = list_voices(self.world_name)
         self.voices_listbox.delete(0, "end")
@@ -1043,6 +1322,7 @@ class FenraApp:
         self._current_messages = state.get("messages", [])
         self._populate_messages_tree()
         self._clear_message_edit()
+        self._refresh_urge_viewer()
 
     def _refresh_hud_summary(self, name):
         """Read-only - see hud_fields() for the actual data, shared with
@@ -1137,16 +1417,23 @@ class FenraApp:
         self._clear_message_edit()
 
     def _save_voice_snapshot(self, name):
+        # Loads existing state first and only overwrites the
+        # widget-backed fields (2026-09-11 fix) - this used to rebuild
+        # the whole state dict from scratch with just these 4 fields,
+        # which silently wiped any field with no GUI widget (the new
+        # urge/understand_urge tracking has none - it's computed
+        # server-side, never hand-edited). This is the real root-cause
+        # fix, not a urge-specific patch - it protects any future new
+        # voice-state field the same way.
+        state = load_voice_state(self.world_name, name)
         try:
             currency = float(self.currency_var.get())
         except ValueError:
-            currency = load_voice_state(self.world_name, name).get("currency", 0.0)
-        state = {
-            "model": self.model_var.get(),
-            "identity": self.identity_box.get("1.0", "end-1c"),
-            "messages": self._current_messages,
-            "currency": currency,
-        }
+            currency = state.get("currency", 0.0)
+        state["model"] = self.model_var.get()
+        state["identity"] = self.identity_box.get("1.0", "end-1c")
+        state["messages"] = self._current_messages
+        state["currency"] = currency
         save_voice_state(self.world_name, name, state)
 
     def save_voice(self):
@@ -1544,6 +1831,10 @@ class FenraApp:
         self.world_var.set(name)
         self.host_var.set(state.get("host", DEFAULT_HOST))
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
+        self.urge_model_var.set(state.get("urge_model", DEFAULT_URGE_MODEL))
+        self.num_predict_var.set(str(state.get("num_predict", 1500)))
+        self.urge_num_predict_var.set(str(state.get("urge_num_predict", 250)))
+        self.repeat_penalty_var.set(str(state.get("repeat_penalty", 1.3)))
         self.world_voices = state.get("voices", [])
         self.voice_rotation_index = state.get("voice_rotation_index", 0)
 
@@ -1621,6 +1912,10 @@ class FenraApp:
             "model_default": DEFAULT_MODEL,
             "voices": self.world_voices,
             "voice_rotation_index": self.voice_rotation_index,
+            "urge_model": self.urge_model_var.get(),
+            "num_predict": self.num_predict_var.get(),
+            "urge_num_predict": self.urge_num_predict_var.get(),
+            "repeat_penalty": self.repeat_penalty_var.get(),
         }
         save_world_state(self.world_name, state)
 
@@ -1664,6 +1959,11 @@ class FenraApp:
         active_voice = self.world_voices[index]
         self.voice_rotation_index = (index + 1) % len(self.world_voices)
         self.root.after(0, self._save_world_controls)
+        # "Thinking..." status (2026-09-11) - shows who's mid-call during
+        # the wait on a slow model, not just after it returns. The
+        # existing post-response status_var.set below already overwrites
+        # this once the call finishes.
+        self.root.after(0, self.status_var.set, f"Running ({active_voice} is thinking...)")
 
         # If the currently-displayed voice is the one about to run, its
         # in-flight widget edits are the authoritative copy - persist
@@ -1685,16 +1985,74 @@ class FenraApp:
 
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
-        prompt = f"{render_messages(state.get('messages', []))}\n\n{build_hud(self.world_name, active_voice)}"
+
         try:
-            response = call_ollama(self.host_var.get(), model, prompt)
+            repeat_penalty = float(self.repeat_penalty_var.get())
+        except ValueError:
+            repeat_penalty = 1.3
+
+        # Urge system (2026-09-11) - see xleud()/compute_urge_snapshot()/
+        # apply_urge_tick() for the mechanics. Entirely prompt-only, same
+        # as build_hud() - urge_block never gets written to
+        # state["messages"] or anywhere on disk, computed fresh every tick.
+        urge_snapshot = compute_urge_snapshot(state)
+        urge_block = ""
+        if urge_snapshot["understand_wins"]:
+            # A recent real error is the single highest signal right now -
+            # skip the roleplay urge agent entirely and inject a fixed,
+            # deterministic corrective instead (never LLM-generated, so
+            # it's always the exact real functions() search syntax).
+            winner_name, _ = urge_snapshot["understand_winner"]
+            urge_block = (
+                "You have the urge to call functions()."
+                if winner_name is None
+                else f"You have the urge to call functions({winner_name})."
+            )
+        elif urge_snapshot["top_perform"]:
+            top_perform = urge_snapshot["top_perform"]
+            urge_prompt = build_urge_agent_prompt(top_perform)
+            try:
+                urge_num_predict = int(self.urge_num_predict_var.get())
+            except ValueError:
+                urge_num_predict = 250
+            try:
+                urge_para = call_ollama(
+                    self.host_var.get(), self.urge_model_var.get(), urge_prompt,
+                    options={"num_predict": urge_num_predict, "repeat_penalty": repeat_penalty},
+                ).strip()
+            except requests.RequestException:
+                # Fail open (confirmed with Teddy, 2026-09-11) - the urge
+                # block is supplementary flavor text, not essential; a
+                # hiccup in the (separate, smaller) urge-agent model
+                # shouldn't cost the voice its whole turn the way the main
+                # model failing does below.
+                urge_para = ""
+            if urge_para:
+                reminders = build_call_syntax_reminders([name for name, _ in top_perform])
+                urge_block = f"{urge_para}\n\n{reminders}"
+
+        hud = build_hud(self.world_name, active_voice)
+        prompt = f"{render_messages(state.get('messages', []))}\n\n{hud}"
+        if urge_block:
+            prompt = f"{prompt}\n\n{urge_block}"
+
+        try:
+            num_predict = int(self.num_predict_var.get())
+        except ValueError:
+            num_predict = 1500
+        try:
+            response = call_ollama(
+                self.host_var.get(), model, prompt,
+                options={"num_predict": num_predict, "repeat_penalty": repeat_penalty},
+            )
         except requests.RequestException as exc:
             self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
             return
         response = response.strip()
         if not response:
             return
-        full_response, masked_response = run_function_calls(self.world_name, active_voice, response)
+        full_response, masked_response, outcomes = run_function_calls(self.world_name, active_voice, response)
+        apply_urge_tick(self.world_name, active_voice, outcomes)
 
         timestamp = datetime.now().isoformat(timespec="seconds")
 
