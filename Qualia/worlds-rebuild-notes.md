@@ -501,6 +501,31 @@ function or a combined line), but the principle's settled: never let
 felt-urge language stand alone without a guaranteed-correct path to
 actually resolve it.
 
+## Future idea, explicitly NOT in this plan: cross-voice urge
+## contagion + a "follower-ness" dial (2026-09-11, Teddy)
+
+Teddy's own words: "Don't add it to this plan, but..." - flagged for
+the record only, not scoped, not part of the round-one build. Every
+urge mechanic discussed so far is purely intra-voice (a voice's own
+disuse driving its own `Urge`). This idea is different in kind: one
+voice's action could bump *other* voices' related urges too - his own
+example, another voice using `post_board` causing a sharper jump in
+nearby voices' `skim_board`/`read_board` urges than ordinary time-
+based `Drive` alone would (the idea being: seeing someone else post
+makes you want to go read it, not just want to post yourself). Could
+extend further to just *witnessing* an action (via the masked
+gesture broadcast - see the `_mask_for_call`/masking mechanism) having
+some urge effect on bystanders, independent of the action being about
+a function they'd use themselves.
+
+Naturally suggests a new potential per-voice personality dial - "how
+follower-like" a voice is: how much their own urges get pulled around
+by what they see other voices doing, versus running purely on their
+own independent `Drive`/`Desire`. No mechanism designed, no term
+picked, no relationship to `Urge`/`Desire`/`Drive`/`Satisfaction`/
+`XLEUD` worked out - genuinely just an idea on the shelf next to the
+Game-of-Life one.
+
 ## New UI ask: per-voice, per-function XLEUD viewer (2026-09-11)
 
 A new panel to watch each voice's functions' current `XLEUD` values -
