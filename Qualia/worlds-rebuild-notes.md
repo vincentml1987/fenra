@@ -880,3 +880,36 @@ then the main call at `num_predict=1500`).
 Not yet run against a live world/real Ollama - that's the next real
 step (see plan's verification section, item 3) whenever `the_town` (or
 a fresh test world) is next started up.
+
+**Live-run check, same night**: wiped `the_town` again (voices/boards
+emptied, currency/urge state reset, `voice_rotation_index` reset to
+0), flipped Cole and Priya back from `deepseek-r1:14b` to `phi3:14b`
+now that the generation guard is in place (Teddy's call - see if the
+`num_predict`/`repeat_penalty` guard actually prevents a repeat of the
+original Phi-3 runaway finding). `world.json`'s migration-safe
+default-then-overlay pattern picked up the four new urge/generation
+fields automatically on load, no manual edit needed. First few turns
+clean - Wren's opening turn normal length, no urge block yet (nothing
+crosses the 50% floor from a cold start, as designed), Cole's first
+real turn on `phi3:14b` came back a normal 1,116 characters, no
+runaway. Worth watching longer before calling the Phi-3 fix confirmed
+- Teddy's watching it himself now.
+
+## Future idea, not scoped: voice list should reflect (and edit) loop
+## order (2026-09-11, Teddy)
+
+Real gap found while explaining turn order: the Voices tab's
+`voices_listbox` (`_populate_voices_list`) is populated from
+`list_voices()`, which does `sorted(os.listdir(...))` - alphabetical,
+with **zero relationship** to `self.world_voices` (the actual
+round-robin order `_tick` indexes into) or `voice_rotation_index`. The
+list a person looks at when picking a voice to edit has never
+reflected turn order at all, not even read-only.
+
+Teddy's ask, explicitly "possible future," not this session: (1) the
+visible list should show voices in actual loop order, not alphabetical;
+(2) further, the list itself should become the way to *reorder* the
+loop - not just a display. Not designed (drag-to-reorder? up/down
+buttons? does reordering write straight to `world_voices`/`world.json`
+immediately or need an explicit save?) - flagged for whenever it comes
+up again.
