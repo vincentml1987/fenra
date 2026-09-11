@@ -941,3 +941,31 @@ she's genuinely tracking/reacting to other cast members' patterns
 just riffing in isolation. Notable since she's on `qwen3:14b` - same
 family that produced the Orin verbatim-repetition finding - landing
 well for a different personality on the same model family.
+
+## Finding: Raven (`ornith-1.5:35b`) - raw reasoning bleeding directly
+## into output, never reaches real content (2026-09-11)
+
+Teddy added a new voice, Raven, in all groups, trying `ornith-1.5:35b`
+- researched beforehand (Qualia flagged it as reasoning/benchmark-
+oriented training, not creative-writing-oriented, worth watching
+before trusting). Confirmed live, and worse than expected: her first
+real turn (8,912 characters) is **entirely** raw chain-of-thought - no
+`<think>` delimiter to strip, just confused meta-commentary about her
+own prompt/HUD structure landing directly as the visible output
+("So there's both 'Orin' as a separate Voice AND me (Raven)... but
+that response above seems to be styled in the way I should respond...
+Actually wait—the instruction says everything above line is my
+'thoughts'..."). Called `⟦functions()⟧` three separate times inside
+that same reasoning trace (each dutifully answered, bloating the turn
+further), and got cut off by `num_predict=1500` before ever producing
+an actual in-character line to anyone. Architecture mismatch, not a
+personality problem - she's doing exactly what her "self-improvement"
+reasoning-loop training optimized for, just in the wrong place for a
+roleplay voice.
+
+**Teddy's call**: `ornith-1.5:35b` probably isn't the right fit for
+Raven, but the Raven *character concept* might still be - going to
+look at other installed models for her rather than abandoning the
+voice. Explicitly leaving her running as-is, unfixed, for now - his
+own words, "I never claimed to be infallible... I have barely even
+talked to any of them yet." Not urgent, not blocking anything else.
