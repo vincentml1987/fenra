@@ -183,3 +183,23 @@ git history same day for the actual commits.
   a voice's own thoughts too, or only incoming messages? cap on result
   count for a long history?) - needs its own real discussion before
   building, same as boards/currency did.
+- **Messages should reorder by timestamp automatically, not just by
+  insertion/id order** (2026-09-10, Teddy: "having it re-order
+  automatically in context makes more sense," explicitly "don't fix
+  now"). Currently `render_messages()` (what Ollama sees) and the GUI's
+  Messages tree both iterate in list/id order regardless of the
+  `timestamp` field - a backdated or manually-edited timestamp changes
+  what the line *says* but not where it actually sits in the sequence,
+  so a voice can see a message that claims to be earlier sitting after
+  later ones. Not designed yet either - would need to decide whether
+  `id` still means "insertion order" separately from display/context
+  order, and how a manual edit that changes a timestamp should
+  re-sort relative to messages already delivered/rendered.
+- **Status label should show who's currently thinking, not just who
+  last spoke** (2026-09-10, Teddy). Right now the label next to
+  Start/Stop only updates *after* `call_ollama` returns
+  (`"Running ('{active_voice}' spoke)"`) - during the actual wait on a
+  slow model there's no indication who's mid-turn. Would need to set
+  the label to something like `"Running (Dash is thinking...)"` right
+  after `active_voice` is picked, before the `call_ollama` call, then
+  the existing post-response update overwrites it.

@@ -1660,16 +1660,23 @@ class FenraApp:
     def _tick(self):
         if not self.world_voices:
             return
-        # If the currently-displayed voice is about to run, its in-flight
-        # widget edits are the authoritative copy - persist them first so
-        # a same-voice tick doesn't clobber an unsaved edit.
-        if self.displayed_voice:
-            self.root.after(0, self._save_voice_snapshot, self.displayed_voice)
-
         index = self.voice_rotation_index % len(self.world_voices)
         active_voice = self.world_voices[index]
         self.voice_rotation_index = (index + 1) % len(self.world_voices)
         self.root.after(0, self._save_world_controls)
+
+        # If the currently-displayed voice is the one about to run, its
+        # in-flight widget edits are the authoritative copy - persist
+        # them first so a same-voice tick doesn't clobber an unsaved
+        # edit. Gated on equality with active_voice (2026-09-10 fix) -
+        # it used to fire for the displayed voice on *every* tick
+        # regardless of whose turn it was, which meant a stale in-memory
+        # snapshot of whatever voice happened to be selected in the GUI
+        # silently overwrote real deliveries appended to its state.json
+        # by other voices' turns in between (found via Dash only ever
+        # showing its own messages).
+        if self.displayed_voice == active_voice:
+            self.root.after(0, self._save_voice_snapshot, self.displayed_voice)
 
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
