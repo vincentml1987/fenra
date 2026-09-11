@@ -330,8 +330,63 @@ Teddy's back. Open questions raised and not yet answered:
   function error should jump the urge harder/faster than ordinary
   disuse would. Not designed further than that yet.
 
-No decisions made on any of the above - full discussion still pending,
-carry into the next session via pickup.md.
+Refined considerably (2026-09-11) via Teddy's first use of the new
+[[from-teddy-folder-convention]] (`Qualia/From Teddy/Function Urge
+Responses.txt`, line-by-line `!~...~!` reply to Qualia's five original
+questions above) plus follow-up in chat:
+
+- **`functions()` gets a canned message, not the urge agent.** When
+  the `functions()`-urge (see the bad-call entry above) is the
+  voice's highest urge, skip the roleplay/felt-state agent entirely
+  and inject a fixed line instead (Teddy: "You have the urge to call
+  functions()."), roughly
+  `if greatestUrge == functionsUrge: canned_message else: call urgeAgent`.
+  Rationale (Teddy + Qualia agreed): this is the one place ambiguity
+  actively hurts - dressing up "you don't know your own tool names" in
+  poetic language risks a voice reading past it the way Wren did.
+- **Two urge tracks per function, not one: "perform" and
+  "understand."** Perform-urge is the general urge-agent's domain (the
+  original disuse-driven felt-state description). Understand-urge is
+  ours/mechanical: a malformed call to a *specific* function bumps
+  that function's understand-urge, with its own canned nudge toward
+  `functions(function_name)` (confirmed real and already working -
+  `functions([search term])` filters registry entries by substring) -
+  a targeted "go re-check this one thing" rather than the whole
+  registry. Open fork not yet resolved: does a bad call to function X
+  bump only X's understand-urge, or also a general cross-function one
+  (shaky syntax once may mean shaky footing overall)?
+- **Four-term model per voice per function, terminology now settled**:
+  - `Urge` (U) - the value that actually moves, up on neglect, down on
+    use.
+  - `Desire` (D) - per-voice-per-function **threshold**, acts as the
+    denominator against Urge. Counterintuitive on purpose (Teddy's own
+    words): a *smaller* Desire means a voice feels the pull *sooner* -
+    it's how little neglect it takes before the urge registers, not
+    how much they want it in some positive sense.
+  - `Drive` - the rate Urge climbs per ignored tick (was briefly
+    conflated with Desire mid-brainstorm in the original response
+    file - Teddy clarified 2026-09-11 these are two separate knobs,
+    resolving what had looked like a contradiction in his own
+    Drive-value example).
+  - `Satisfaction` - the amount Urge drops when the function is
+    actually used. Not yet decided: flat subtract-and-floor-at-0
+    (Qualia's lean - keeps continuity, a badly-neglected function
+    doesn't read as instantly fully content after one use), percentage
+    of current Urge, or hard reset to 0.
+  - Rough shape of the actual trigger math (Teddy, "not the specific
+    math," "can be discussed"): `X = U / D` (or a capped/inverse-log
+    variant to keep it from blowing up after extreme neglect, e.g. an
+    Orin-style near-infinite-neglect case), with `X >= 1` starting the
+    nudges and `X >= 2` intensifying them. Still open.
+- **Authored vs. derived, still open**: are `Drive`/`Desire` meant to
+  be hand-tuned per voice as part of building character (like identity
+  text - a lot of numbers: 4 params x ~6 functions x 8 voices), or
+  should most of it default uniformly with only a few hand-picked for
+  flavor? Not answered yet.
+
+Still not built, still not through Plan mode - Teddy's own words: "I
+think we need to talk more." Carry into the next session via
+pickup.md.
 
 ## Finding: Wren fabricated board content/analysis wholesale on a
 ## board she can't even see (2026-09-11)
