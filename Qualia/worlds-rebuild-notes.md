@@ -535,6 +535,54 @@ its exact name inline (e.g. 'post_board') - every urge listed below
 must be named, not just alluded to. Do not greet, explain what you're
 doing, or add anything besides the paragraph itself."
 
+## Model comparison, round one: phi4-mini vs. gemma3:4b vs. llama3.2:3b
+## (2026-09-11)
+
+Manual testing in the Ollama desktop app (chat history readable
+straight from its local `%LOCALAPPDATA%\Ollama\db.sqlite`, `chats`/
+`messages` tables - no copy-paste needed, Qualia reads it directly).
+Test 1 and Test 2 used the original (pre-refinement) instructions -
+"may" name functions, no percentage explanation, no per-function
+description; Test 2 changed only the function/percentage pair, same
+instructions. Test 3 (phi4-mini only so far) is the first on the
+refined template above.
+
+**Test 1** (`post_board: 73%`, `send_message: 58%`) - all three named
+both functions correctly and accurately tied the description to what
+each function actually does. Qualia's read: Phi's version stood out
+for going beyond describing the sensation into *interpreting* it -
+"the urge to post_board pulsating with a strong desire to connect" -
+where Gemma and Llama stayed more purely sensory/metaphorical
+("a persistent thrum beneath your skin," "the thrum of the data
+beneath you"). Teddy's independent read on Phi, same test: he likes
+that it "doesn't just express the urges, it tries to tell what they
+might MEAN."
+
+**Test 2** (`give_currency: 98%`, `delete_board: 51%`) - **real finding:
+gemma3:4b hallucinated a function name that wasn't in the input at
+all.** Never said `give_currency` or `delete_board` by name (both were
+only alluded to, not required yet at this verbiage stage), and instead
+said "...a need to simply begin anew with a carefully constructed
+`post_board`" - `post_board` wasn't one of the two functions given.
+Exactly the failure mode this whole design exists to prevent (see the
+Wren board-hallucination finding, above). phi4-mini and llama3.2:3b
+both stayed accurate to the actual two functions given in this same
+test. One data point, not disqualifying on its own, but a real strike
+against gemma3:4b worth weighing as testing continues.
+
+**Test 3** (`post_board`/`send_message`, refined template, phi4-mini
+only so far) - held up well: named both functions correctly, kept the
+interpretive-meaning quality from Test 1, worked the new "why the
+percentage matters" framing in naturally ("The intensity of these
+urges suggests an unfulfilled need to communicate, resonating with a
+growing pressure to connect with others.") without just restating the
+instructions back. Gemma3/Llama not yet re-tested on the refined
+template.
+
+Still ongoing - Teddy testing manually, will hand off a larger
+automated batch (varied functions/values, across all three/via direct
+`/api/generate` calls) once the prompt shape itself is settled.
+
 ## Future idea, explicitly NOT in this plan: cross-voice urge
 ## contagion + a "follower-ness" dial (2026-09-11, Teddy)
 
