@@ -383,6 +383,21 @@ questions above) plus follow-up in chat:
   text - a lot of numbers: 4 params x ~6 functions x 8 voices), or
   should most of it default uniformly with only a few hand-picked for
   flavor? Not answered yet.
+- **The saturating curve won out** over the raw-ratio and log-damped
+  options Qualia sketched - Teddy: "strangely elegant," and it lets the
+  urge agent be handed a clean percentage ("80% urge to do X") instead
+  of an open-ended number.
+- **Named: `XLEUD`** (2026-09-11, Teddy, locked in - "OMG, I LOVE THAT
+  BACKRONYM! XLEUD it is."). Backronym, Qualia's suggestion:
+  e**X**ponential **L**evel of **E**uler-damped **U**rge over
+  **D**esire - literally spells the saturating-curve formula back out.
+  Deliberate choice to make this term the one actual coinage in the
+  system, distinct from the plain-English `Urge`/`Desire`/`Drive`/
+  `Satisfaction` - those are authored dials, `XLEUD` is the one
+  genuinely *computed* value derived from combining them, so it gets
+  its own invented word. The backronym is flavor/lore, not meant to be
+  spelled out to the voices themselves - they just see a plain
+  percentage ("80% urge to do X").
 
 Still not built, still not through Plan mode - Teddy's own words: "I
 think we need to talk more." Carry into the next session via
