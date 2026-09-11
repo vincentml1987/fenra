@@ -843,3 +843,40 @@ canned nudge, `temperature` and the exact `num_predict`/
 `repeat_penalty` values still open (see "Pre-Plan-mode decisions,
 round one," above). XLEUD viewer tab: read-only. Ready for Plan mode
 pending item 4 from that same section.
+
+## BUILT: urge system, generation guard, thinking status, Urge Viewer
+## (2026-09-11, commit e01f28f)
+
+The full round-one design above is now implemented in `fenra.py`, not
+just planned. Went through a real Plan-mode session (exploration of
+the exact code spots, a design pass, three clarifying questions
+answered - understand-urge bump size, whether it needs a floor,
+urge-agent failure handling - then implementation).
+
+One real bug caught and fixed along the way, beyond what was
+originally scoped: `_save_voice_snapshot` used to rebuild a voice's
+entire state dict from only 4 widget-backed fields (model/identity/
+messages/currency), which would have silently wiped the new urge
+fields every time it ran (no GUI widget for them). Fixed at the root -
+loads existing state first, only overwrites the widget-backed fields -
+protects any future new voice-state field, not just this one.
+
+`run_function_calls` now returns a third value (per-call outcomes:
+`(name, "ok"|"error"|"unknown")`) instead of `_tick` re-parsing its
+own `⟦RESULT: ...⟧` output with a second regex pass - confirmed only
+one real call site existed, so this was a small, low-risk signature
+change rather than the larger diff it looked like on paper.
+
+Verified with a 12-point headless smoke test (no live Ollama needed,
+`call_ollama` mocked) before committing: `xleud()` math, urge growth/
+reset/bump rules, floor+top-3 selection, exact prompt/reminder
+wording, `run_function_calls` outcomes, `call_ollama`'s new options
+dict, the `_save_voice_snapshot` round-trip fix itself, and two full
+`_tick()` runs - one landing on the understand-urge override path
+(confirmed only 1 model call, no urge agent invoked), one on the
+perform-urge path (confirmed 2 calls: urge agent at `num_predict=250`,
+then the main call at `num_predict=1500`).
+
+Not yet run against a live world/real Ollama - that's the next real
+step (see plan's verification section, item 3) whenever `the_town` (or
+a fresh test world) is next started up.
