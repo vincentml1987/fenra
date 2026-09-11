@@ -399,6 +399,46 @@ questions above) plus follow-up in chat:
   spelled out to the voices themselves - they just see a plain
   percentage ("80% urge to do X").
 
+**To discuss, added 2026-09-11:**
+1. **Actual values for `Desire`/`Drive`/`Satisfaction`** - nothing
+   picked yet, per function per voice. Presumably where personality
+   actually gets tuned in.
+2. **Longer-term, Teddy's idea**: eventually derive these values via
+   something genetic-algorithm-flavored rather than hand-picking them -
+   very rough shape as given: a binary set of numbers per
+   function/parameter, "calculated" into the final value by running it
+   through Conway's Game of Life. Teddy's own words: "Trust me, it
+   makes sense in my head" - not explained further yet, not something
+   Qualia has independently derived the mechanism for. Flagged as a
+   real direction, explicitly long-term/not blocking the first build -
+   the hand-picked-values version (item 1) comes first regardless.
+3. **`temperature` is currently unset entirely** (2026-09-11, found
+   while answering Teddy's question) - `call_ollama` sends only
+   `model`/`prompt`/`stream` to `/api/generate`, no `options` dict at
+   all, so every voice runs on whatever its own model's baseline
+   default is (Ollama's own default is 0.8 unless a model's Modelfile
+   overrides it) - completely untouched, not per-voice, not per-world.
+   Flagged as a candidate for the same eventual derived-parameter pool
+   as item 2 (Game-of-Life-derived values) - `temperature` is exactly
+   as personality-flavored as `Desire`/`Drive`/`Satisfaction` would be,
+   just currently invisible rather than authored.
+
+## Added to the same Plan-mode batch as the urge system (2026-09-11,
+## Teddy: "Yes")
+
+Confirmed rolling in alongside the urge system and XLEUD:
+- **#3 from the backlog discussion** - the "thinking..." status label
+  (`_tick` already gets touched for the urge system; cheap to fold in).
+- **#4 from the backlog discussion** - a `num_predict`/`repeat_penalty`
+  generation-limiting guard on `call_ollama`, via new `world.json`
+  fields rather than hardcoded. Explicitly a backstop against another
+  model someday showing the Phi-3-style runaway or Orin-style verbatim-
+  repeat shape, not a fix for either (the real fix, confirmed, is
+  swapping the model, as already done for Cole/Priya) - `repeat_penalty`
+  specifically targets the repetition mechanism directly, `num_predict`
+  just caps total damage. The urge agent's own call needs its own,
+  much tighter `num_predict` (one short line, not a full turn).
+
 Still not built, still not through Plan mode - Teddy's own words: "I
 think we need to talk more." Carry into the next session via
 pickup.md.
