@@ -1674,7 +1674,12 @@ class FenraApp:
         # snapshot of whatever voice happened to be selected in the GUI
         # silently overwrote real deliveries appended to its state.json
         # by other voices' turns in between (found via Dash only ever
-        # showing its own messages).
+        # showing its own messages). The residual gap that gate alone
+        # left open - the displayed voice's widget still going stale
+        # from a delivery received *between* its own turns, then this
+        # same save clobbering it on the next one - is closed by the
+        # live-refresh in the delivery loop below (2026-09-10, found via
+        # Milo silently losing a real delivery from Orin).
         if self.displayed_voice == active_voice:
             self.root.after(0, self._save_voice_snapshot, self.displayed_voice)
 
@@ -1713,6 +1718,21 @@ class FenraApp:
                     continue
                 already_notified.add(member)
                 append_message(self.world_name, member, active_voice, masked_response, timestamp)
+                # Live-refresh (2026-09-10 fix): if this recipient is the
+                # voice currently displayed in the GUI, its in-memory
+                # _current_messages is now stale relative to what we just
+                # wrote to disk. Left alone, that staleness survives until
+                # this voice's own next turn, when the _tick pre-save
+                # above (gated on displayed_voice == active_voice) would
+                # persist the stale copy right back over this delivery -
+                # clobbering it. Reloading now keeps the widget (and any
+                # snapshot later saved from it) honest. Same reload used
+                # for the speaker's own turn below, so this shares its
+                # side effects: identity/model/HUD refresh, and any
+                # in-progress unsaved manual edit in the message editor
+                # is cleared - accepted, matches existing precedent.
+                if member == self.displayed_voice:
+                    self.root.after(0, self._load_voice, member)
 
         if active_voice == self.displayed_voice:
             self.root.after(0, self._load_voice, active_voice)

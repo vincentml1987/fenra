@@ -246,3 +246,32 @@ does: `num_predict`/context-length pressure on Orin same as was
 considered (and not pursued) for the Phi-3 case, though the mechanism
 here looks different (exact verbatim repeat vs. Phi-3's runaway
 garbage/no-stop).
+
+## Fix: displayed voice's widget goes stale on a delivery, clobbered on
+## its next own-turn save - residual gap closed (2026-09-10)
+
+Real instance found (not hypothetical): Milo (in `haven` with Orin and
+Sable) should have received Orin's masked delivery at 23:04:55, same as
+every other `haven`/`dreamercape`/`town_center` member did - confirmed
+Sable's copy landed fine. Milo's `state.json` showed the tell instead:
+message content stalled at an earlier id, but the file's disk mtime was
+*later* than the delivery's timestamp - something got appended, then
+overwritten. Root cause: Milo was the GUI's currently-displayed voice;
+his `_current_messages` widget copy goes stale the moment any delivery
+lands for him from someone else's turn (it only refreshes on Milo's own
+turn completing), and the existing `_tick` gate
+(`displayed_voice == active_voice`, this morning's fix) still fires a
+snapshot-save of that stale copy right before every one of Milo's own
+turns - silently re-clobbering whatever arrived in between.
+
+**Fix**: in the `_tick` delivery loop, right after `append_message` for
+each recipient, if that recipient is the currently-displayed voice, live
+-reload it (`self._load_voice`) immediately - same reload already used
+for the speaker's own turn, so it carries the same side effects
+(identity/model/HUD refresh, and any in-progress unsaved manual edit in
+the message editor gets cleared). Keeps the widget honest in real time
+instead of letting it drift until the next own-turn save. See `fenra.py`
+`_tick` and its updated comment for the exact change.
+
+Not yet relaunched with this fix live - see pickup.md/session log for
+when `the_town` next restarts.
