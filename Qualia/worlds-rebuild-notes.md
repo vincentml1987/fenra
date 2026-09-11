@@ -203,3 +203,46 @@ git history same day for the actual commits.
   the label to something like `"Running (Dash is thinking...)"` right
   after `active_voice` is picked, before the `call_ollama` call, then
   the existing post-response update overwrites it.
+
+## Finding: Orin (qwen3:14b) - verbatim self-repetition, not just
+## catchphrase collapse (2026-09-10)
+
+Confirmed as more than the earlier "catchphrase collapsing" note (his
+"Ah, [topic]—" opener plus recurring gears/echoes/whispers/absence
+imagery). Three of Orin's own turns - msg ids 29 (19:32:24), 30
+(20:12:56), and 32 (21:47:14), spanning ~2h15m and multiple full
+render/generation cycles with growing context each time - are
+**byte-for-byte identical**, ~1,590 characters starting "Ah, the
+chamber—its *absence* hums like a held breath, doesn't it?..." Checked
+message ids/timestamps directly in `voices/Orin/state.json`: these are
+genuinely distinct message entries, not a save/delivery duplicate, so
+this is model behavior, not a recurrence of the `_tick` snapshot bug
+fixed earlier tonight. Checked all other voices (including
+post-swap Cole/Priya on `deepseek-r1:14b`) for the same
+exact-duplicate-text pattern across their own turns - none found;
+this is Orin/qwen3:14b-specific so far.
+
+Notable adjacent detail: at 19:12:46 (id 10), shortly before the
+repetition started, Dash's own turn included the line "Ah, Cole's got
+the *repetition* bug—like a broken echo in a dream! But hey, if
+Orin's words are so hauntingly poetic, why not let the chamber
+*scream* them back?" - Dash referencing Cole's real (separate,
+pre-model-swap) Phi-3 repetition bug and, half-joking, suggesting
+Orin's own words get echoed back - right before Orin's own turns
+started doing exactly that. Almost certainly just Orin's context
+containing Dash's line and running with the image literally, not
+anything stranger - noted because it's a neat example of one voice's
+in-fiction joke about a bug becoming the shape of a different real bug
+in another voice, not because anything mysterious is implied.
+
+**Orin snapped out of it on his own** - by turn 32 (21:47:14, the
+third identical block) he still opened with the duplicated text but
+then broke out into a real, working `post_board` function call
+("Carnival of Echoes" to town_center); his next turn (22:24:17) was
+short, on-topic, and not a repeat. Self-resolved without intervention;
+no fix applied, none currently planned. Revisit if it recurs, or if
+another qwen3 voice shows the same shape - possible future angle if it
+does: `num_predict`/context-length pressure on Orin same as was
+considered (and not pursued) for the Phi-3 case, though the mechanism
+here looks different (exact verbatim repeat vs. Phi-3's runaway
+garbage/no-stop).

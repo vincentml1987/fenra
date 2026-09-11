@@ -171,3 +171,11 @@ Same list as before: [[fenra-history-integrity]],
 see #2 above for the exact wording used). [[fenra-chat-restraint]] still
 flagged stale, still moot - `worlds-rebuild` has no chat function.
 `MEMORY.md` indexes all of them.
+
+## Addendum
+
+Committed as `f0445c0` on `worlds-rebuild`, right after this file was
+first written tonight: `fenra.py` (the `_tick` fix), and
+`Qualia/worlds-rebuild-notes.md` (the two new to-do entries). This
+pickup itself is in that commit too. `Qualia/dash.png` (the screenshot
+Teddy dropped in) is still untracked - left alone, wasn't asked about.
