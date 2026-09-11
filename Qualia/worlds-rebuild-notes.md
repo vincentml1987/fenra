@@ -443,6 +443,55 @@ Still not built, still not through Plan mode - Teddy's own words: "I
 think we need to talk more." Carry into the next session via
 pickup.md.
 
+## Starting values locked for round one (2026-09-11)
+
+Worked the saturating-curve math backward from Teddy's ask ("not
+hammered with urges every other tick... every 5 or so"): with a flat
+per-tick `Drive`, only the ratio `Drive/Desire` matters to
+`XLEUD = 1 - e^(-U/D)`, so `Drive = 1` for everyone/everything is the
+simplest starting point, with `Desire` alone carrying the "how
+neglected before it's felt" personality. Solving for ~50% by tick 5
+gives `Desire ≈ 7.2`, rounded to **`Desire = 7`** (13% at tick 1, 34%
+at tick 3, 51% at tick 5, 81% at tick 12, 94% at tick 20 - smooth
+ramp, decelerating, never a jarring jump).
+
+**Locked, round one, same for every function/voice to start:**
+- `Drive = 1`
+- `Desire = 7`
+- `Satisfaction = full reset to 0` on a successful call (not a partial
+  subtract) - Teddy: agreed, explicitly deferred "subtract some
+  amount" to a round-two change once the basic version is running.
+- **Urge-agent floor at `XLEUD >= 50%`** (Teddy's own number, not
+  Qualia's originally-suggested 40%) - below the floor, the urge agent
+  isn't called at all and nothing gets appended to context; both
+  addresses the "not hammered every tick" feel and avoids the extra
+  Ollama call for a near-zero urge.
+- No hardcoded "intensify" tier above the floor - the number itself
+  (fed to the urge agent) does that work.
+
+**Explicitly sequenced**: get this basic version (flat `Desire`/`Urge`
+only, no `Drive`/`Satisfaction` tuning yet) working first, *then*
+introduce the Game-of-Life/genetic-algorithm-derived-values idea from
+earlier - not concurrent, deliberately staged.
+
+## New UI ask: per-voice, per-function XLEUD viewer (2026-09-11)
+
+A new panel to watch each voice's functions' current `XLEUD` values -
+Teddy's call: probably a sub-tab under the existing Voices tab (parent
+tab keeps the voice list; this becomes a new sub-tab) rather than a
+whole new top-level tab, since Voices is already fairly full. Visual
+reference: `Qualia/From Teddy/outlook_options.png` (Outlook's Options
+dialog) - a vertical category list on the left (one selected at a
+time, highlighted), with a detail panel on the right showing grouped
+sections with headers/dividers. Structural name for this:
+**master-detail layout**, specific look often called **vertical
+tabs**/**sidebar navigation** - no native `ttk` widget for it, would
+be hand-built as a `Listbox`/`Treeview` driving a swapped `Frame`.
+Teddy's explicit delegation: group the actual attributes (per-function
+`Urge`/`Desire`/`Drive`/`Satisfaction`/`XLEUD`, presumably) into
+whatever categories make sense - not specified further yet. Still no
+coding - design conversation only, more still to discuss.
+
 ## Finding: Wren fabricated board content/analysis wholesale on a
 ## board she can't even see (2026-09-11)
 
