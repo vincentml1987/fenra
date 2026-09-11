@@ -273,5 +273,49 @@ the message editor gets cleared). Keeps the widget honest in real time
 instead of letting it drift until the next own-turn save. See `fenra.py`
 `_tick` and its updated comment for the exact change.
 
-Not yet relaunched with this fix live - see pickup.md/session log for
-when `the_town` next restarts.
+Relaunched with this fix live the same session, wiped fresh
+(`the_town_run_20260910h_wipe_liverefreshfix.log`) - see commit
+`33e6812`.
+
+## Idea, not scoped yet: "function urge" via a stateless second model
+## (2026-09-10, Teddy)
+
+Teddy's observed problem: the cast isn't using the registered functions
+(`send_message`, `give_currency`, `post_board`, etc.) much. His
+proposed fix, deliberately *not* a hardcoded nudge ("you haven't used
+this in X turns") but something roleplay-like and organic: a per-voice,
+per-function "urge" that builds slowly the longer a function goes
+unused, translated into felt-state language by a second, smaller,
+**stateless** Ollama model (no memory of its own, one-shot, instructed
+only to describe how the urge feels) and appended to the bottom of the
+voice's context for that turn only. Loop per turn: urge levels -> urge
+agent describes the feeling -> that description appended after
+`render_messages()`/HUD, before the real call.
+
+Deliberately not built yet - real new subsystem, not a hot-reload
+tweak, so it goes through Plan mode per [[fenra-engage-gate]] once
+Teddy's back. Open questions raised and not yet answered:
+- **Per-function urge vector vs. one blended urge** - Qualia's default
+  suggestion: track all functions' turn-counts, hand the whole vector
+  to the urge agent each turn and let it weave one description, rather
+  than always fixating on the single most-neglected function.
+- **What counts as "using" a function** - given Orin's malformed
+  `send_message`/`post_board` calls this same session (see the
+  "function-call syntax" discussion earlier tonight) - does a call
+  that *errors* still reset that function's urge counter, or only a
+  successful one? Qualia's default: only success resets it, so a voice
+  stuck in a malformed-call loop doesn't read as satisfied.
+- **Where the counter lives** - proposed new `state.json` field
+  (`function_urges: {fn: turns_since_use, ...}`), incremented on ticks
+  where unused, reset to 0 on success - rather than recomputing live
+  from message history every turn.
+- **Which model runs the urge agent** - a separate small/fast local
+  model, not `model_default` and not any cast member's own model;
+  would need a new `world.json` field (e.g. `urge_model`). Teddy
+  hasn't named one yet.
+- **Growth curve** - Qualia's default: linear turns-since-use, possibly
+  capped, with the escalation into language left to the urge agent's
+  own prompt rather than hardcoded thresholds.
+
+No decisions made on any of the above - full discussion still pending,
+carry into the next session via pickup.md.
