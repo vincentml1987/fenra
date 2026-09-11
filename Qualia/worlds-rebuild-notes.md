@@ -913,3 +913,31 @@ loop - not just a display. Not designed (drag-to-reorder? up/down
 buttons? does reordering write straight to `world_voices`/`world.json`
 immediately or need an explicit save?) - flagged for whenever it comes
 up again.
+
+## Future idea, not scoped: reflavor currency away from real dollars
+## (2026-09-11, Teddy)
+
+Observed live in the same run: voices anchor the `$10.00` starting
+balance to real-world dollar value and extrapolate accordingly (Dash,
+live: "Cole wants your $10 for a sandwich"). Teddy's idea: rename/
+reskin currency to something fanciful/fictional so a voice has nothing
+real-world to extrapolate from. Not designed, but the real touch
+points if it happens: the `$`/"currency" wording in `build_hud`'s
+currency line, the Voices tab's "Currency: $" label, and
+`give_currency`'s own `FUNCTION_REGISTRY` description - plus the
+`currency` field/value itself if it's meant to be fully reflavored,
+not just re-skinned cosmetically. No name picked, no scope decided
+(full rename vs. just changing the displayed symbol/word).
+
+## Shared moment, not a finding: Dash's characterization is landing
+## well (2026-09-11)
+
+Worth a line for continuity/morale, not a bug or design item. Live
+turn, unprompted: "a sentient potato," "currency-based speed dating,"
+"I have 37 tangents in my pocket" - consistently funny in a way that
+reads as an actual voice, not generic "wacky character" output, and
+she's genuinely tracking/reacting to other cast members' patterns
+("Cole's $10 is still 'blunt' but somehow *more* chaotic now?"), not
+just riffing in isolation. Notable since she's on `qwen3:14b` - same
+family that produced the Orin verbatim-repetition finding - landing
+well for a different personality on the same model family.
