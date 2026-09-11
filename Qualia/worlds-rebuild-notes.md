@@ -769,7 +769,23 @@ build:
    per-function values. Editing deferred, not scoped.
 4. **`num_predict`/`repeat_penalty` concrete values**: deferred - not
    cut, just sequenced after item 5 (the gemma3/llama3.2 retest) wraps
-   up.
+   up. **Resolved 2026-09-11**, after item 5 wrapped: `num_predict =
+   1500` for standard voice turns, `num_predict = 250` for the urge
+   agent specifically, `repeat_penalty = 1.3` for everyone - Teddy's
+   own "gut feeling, no real reason," landed on after Qualia explained
+   what the numbers actually do in concrete terms (`num_predict` in
+   real characters against Sable's/Priya's/Cole's actual observed turn
+   lengths; confirmed `repeat_penalty` in Ollama/llama.cpp is a flat,
+   one-off per-step multiplier against any word present in the recent
+   `repeat_last_n`-token window - NOT cumulative/exponential per
+   repeat count within that window, e.g. a word appearing 4 times in
+   the window is still only divided by `1.3` once per step, not
+   `1.3^4`). **Also decided**: expose all three as real, editable
+   `world.json`-backed UI fields (not hardcoded) - confirmed low-lift,
+   since `host`/`interval` already follow the exact same pattern
+   (`tk.StringVar` toolbar entry, read/write via
+   `_save_world_controls`/`_load_world`) that these three would just
+   repeat.
 5. Confirmed real gap, Teddy's own words "good call, and bad science
    on my part" - gemma3:4b and llama3.2:3b never got the final
    21-case stress battery on the fixed (closed-set + single-item-guard)
