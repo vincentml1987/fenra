@@ -474,6 +474,33 @@ only, no `Drive`/`Satisfaction` tuning yet) working first, *then*
 introduce the Game-of-Life/genetic-algorithm-derived-values idea from
 earlier - not concurrent, deliberately staged.
 
+## Design refinement: append the real call syntax after every urge-
+## agent output, not just the functions()-urge case (2026-09-11, Teddy)
+
+Noticed during the first round of manual model testing (see below):
+every candidate model's output naturally names the actual function(s)
+by name (e.g. phi4-mini's Test 1 output said "the urge to post_board
+pulsating..." unprompted). Teddy's catch: that's good, but naming the
+function isn't the same as knowing its real call syntax - same risk
+already identified for the functions()-urge/Wren-hallucination case,
+just not limited to it. Without knowing the exact `⟦function(args)⟧`
+shape, a voice that *feels* the urge but can't act on it correctly
+risks spiraling exactly like Wren did - inventing plausible-sounding
+fake calls, never actually satisfying the urge (since only a
+successful call resets it), climbing higher each time, hallucinating
+more.
+
+Proposed fix: after the urge agent generates its felt-state paragraph,
+deterministically (in code, not by the LLM) append a short reminder
+line naming the exact registry syntax for whichever function(s) were
+named in that turn's urge values - sourced straight from
+`FUNCTION_REGISTRY`, so it's always accurate, never hallucinated.
+Roughly: `"post_board" -> ⟦post_board(group|subject|text)⟧`. Not
+designed further yet (exact wording, whether it's one line per
+function or a combined line), but the principle's settled: never let
+felt-urge language stand alone without a guaranteed-correct path to
+actually resolve it.
+
 ## New UI ask: per-voice, per-function XLEUD viewer (2026-09-11)
 
 A new panel to watch each voice's functions' current `XLEUD` values -
