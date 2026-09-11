@@ -375,3 +375,21 @@ what the functions are even called, which is exactly how `check_haven`
 et al. happened. Directly motivated the `functions()`-urge-on-bad-call
 idea above. No code fix proposed or built yet - this is a
 content/behavior finding, not a bug in the delivery mechanics.
+
+## Flagged, not yet decided: near-zero chronoception, hallucinated
+## timestamps (2026-09-11, Teddy)
+
+Teddy's own observation, explicitly "not sure yet if I want to
+actually do anything about this one" - just wants it on record. Voices
+frequently fabricate inline timestamps in their own narrative text
+(bracketed `[2026-...T...]`-style, distinct from the real per-message
+`timestamp` field) that don't correspond to anything real - a quick
+grep turned up several this run alone (Cole id 74, Marisol id 7, Sable
+ids 3/7/15/23, Wren ids 14/70), each inventing a clock time a few
+seconds to a few minutes off from its own message's real timestamp,
+apparently just to make the narration read as more precise/in-the-
+moment. Separate phenomenon from the earlier "timestamp field is
+cosmetic, doesn't affect ordering" finding - that one was about the
+real `timestamp` field not being used for re-sorting; this is about
+voices hallucinating *fictional* timestamps inside their own prose.
+No action taken, no fix proposed - flagged only, per Teddy's ask.
