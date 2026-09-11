@@ -583,6 +583,72 @@ Still ongoing - Teddy testing manually, will hand off a larger
 automated batch (varied functions/values, across all three/via direct
 `/api/generate` calls) once the prompt shape itself is settled.
 
+## Automated 21-case stress test of phi4-mini (2026-09-11)
+
+Teddy's design: 7 categories x 3 variations = 21 value-sets (one-huge-
+plus-small, lots-strong-plus-one-small, ties, all-6-functions, and
+single-function at low/mid/high), covering edge cases like exactly-at-
+floor (50%) and near-saturation (99%). Qualia automated it directly
+against Ollama's `/api/generate` (no manual UI copy-paste) rather than
+having Teddy run all 21 by hand, per the earlier standing offer.
+
+**Round one result - real, more serious than the single earlier
+gemma3 strike:** with the then-current template ("may" name functions,
+no closed-set constraint), **5 of the 9 single-function tests
+hallucinated functions that don't exist anywhere in the registry** -
+worst case (`delete_board` alone, 65%) invented six fake ones
+(`add_comment`, `pin_message`, `unpin_message`, `edit_comment`,
+`edit_post`, `like_post`) in one paragraph, others invented
+`check_the_date`, `start_a_wiki_page`, `send_reminder`. Counter-
+intuitively the failure was worst with *only one* real function given,
+not many - reads like the model defaults to padding out a sparse input
+with plausible-sounding social-app actions. Separately, several multi-
+function tests never used the exact snake_case name at all
+(paraphrased instead, e.g. "send a direct message" for `send_message`)
+and two tests silently dropped required functions from an "all 6"
+list. Retracted Qualia's earlier "zero misses across 4 tests" read -
+4 tests wasn't enough to catch a failure mode this specific.
+
+**Two prompt fixes, Teddy's design, both tested together:**
+1. "If only one function is listed, describe only that one function -
+   do not invent or imply any others."
+2. A hard closed-set constraint above the list: "You may ONLY name the
+   functions listed below - never invent, imply, or reference any
+   function not listed. You MUST name every one of them, using its
+   exact name."
+
+**Round two result (same 21 cases, re-run):**
+- **Single-function hallucination: fully fixed.** 9/9 clean - zero
+  invented functions, exact name used every time, versus 5/9 failing
+  before.
+- **Multi-function completeness: NOT fixed, and not really a wording
+  problem.** Once 5-6 functions are active at once, Phi keeps
+  silently dropping some rather than exceeding "one short paragraph,
+  2-4 sentences" - e.g. all-6-functions Test 10 dropped `delete_board`
+  entirely despite it being the single highest urge in the batch (99%);
+  Tests 11/12 (also all 6) each only actually covered 3 of the 6.
+  Qualia's read: "describe every urge" and "keep it to 2-4 sentences"
+  are in real, structural tension once past ~3-4 simultaneous
+  functions - no amount of rewording fully resolves two competing hard
+  constraints, the model just picks a loser silently. (Some other
+  flagged cases turned out to be false alarms on manual read - content
+  present, just paraphrased rather than using the exact snake_case
+  word - a smaller issue already covered by the separate
+  call-syntax-reminder-footer plan, logged earlier.)
+
+**Decision: fix at the design level, not the prompt level.** Cap the
+urge agent's input at the **top 3 highest-`XLEUD` functions**, even if
+more are above the 50% floor. Rationale: matches how the multi-
+function tests actually degraded (clean up to ~3, unreliable beyond
+it), sidesteps the structural length-vs-completeness tension entirely
+rather than fighting it, and - Teddy's own framing, worth keeping
+verbatim rather than paraphrasing away - genuinely reflects what
+juggling many simultaneous demands on attention actually feels like to
+him (GAD, possibly AuDHD): more than a few contending urges at once
+isn't a richer experience, it's just worse. Also relevant since more
+functions are planned later - the input-cap approach scales cleanly
+where "describe everything" does not.
+
 ## Future idea, explicitly NOT in this plan: cross-voice urge
 ## contagion + a "follower-ness" dial (2026-09-11, Teddy)
 
