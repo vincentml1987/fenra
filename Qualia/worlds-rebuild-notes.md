@@ -969,3 +969,55 @@ look at other installed models for her rather than abandoning the
 voice. Explicitly leaving her running as-is, unfixed, for now - his
 own words, "I never claimed to be infallible... I have barely even
 talked to any of them yet." Not urgent, not blocking anything else.
+
+## Finding: understand-urge system validated live + a real cascading-
+## hallucination mechanism (2026-09-11)
+
+**Good news, confirmed live for the first time**: Milo and Sable both
+fabricated calls to a nonexistent `board_stats` function in the same
+turn window, plus both separately copied the HUD's own instructional
+example (`⟦function_name(args)⟧`) as if it were a real call. Every
+one of these got caught correctly - `understand_urge_general` bumped
+by exactly `UNDERSTAND_URGE_BUMP=3` per real hit (Milo: 1 hit = 3.0,
+Sable: 2 hits = 6.0) - and correctly did *not* fire for Dash, who
+wrote `⟨board_stats⟩` with the wrong bracket characters entirely, so
+`FUNCTION_CALL_RE` never matched it as an attempted call at all.
+Exactly the behavior smoke-tested before shipping tonight, now
+confirmed against messy real model output.
+
+**The real finding - a cascading-hallucination mechanism, not a bug**:
+`_mask_for_call` only masks the literal `⟦...⟧` call spans -
+everything else in a voice's response (all surrounding prose)
+delivers to groupmates **verbatim, unmasked**, by design (masking
+hides call arguments/results from bystanders, never ordinary
+dialogue - see `run_function_calls`'s own docstring). Milo hallucinated
+a fake HUD block inside his own visible reply - complete with a
+fabricated `Board activity` line and his own real `Name`/`Model`
+fields formatted exactly like the real thing. That whole block
+delivered to Sable as ordinary incoming dialogue (confirmed: her
+own message history shows Milo's full ~3,500-character turn landed
+essentially intact at id 15, not reduced to a short mask). Her own
+next turn then reproduced Milo's opening line near-verbatim ("Teddy
+dearest—oh hello there!! 🎉🍪"), his same "Iteration Eleven" guess,
+and literally echoed his fake `Name: Milo` / `Model: gemma3:12b` line
+inside *her own* generated response - despite her real model being
+`mistral-small:22b` (confirmed straight from her own `state.json`,
+ruling out an app-level bug - this is model behavior, not a delivery
+mix-up). Not coincidental convergence - one voice's hallucination
+propagating into and visibly derailing a second voice's own
+generation. Real mechanism worth knowing about, not touched tonight -
+Teddy's explicit call, same as Raven: let it keep running.
+
+## Testing idea for new/large-model candidates: isolated pair groups
+## (2026-09-11, Teddy)
+
+Given the hardware-constrained "large-model testing has to happen
+live" conclusion from earlier tonight, Teddy's practical answer: put
+a new candidate model on **two** voices in their **own** dedicated
+group, isolated from the rest of the town - contained blast radius
+(no risk of contaminating other voices' context the way the Milo/
+Sable cascading-hallucination finding above just showed can happen),
+and two rather than one so the pair actually has someone to talk to
+("so they don't get lonely"). Good fit for exactly the failure mode
+just found - an isolated pair can misbehave all it wants without
+leaking into voices anyone's actually relying on.
