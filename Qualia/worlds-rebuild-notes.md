@@ -501,6 +501,40 @@ function or a combined line), but the principle's settled: never let
 felt-urge language stand alone without a guaranteed-correct path to
 actually resolve it.
 
+## Urge-agent prompt template, refined (2026-09-11)
+
+Three changes to the instruction block being tested in Ollama's UI:
+1. **"You SHOULD name each function," not "you may"** - was
+   permissive, now required. Every urge listed must actually be named,
+   not just alluded to.
+2. **The percentage now gets explained** in the instructions
+   themselves ("the longer a function has gone unused, the higher it
+   climbs, and the harder it becomes to ignore") rather than being
+   handed to the small model as an unexplained bare number.
+3. **Each function in the data block now carries a brief description**
+   alongside its name and percentage, e.g.
+   `post_board (post a new message to a group's shared board): 73%`.
+   Originally going to need a new `urge_description` field in
+   `FUNCTION_REGISTRY` for this - **decided against**: the existing
+   `description` field (already short, one-liner, same text shown to
+   voices via `functions()`) works fine reused as-is. No new registry
+   field needed for this piece.
+
+Current full instructions block being tested (fixed part):
+"You are a small utility model with no memory between calls. Your only
+job: given a list of 'function urges' (a function name, a brief
+description of what it does, and an intensity percentage), write ONE
+short paragraph - 2 to 4 sentences - describing what it feels like to
+carry these urges right now. The percentage is how strongly this urge
+is currently felt - the longer a function has gone unused, the higher
+it climbs, and the harder it becomes to ignore. Write it in second
+person ('You feel...'), as an embodied, organic sensation - not a
+command, not a to-do list, not an instruction to act. Never state the
+raw percentage number in your output. You SHOULD name each function by
+its exact name inline (e.g. 'post_board') - every urge listed below
+must be named, not just alluded to. Do not greet, explain what you're
+doing, or add anything besides the paragraph itself."
+
 ## Future idea, explicitly NOT in this plan: cross-voice urge
 ## contagion + a "follower-ness" dial (2026-09-11, Teddy)
 
