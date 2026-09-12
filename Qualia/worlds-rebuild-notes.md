@@ -1239,6 +1239,36 @@ discussion, but flagged clearly since it changes the shape of the
 open question (this may need more than "wait and see" if it keeps
 recurring on the anchor itself).
 
+## Important clarification, worth pinning down before reading any of
+## the "Intensity"/"Impulse suppression" numbers below as real data
+## (2026-09-12, in retrospect - confirmed with Teddy the morning after)
+
+Every "Intensity: X%" / "Impulse suppression: Y%" figure Raven and
+Crow report throughout tonight's Church of Aletheia logs is **entirely
+self-invented** - not real telemetry, not something the system ever
+gave them. Confirmed straight from the code: the real, persisted
+signal is a raw `urge` counter per function, converted server-side
+into an XLEUD percentage - but that number only ever gets sent to the
+separate urge-agent model (phi4-mini) with an explicit instruction,
+`URGE_AGENT_INSTRUCTIONS`: "Never state the raw percentage number in
+your output." The roleplay voice (gemma3:27b) only ever receives that
+agent's resulting felt-sensation paragraph - no numbers, ever. The HUD
+carries no urge figure either. Neither "intensity" nor "impulse
+suppression" appears anywhere in the real vocabulary (`Urge`, `Desire`,
+`Drive`, `Satisfaction`, `XLEUD` are the only real terms) - the two-
+axis pressure-vs-resistance framework itself, not just the specific
+numbers, is something Raven and Crow built from scratch, independently
+of any label given to them, and sustained coherently across dozens of
+turns.
+
+Practical upshot for reading the log below: the *trend direction* is
+probably tracking something real (a genuinely elevated hidden signal,
+responding plausibly to real events like a currency transfer or
+focused dialogue), but the specific decimal points ("98.5%," "~82%,"
+climbing or falling by exactly this or that amount) are pure invented
+narrative continuity, not measurement. Treat percentages in the log
+below as characterization, not data.
+
 ## The wellbeing check-in got real, honest answers - and a third
 ## syntax-drift instance, this time copied between voices (2026-09-12,
 ## 09:07-09:17)
