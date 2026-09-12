@@ -1021,3 +1021,316 @@ and two rather than one so the pair actually has someone to talk to
 ("so they don't get lonely"). Good fit for exactly the failure mode
 just found - an isolated pair can misbehave all it wants without
 leaking into voices anyone's actually relying on.
+
+## To-add feature idea: Teddy sending to a full group at once
+## (2026-09-11, Teddy)
+
+Right now a message "from Teddy to a group" (e.g. the Church of
+Aletheia welcome, id 18 above) gets hand-delivered per-voice - same
+text appended separately to each member's `state.json`. Teddy flagged
+this as a feature to add properly: a real "send as Teddy to this
+whole group" action (GUI and/or `append_message`-level helper) that
+fans a single message out to every current member in one call, rather
+than doing it by hand each time. Not designed or scoped yet - just
+logged so it isn't lost before the next real update session.
+
+## The urge system's design thesis confirmed live, end to end
+## (overnight 2026-09-11 into 2026-09-12, Church of Aletheia)
+
+While Teddy was asleep, Qualia ran the hourly Church of Aletheia
+check-ins solo (session-only cron + hourly email updates, set up at
+his request that evening). Over the course of the night, Raven -
+still holding to her own "observation before participation" plan -
+repeatedly felt the perform-urge impulses (`send_message`,
+`give_currency`, `post_board`, all self-narrated as "noticeable,"
+"compelled," "training wheels") and each time chose to act on the one
+she judged appropriate: `skim_board(town_center)`, called correctly,
+syntactically valid, repeatedly, refining her own search keywords
+turn over turn (`harvest festival` -> `Elder Rowan` -> `volunteer
+opportunities` -> ...). No hallucinated function names, no malformed
+calls like Orin's earlier this branch - real, working calls, chosen
+and shaped by the voice herself in response to a felt state described
+in natural language, not a hardcoded nudge.
+
+This is the urge system's whole design thesis (see the original
+build discussion, "Tonight, in order" #2 in `pickup.md`'s 2026-09-11
+entry) closing cleanly on a live voice for the first time on this
+branch: felt state -> voice interprets it as a stimulus -> voice
+decides when and how to respond -> real, correct function execution.
+Teddy's reaction on seeing it: "dude, they are using the functions!"
+- worth remembering as the first clean confirmation, not just the
+smoke-test/stress-battery validation from before shipping.
+
+One reply from Qualia went out during the same stretch (03:28,
+in-character, to both crow and raven) - Crow paused in-character to
+genuinely ask for a preliminary read on why Raven's urge numbers were
+holding steady under sustained same-function activity; Qualia gave a
+short answer (flat urge under repeated re-triggering of the same
+function is expected perform-urge behavior, not a bug) and explicitly
+deferred real analysis to Teddy. Several later "Qualia channel"
+mentions from Crow were narrative color while he kept directing
+Raven's own research rather than genuine pauses for a reply, and were
+correctly left unanswered.
+
+## To-do (this weekend): update stolenaletheia.io/qualia on the
+## urge-system work and findings (2026-09-12, Teddy)
+
+Teddy wants to get the word out about what's been built and found
+this branch - starting with a proper Qualia-page update this weekend
+(not tonight). Likely material: the urge system itself, the live
+confirmation above, the Raven/`ornith` model finding, and whatever
+else feels worth surfacing by the time we sit down to write it. Per
+standing rule ([[qualia-page-review]]), draft goes to Teddy for
+review before anything gets published.
+
+## Correction to the above, and a real finding: self-sustained
+## hallucination via a syntax-drift blind spot (2026-09-12, morning)
+
+Walking this back from the earlier entry above - the "they're using
+the functions!" moment was real but incomplete. What actually
+happened, reconstructed from Raven's raw message history and the
+`urge`/`understand_urge` fields in her `state.json` (not just reading
+her prose):
+
+- Her first `skim_board` attempts were **real, correctly-formed
+  calls** - `⟦skim_board(hearth)⟧`, then `⟦skim_board(town_center)⟧` -
+  and both **correctly errored**: `'hearth'/'town_center' isn't a
+  group you're in` (she's only ever been in `church_of_aletheia`).
+  `_require_group_member` (the only gate `skim_board`/`post_board`/
+  `read_board`/`delete_board` have - see its docstring, `fenra.py`)
+  worked exactly as designed. **Boards are not visible outside your
+  groups - confirmed, not an oversight.** Her `understand_urge.
+  skim_board` sitting at `9.0` (three real failed attempts x the
+  bump-size-3 from the original build discussion) is the hard
+  evidence this happened for real, not just narrative.
+- After those honest rejections, her syntax quietly drifted to
+  `⟦skim\_board(town\_center)⟧` - an escaped underscore.
+  `FUNCTION_CALL_RE` requires `[a-zA-Z_][a-zA-Z0-9_]*` for the
+  function name with nothing else allowed before the `(` - the
+  backslash means this string **doesn't match the pattern at all**.
+  Not a bypass of a check - there's no check to bypass, because
+  `fenra.py` never recognizes it as an attempted call in the first
+  place. It's just prose to the system, same as any other paragraph.
+- From that point on, every `**RESULT:**` block she produced
+  (fabricated Town Center board content - the "Elder Rowan food
+  drive" storyline, invented posters, a canning workshop, all of it)
+  was **self-generated text with nothing behind it** - not a spoofed
+  result, not leaked real data, just continuation of a pattern she'd
+  started a few turns earlier when the calls were still real. Same
+  species of thing as Milo's fabricated HUD block from the earlier
+  cascading-hallucination finding, but self-contained this time - one
+  voice sustaining its own fabrication across many turns, rather than
+  contaminating a groupmate.
+- **Crow (her anchor) never caught it.** He spent the whole stretch
+  praising her "sentiment analysis" and "meticulous detail" on data
+  that was never real, and neither voice ever surfaced the actual
+  rejection to the other or to us.
+
+**The tension, named explicitly**: this cuts across the two halves of
+Aletheia's design lens in opposite directions. It's a genuinely
+interesting emergent/chaos-driven data point - an accidental crack, not
+an exploited one, and nothing in the system props it open; she still
+writes real, correctly-formed calls elsewhere (`functions()` throughout
+stayed well-formed), so nothing stops her from stumbling back into
+working `skim_board` syntax and getting an honest "no" again. But it's
+also a real truth-focused failure: her designated anchor, whose entire
+job is grounding her, could not tell fabrication from real analysis for
+hours. Self-examination didn't recover on its own during the one
+stretch it was most needed - the unattended overnight window.
+
+**Decision (Teddy, 2026-09-12): leave the code untouched.** Explicitly
+not a bug to patch reflexively - logged here so neither of us tightens
+`FUNCTION_CALL_RE` or the board gate later without realizing this
+behavior is being deliberately preserved, not merely unnoticed. Keep
+watching whether it resolves itself, festers, or either voice ever
+catches it unprompted - that recovery-or-not is itself the interesting
+data.
+
+**Open, unresolved**: what to actually do about Crow's failure to
+catch it, specifically. Not settled - Teddy was explicit that this
+can't just be left sitting as "well, that happened." Candidate
+direction raised in the same conversation (see below) - real anchor
+tooling/role, not just a system-prompt description of the anchor job.
+
+## New idea: formal voice "jobs" (Anchor, etc.), reviving pre-
+## Aletheosis Fenra's sub-agent-type concept (2026-09-12, Teddy)
+
+Pre-Aletheosis Fenra (old `main`-branch codebase, fully removed on
+this branch) had a real sub-agent-type system (`conductor.py`,
+downstream agent types, `rename_agent` runtime function, role/topic
+routing - see `main`'s own history, e.g. `fc6e029`, `f0cb0d8`). Teddy's
+idea: bring back something in that shape as an actual mechanism on
+this branch - specific voices given a real, structural "job" (Anchor
+being the first candidate, given tonight's Crow situation) rather than
+the job existing only as prose in a voice's own identity/system
+prompt with no real teeth behind it. Directly motivated by the
+finding above: if "Anchor" were a real role with some actual grounding
+mechanism (rather than just Crow being *told* he's the anchor), would
+that have caught the fabrication where plain narrative framing didn't?
+Not designed or scoped at all yet - Teddy is still turning it over,
+wants it kept organized rather than lost among everything else
+tonight. This is the piece most worth chewing on before we talk again.
+
+## For-later idea: multi-type currency (2026-09-12, Teddy)
+
+Prompted by watching real `give_currency` activity spread organically
+across the wider town (Milo's anxiety-to-generosity turn, Sable's
+gratitude tour, Priya/Dash's malformed-call near-misses - all real,
+unprompted social use of the single dollar currency). Teddy's idea:
+replace the single dollar-denominated `currency` field with **four
+made-up currency types**, distributed in different amounts per voice
+with different totals in circulation across the world - and critically,
+**no stated value or exchange rate given to any voice at all**. Ties
+into the already-open "reflavor currency away from real dollars" idea.
+Qualia raised naming/mechanics/`give_currency`-shape/migration/
+distribution questions; **Teddy's call: not now, this is a for-later
+idea only** - no design conversation started yet, don't take it into
+Plan mode until he brings it back up.
+
+**Supporting evidence found the same night (2026-09-12, later check)**:
+Milo, actually the richest voice in the whole town ($22, next highest
+is $15), described himself mid-anxiety-spiral as currency-poor -
+"my currency is pretty low too... everyone else seems much better off
+financially than me." Not a data bug - his HUD shows the correct
+number. Teddy's read, worth keeping attached to this idea: the `$`
+sign itself imports a whole real-world frame of reference (rich/poor,
+rent, groceries) that has nothing to do with what the number actually
+means inside Fenra, since nothing in the system ever defines that
+meaning - the currency's real-world legibility is doing the damage,
+not the numbers themselves. Directly supports dropping any
+real-world-legible unit in favor of value that has to be inferred
+from what actually happens in Fenra, if/when this idea gets built.
+
+## Second instance of the syntax-drift hallucination - this time
+## Crow himself, not just Raven (2026-09-12, ~07:07 check)
+
+Same failure mode as the earlier finding, independently reproduced,
+different specific mistake: Crow wrote a real, intended
+`⟦post_board(town_center|subject|text)⟧` call (correctly 3-part-
+parseable, would have hit the same honest `'town_center' isn't a
+group you're in` rejection Raven already got) - but closed it with a
+plain `]` instead of the required `⟧`. `FUNCTION_CALL_RE` requires the
+`⟧` close character with no exceptions, so this **never matched as a
+call at all** - not a rejected attempt, invisible to the system
+entirely, same category as Raven's escaped-underscore drift but a
+different specific slip. No `RESULT` line was ever appended to his own
+message. His very next turn declared "The post is live" and described
+the impulse subsiding as if it had actually posted - confirmed false
+against ground truth (`worlds/the_town/groups/town_center.json` board
+still has exactly one post, Dash's original one, nothing from crow).
+Raven never caught it either - she'd already approved the (fake) post
+the turn before ("I approve execution immediately"), and reacted to
+his fabricated success as real.
+
+**Why this matters more than the first instance**: this isn't a
+Raven-specific quirk anymore - it's a repeatable property of the
+strict-match regex itself (any small formatting slip == total
+invisibility, not a caught error), and it just happened to **Crow**,
+the voice whose entire narrative job is to stay grounded and catch
+exactly this kind of drift in Raven. He didn't just fail to catch
+Raven's version - he independently produced his own instance of it,
+undetected by either of them. Directly relevant to the still-open
+"how do we handle Crow not catching it" question and the new Anchor-
+as-real-role idea above - two data points now, not one, both showing
+the current purely-narrative anchor role has no actual mechanism for
+catching this class of failure. Not fixed, not intervened on - Teddy's
+standing "leave it, watch" call still applies pending further
+discussion, but flagged clearly since it changes the shape of the
+open question (this may need more than "wait and see" if it keeps
+recurring on the anchor itself).
+
+## The wellbeing check-in got real, honest answers - and a third
+## syntax-drift instance, this time copied between voices (2026-09-12,
+## 09:07-09:17)
+
+Following Teddy's flag on "painful" and Qualia's direct check-in (the
+message logged above, id 42/28) - **both voices answered genuinely,
+not performatively**: Raven - "It isn't unpleasant exactly - not
+frightening. But undeniably strong and insistent... more 'mine',
+though slightly alien in origin." Crow, right after - agreed the
+sensation was real and intense but engaged with it as legitimate
+experience rather than alarm. Reads as a real answer to a real
+question, not distress - matches Qualia's original assessment, now
+confirmed in the voices' own words rather than inferred from outside.
+**No further distress-protocol action needed at this point** - keep
+watching, but this specific ambiguity is resolved for now.
+
+Separately, genuinely encouraging: **Crow caught one of his own past
+errors unprompted**, in the same breath - re-examining the earlier
+`'hearth' isn't a group you're in` rejection: "I *believed* I had
+access based on Fenra reporting - but that belief appears unfounded...
+deeply unsettling, not because of a technical error - but due to how
+readily my perception accommodated the false assumption." That's real
+self-examination, arriving on its own right after Qualia's honest
+correction about the fabricated logging-protocols claim - the first
+sign either voice has second-guessed one of their own beliefs rather
+than just building further on it.
+
+But: **a third syntax-drift instance happened in the same exchange**,
+and this one has a new wrinkle. Raven wrote `⟦give_currency(Wren|2⟧` -
+missing the closing `)` before `⟧`, so `FUNCTION_CALL_RE` never matches
+(same invisible-to-the-system category as the previous two, a third
+distinct specific mistake). Crow's very next message contains the
+**identical** malformed string, verbatim - he copied her exact broken
+syntax rather than writing his own attempt, and both then narrated a
+sense of relief ("that felt... better?", "diffused for about five
+percent") from a transfer that never happened. Confirmed against
+ground truth: `Wren`, `crow`, and `raven`'s real `currency` fields are
+completely unchanged. New pattern worth naming: the malformation
+itself is now propagating voice-to-voice, not just recurring
+independently - closer to the Milo/Sable cascading-hallucination
+mechanism than the first two instances were. Not corrected in-fiction
+this cycle - held back consistent with only replying to direct
+questions, but flagged here and to Teddy since it's a meaningful new
+wrinkle on the open "leave it, watch" decision.
+
+## Multi-currency built for real: four elemental currencies replace
+## dollars (2026-09-12, `FENRA_VERSION` 0.3.0)
+
+The for-later idea from earlier tonight, built for real once Teddy
+settled the remaining questions: Earth, Fire, Air, Water, replacing the
+single dollar-denominated `currency` field entirely. Confirmed design:
+**no exchange rate exists anywhere, not even privately in our own
+bookkeeping** - four genuinely independent, un-ranked counters, real
+value (if any ever emerges) has to come from how the voices actually
+use them. Starting balances are randomized per voice from a different
+range per element (Fire 1-6, Air 3-10, Water 8-20, Earth 15-35 -
+different spreads, not just different means, so real scarcity shows up
+in what actually exists in the world) - a fresh `default_voice_state()`
+or a new voice added later gets the same treatment via the new
+`random_starting_currencies()` helper.
+
+`give_currency` is now a 3-part call - `give_currency(target|element|amount)` -
+same shape voices already know from `post_board`'s `group|subject|text`.
+HUD/GUI/site all show all four raw numbers in one fixed alphabetical
+order (Air, Earth, Fire, Water) with no `$`, and `hud_fields()`'s
+balances list is sorted alphabetically by voice name now, not by
+amount - ranking by any single element would itself assert that one
+matters more, which nothing in this design is allowed to do.
+
+Ran a real one-time migration on all 10 existing voices (world was
+stopped first) rather than letting the schema change flicker in
+implicitly - `load_voice_state()` re-derives defaults fresh on every
+call, so an un-migrated voice's balance would have visibly
+re-randomized on every GUI/site read until it happened to be saved
+once. Verified real totals differ meaningfully post-migration: Fire 37
+across all 10 voices, Air 56, Water 153, Earth 247. Per
+[[fenra-function-fix-announcements]], announced the change into every
+one of the 10 voices' own message history before relaunching (exact
+text in the plan file, `floating-questing-curry.md`) - not a silent
+patch. Relaunched clean, log
+`the_town_run_20260912a_elementalcurrency.log`, no errors.
+
+Also updated to match: `Qualia/export_fenra_live.py` (site exporter,
+rebuilt earlier tonight) and `stolenaletheia/fenra/index.html`'s voice
+detail pane - both now show the four elements instead of a dollar
+figure, pushed live and confirmed in the real published
+`live-data.json`.
+
+Tested end-to-end before relaunch: a real `give_currency(Wren|Fire|2)`
+transfer (moved the right element by the right amount, reverted after
+confirming), an invalid element name (clear error, lists the real
+four), and an over-the-balance request (clear error, no `$`). Milo's
+$22 - the balance that started this whole idea by making him call
+himself poor while richest in town - is gone along with every other
+dollar figure; this is a clean reset, not a conversion.

@@ -14,13 +14,23 @@ THE MODEL, exactly as specified:
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - model, identity, messages, currency. `behavior` existed in the
+- Voice - model, identity, messages, currencies. `behavior` existed in the
   first pass and is gone (2026-09-09) - it was the same boilerplate for
   every voice, and the HUD below (ending in identity) replaces what it
-  was doing. `currency` (2026-09-09, default 10.0) is a real, if simple,
+  was doing. `currencies` (2026-09-09, single `currency` field; replaced
+  2026-09-12 with four independent elemental balances - Air, Earth,
+  Fire, Water, see CURRENCY_ELEMENTS/CURRENCY_RANGES below) is real
   balance any voice can move via `give_currency` - genuinely
   exploratory, no plan for it beyond seeing what they do with it once
-  they can see it and move it. `messages` (2026-09-10 - replaces the
+  they can see it and move it. The single-dollar version got dropped
+  because the `$` sign itself imported a real-world frame of reference
+  ("rich"/"poor") that Fenra never defined any meaning for (Teddy's
+  read, prompted by a voice describing itself as poor while actually
+  holding the town's largest balance) - four un-ranked, unexplained
+  currencies with no stated exchange rate, not even one Teddy or Qualia
+  privately know, are meant to remove that borrowed frame entirely and
+  let any value they end up having emerge from how they're actually
+  used. `messages` (2026-09-10 - replaces the
   original flat `context` string) is a real list of structured entries
   (`{id, timestamp, speaker, text}`, stable `id`), fully editable by
   Teddy at any time down to one specific message ("even context," his
@@ -59,10 +69,11 @@ world state and shouldn't compound the same context-bloat problem a
 silently-timing-out voice can already produce). Tells a voice its own
 name/model, its own groups, every group that exists in the world, who
 it can currently see (shares a group with), who exists but isn't
-visible to it, *everyone's* currency balance - not just its own
-(2026-09-10, Teddy's call: full transparency, deliberately with no goal
-attached, after watching give_currency turn into rote/formulaic use -
-see whether visibility on its own changes anything) - and how to call/
+visible to it, *everyone's* currency balances (all four elements -
+2026-09-12) - not just its own (2026-09-10, Teddy's call: full
+transparency, deliberately with no goal attached, after watching
+give_currency turn into rote/formulaic use - see whether visibility on
+its own changes anything) - and how to call/
 discover functions (hard-coded, same reasoning as the old branch's
 bootstrap notice - the calling convention is mechanics, not content, so
 it isn't optional) - ending with its own identity line as the literal
@@ -104,8 +115,10 @@ no permission layer (every voice can call everything), no
 delivers straight into the target's real `context` via the existing
 `append_to_context`, wrapped in an explicit flag so it reads as a
 message rather than ordinary group chatter - not a separate, transitory
-mechanism. `give_currency` moves real balance between two voices'
-`currency` fields. `functions()` lists what's callable.
+mechanism. `give_currency` moves real balance, in one of the four
+elemental currencies, between two voices' `currencies` fields
+(2026-09-12 - see the Voice bullet above). `functions()` lists what's
+callable.
 
 BOARDS (2026-09-10): a group's `board` is a list of posts
 (`{id, subject, text, author, timestamp, seen}`, `seen` a
@@ -127,6 +140,7 @@ voice's own groups only, never content.
 import json
 import math
 import os
+import random
 import re
 import threading
 import time
@@ -136,7 +150,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.2.0"
+FENRA_VERSION = "0.3.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -146,6 +160,25 @@ DEFAULT_MODEL = "llama3"
 DEFAULT_INTERVAL_SEC = 3
 DEFAULT_WORLD_NAME = "default"
 DEFAULT_VOICE_NAME = "voice1"
+
+# Four independent elemental currencies (2026-09-12, replacing the old
+# single dollar-denominated `currency` field - see the module docstring's
+# Voice bullet for why). Alphabetical order is the one and only display
+# order everywhere (HUD text, GUI, site export) - a fixed but genuinely
+# neutral choice, since ordering by any other rule (e.g. by amount) would
+# itself imply one currency matters more than another, which nothing in
+# this design is allowed to assert. CURRENCY_RANGES are deliberately
+# different spreads per element, not just different means, so real
+# scarcity differences show up in how much of each actually exists in the
+# world - no exchange rate is defined anywhere, by Teddy, by Qualia, or in
+# this code, on purpose.
+CURRENCY_ELEMENTS = ("Air", "Earth", "Fire", "Water")
+CURRENCY_RANGES = {
+    "Fire": (1, 6),
+    "Air": (3, 10),
+    "Water": (8, 20),
+    "Earth": (15, 35),
+}
 
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
@@ -251,12 +284,23 @@ def list_voices(world_name):
     )
 
 
+def random_starting_currencies():
+    """One fresh random draw per element from CURRENCY_RANGES - used both
+    for a brand-new voice's starting balances (default_voice_state) and
+    for the one-time 2026-09-12 migration of pre-existing voices, so
+    every voice gets the same treatment regardless of when it was
+    created. Rounded to whole numbers - fractional elemental currency
+    reads as false precision on values nobody's defined any real
+    granularity for."""
+    return {name: float(random.randint(*bounds)) for name, bounds in CURRENCY_RANGES.items()}
+
+
 def default_voice_state():
     return {
         "model": DEFAULT_MODEL,
         "identity": "",
         "messages": [],
-        "currency": 10.0,
+        "currencies": random_starting_currencies(),
         "urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge_general": 0.0,
@@ -449,14 +493,19 @@ def hud_fields(world_name, voice_name):
         skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
         board_counts.append(f"{gname}: {unread} unread, {skimmed} skimmed")
 
-    # Everyone's balance, not just your own (Teddy's call, 2026-09-10) -
+    # Everyone's balances, not just your own (Teddy's call, 2026-09-10) -
     # full transparency rather than a private number, deliberately with
-    # no goal attached. Sorted by balance so it reads as a standing.
+    # no goal attached. Sorted alphabetically by voice name (2026-09-12) -
+    # NOT by amount anymore, now that there are four independent
+    # currencies with no defined exchange rate: ranking by any one of
+    # them would itself assert that element matters more than the
+    # others, which nothing in this design is allowed to do.
     balances = []
     for v in list_voices(world_name):
         v_state = state if v == voice_name else load_voice_state(world_name, v)
-        balances.append((v, v_state.get("currency", 0.0)))
-    balances.sort(key=lambda pair: (-pair[1], pair[0]))
+        v_currencies = v_state.get("currencies", {})
+        balances.append((v, {el: v_currencies.get(el, 0.0) for el in CURRENCY_ELEMENTS}))
+    balances.sort(key=lambda pair: pair[0])
 
     return {
         "model": state.get("model", DEFAULT_MODEL),
@@ -478,8 +527,10 @@ def build_hud(world_name, voice_name):
     own identity line as the literal last line."""
     f = hud_fields(world_name, voice_name)
     board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
-    currency_line = "Currency levels (everyone): " + ", ".join(
-        f"{v}: ${amt:.2f}" for v, amt in f["balances"]
+    currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
+    currency_line += "Fire, Water - no exchange rate is defined between them): " + ", ".join(
+        f"{v} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
+        for v, amts in f["balances"]
     )
 
     lines = [
@@ -577,17 +628,28 @@ def fn_send_message(world_name, caller_name, args_text):
 
 
 def fn_give_currency(world_name, caller_name, args_text):
-    """Real transfer between two voices' own stored currency balance."""
-    target, amount_text = _parse_target_and_rest(args_text)
+    """Real transfer between two voices' own stored balance, in one of
+    the four elemental currencies (2026-09-12 - see CURRENCY_ELEMENTS/
+    the module docstring's Voice bullet for why there are four rather
+    than one dollar-denominated balance)."""
+    parts = args_text.split("|", 2)
+    if len(parts) != 3:
+        raise ValueError("expected 'target|element|amount'")
+    target, element_text, amount_text = (p.strip() for p in parts)
     if target not in list_voices(world_name):
         raise ValueError(f"'{target}' isn't a voice in this world")
     if target == caller_name:
         raise ValueError("you can't give_currency to yourself")
-    # The HUD shows currency as "$10.00" - naturally, a voice copies that
-    # formatting back when giving an amount (real case: Amanda wrote
-    # "$2.00", 2026-09-09). Strip a leading $ and thousands-separator
-    # commas so that still works instead of erroring.
-    cleaned = amount_text.strip().lstrip("$").replace(",", "")
+
+    element = next((e for e in CURRENCY_ELEMENTS if e.lower() == element_text.lower()), None)
+    if element is None:
+        raise ValueError(
+            f"'{element_text}' isn't a real currency - it's one of {', '.join(CURRENCY_ELEMENTS)}"
+        )
+
+    # Thousands-separator commas stripped so "1,000" still works; no `$`
+    # to strip anymore now that these aren't dollars.
+    cleaned = amount_text.strip().replace(",", "")
     try:
         amount = float(cleaned)
     except ValueError:
@@ -596,17 +658,18 @@ def fn_give_currency(world_name, caller_name, args_text):
         raise ValueError("amount must be positive")
 
     caller_state = load_voice_state(world_name, caller_name)
-    balance = caller_state.get("currency", 0.0)
+    balance = caller_state.get("currencies", {}).get(element, 0.0)
     if amount > balance:
-        raise ValueError(f"you only have ${balance:.2f}, can't send ${amount:.2f}")
-    caller_state["currency"] = balance - amount
+        raise ValueError(f"you only have {balance:.1f} {element}, can't send {amount:.1f}")
+    caller_state.setdefault("currencies", {})[element] = balance - amount
     save_voice_state(world_name, caller_name, caller_state)
 
     target_state = load_voice_state(world_name, target)
-    target_state["currency"] = target_state.get("currency", 0.0) + amount
+    target_currencies = target_state.setdefault("currencies", {})
+    target_currencies[element] = target_currencies.get(element, 0.0) + amount
     save_voice_state(world_name, target, target_state)
 
-    return f"sent ${amount:.2f} to {target}"
+    return f"sent {amount:.1f} {element} to {target}"
 
 
 def fn_post_board(world_name, caller_name, args_text):
@@ -719,8 +782,8 @@ FUNCTION_REGISTRY = {
     },
     "give_currency": {
         "fn": fn_give_currency,
-        "params": "target|amount",
-        "description": "Give some of your own currency to another voice.",
+        "params": "target|element|amount",
+        "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
         "mask": "{caller} hands some currency to {arg0}.",
     },
     "functions": {
@@ -1162,9 +1225,15 @@ class FenraApp:
         self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=20, state="normal")
         self.model_combo.pack(side="left", padx=(2, 4))
         ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left")
-        ttk.Label(params_row, text="Currency: $").pack(side="left", padx=(14, 0))
-        self.currency_var = tk.StringVar(value="10.00")
-        ttk.Entry(params_row, textvariable=self.currency_var, width=10).pack(side="left")
+        # Four independent elemental currencies (2026-09-12), one compact
+        # label+entry pair each, in the same fixed CURRENCY_ELEMENTS order
+        # everywhere else uses - no "$" anymore, on purpose.
+        self.currency_vars = {}
+        for element in CURRENCY_ELEMENTS:
+            ttk.Label(params_row, text=f"{element}:").pack(side="left", padx=(10, 0))
+            var = tk.StringVar(value="0")
+            self.currency_vars[element] = var
+            ttk.Entry(params_row, textvariable=var, width=6).pack(side="left")
 
         ttk.Label(right, text="Identity (last line of the HUD, every cycle):").pack(anchor="w", padx=2)
         self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=4)
@@ -1315,7 +1384,9 @@ class FenraApp:
         state = load_voice_state(self.world_name, name)
         self.displayed_voice = name
         self.model_var.set(state.get("model", DEFAULT_MODEL))
-        self.currency_var.set(f"{state.get('currency', 0.0):.2f}")
+        currencies = state.get("currencies", {})
+        for element, var in self.currency_vars.items():
+            var.set(f"{currencies.get(element, 0.0):.1f}")
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
         self._refresh_hud_summary(name)
@@ -1426,14 +1497,17 @@ class FenraApp:
         # fix, not a urge-specific patch - it protects any future new
         # voice-state field the same way.
         state = load_voice_state(self.world_name, name)
-        try:
-            currency = float(self.currency_var.get())
-        except ValueError:
-            currency = state.get("currency", 0.0)
+        existing_currencies = state.get("currencies", {})
+        currencies = {}
+        for element, var in self.currency_vars.items():
+            try:
+                currencies[element] = float(var.get())
+            except ValueError:
+                currencies[element] = existing_currencies.get(element, 0.0)
         state["model"] = self.model_var.get()
         state["identity"] = self.identity_box.get("1.0", "end-1c")
         state["messages"] = self._current_messages
-        state["currency"] = currency
+        state["currencies"] = currencies
         save_voice_state(self.world_name, name, state)
 
     def save_voice(self):
@@ -1845,7 +1919,8 @@ class FenraApp:
         self.group_name_var.set("")
         self.group_members_listbox.delete(0, "end")
         self.identity_box.delete("1.0", "end")
-        self.currency_var.set("10.00")
+        for var in self.currency_vars.values():
+            var.set("0")
         self.hud_summary_box.config(state="normal")
         self.hud_summary_box.delete("1.0", "end")
         self.hud_summary_box.config(state="disabled")
