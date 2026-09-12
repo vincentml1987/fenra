@@ -150,7 +150,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.3.0"
+FENRA_VERSION = "0.4.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -182,6 +182,7 @@ CURRENCY_RANGES = {
 
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
+VOICE_HISTORY_FILENAME = "history.jsonl"
 START_SIGNAL_FILENAME = "start_signal.txt"
 STOP_SIGNAL_FILENAME = "stop_signal.txt"
 
@@ -274,6 +275,10 @@ def voice_state_path(world_name, voice_name):
     return os.path.join(voice_dir(world_name, voice_name), VOICE_STATE_FILENAME)
 
 
+def voice_history_path(world_name, voice_name):
+    return os.path.join(voice_dir(world_name, voice_name), VOICE_HISTORY_FILENAME)
+
+
 def list_voices(world_name):
     root = voices_root_dir(world_name)
     if not os.path.isdir(root):
@@ -304,6 +309,7 @@ def default_voice_state():
         "urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge_general": 0.0,
+        "paused": False,
     }
 
 
@@ -334,6 +340,21 @@ def delete_voice(world_name, voice_name):
         shutil.rmtree(path)
 
 
+def set_voice_paused(world_name, voice_name, paused):
+    """The one real lever for pausing a single voice without touching
+    anyone else (2026-09-12) - `_tick`'s rotation skips a paused voice's
+    own generation turn entirely, but nothing else about it changes: it
+    keeps receiving real deliveries from groupmates (see the broadcast
+    loop in `_tick`) and keeps building real context, so resuming it
+    later has no memory gap to paper over. Two real uses (Teddy,
+    2026-09-12): pausing everyone *except* a specific pair to let their
+    exchange move faster, and pausing one specific voice in response to
+    genuine distress without stopping the whole world to do it."""
+    state = load_voice_state(world_name, voice_name)
+    state["paused"] = bool(paused)
+    save_voice_state(world_name, voice_name, state)
+
+
 def append_message(world_name, voice_name, speaker, text, timestamp=None, groups=None):
     """The one and only way a voice's message history grows - appends a
     real structured entry ({id, timestamp, speaker, text, groups}), same
@@ -352,7 +373,12 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None, groups
     group-chat view is reconstructed entirely from each member's own
     tagged self-records, not from anyone's inbox, so there's no
     ambiguity about which group a delivery "belongs to" even when a
-    speaker shares more than one group with the same recipient."""
+    speaker shares more than one group with the same recipient.
+
+    Returns the new entry's `id` (2026-09-12) - existing callers all
+    ignored the previous `None` return, so this is additive; added so
+    `_tick` can tie a `history.jsonl` numeric snapshot (see
+    `append_voice_history`) to the exact message it came from."""
     state = load_voice_state(world_name, voice_name)
     messages = state.get("messages", [])
     next_id = max((m["id"] for m in messages), default=0) + 1
@@ -365,6 +391,32 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None, groups
     })
     state["messages"] = messages
     save_voice_state(world_name, voice_name, state)
+    return next_id
+
+
+def append_voice_history(world_name, voice_name, message_id, timestamp=None):
+    """Append-only numeric-state history (2026-09-12) - one line per
+    turn a voice actually takes, capturing what `urge`/`understand_urge`/
+    `currencies` *were* at that point, tied to the same `message_id` as
+    that turn's own `messages` entry. `messages` already gives a full
+    text history; nothing previously preserved what the numbers behind
+    it were at any past point, which is what made checking a real-vs-
+    invented correlation (2026-09-12, Church of Aletheia's "intensity"
+    figures) require manual reconstruction instead of a lookup. Reads
+    the voice's current (already-updated) state - call this after
+    everything else for that turn has already been saved, not before."""
+    state = load_voice_state(world_name, voice_name)
+    entry = {
+        "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
+        "message_id": message_id,
+        "urge": state.get("urge", {}),
+        "understand_urge": state.get("understand_urge", {}),
+        "understand_urge_general": state.get("understand_urge_general", 0.0),
+        "currencies": state.get("currencies", {}),
+    }
+    ensure_voice_dir(world_name, voice_name)
+    with open(voice_history_path(world_name, voice_name), "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 def group_chat_transcript(world_name, group_name):
@@ -482,6 +534,14 @@ def hud_fields(world_name, voice_name):
 
     unseen = [v for v in list_voices(world_name) if v != voice_name and v not in seen]
 
+    # Which of the voices you can see are currently paused (2026-09-12) -
+    # same privacy boundary as `seen` itself: you only ever learn a
+    # groupmate is paused, never one you couldn't already see.
+    paused_seen = sorted(
+        v for v in seen
+        if load_voice_state(world_name, v).get("paused", False)
+    )
+
     # Board unread/skimmed counts, own groups only - same privacy
     # boundary as "Voices you can see": a voice shouldn't know about
     # board activity in a group it isn't in.
@@ -513,6 +573,7 @@ def hud_fields(world_name, voice_name):
         "all_groups": all_groups,
         "seen": sorted(seen),
         "unseen": unseen,
+        "paused_seen": paused_seen,
         "board_counts": board_counts,
         "balances": balances,
         "identity": state.get("identity", ""),
@@ -533,13 +594,21 @@ def build_hud(world_name, voice_name):
         for v, amts in f["balances"]
     )
 
+    # Paused groupmates annotated inline (2026-09-12) - "(paused)" next to
+    # their name, so a voice can tell not to keep addressing someone who
+    # currently can't respond, without exposing why they're paused.
+    paused_seen = set(f["paused_seen"])
+    seen_display = ", ".join(
+        f"{v} (paused)" if v in paused_seen else v for v in f["seen"]
+    ) if f["seen"] else "none"
+
     lines = [
         "Everything above this line is your thoughts. Everything below is your HUD.",
         f"Name: {voice_name}",
         f"Model: {f['model']}",
         f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
         f"All groups in this world: {', '.join(f['all_groups']) if f['all_groups'] else 'none'}",
-        f"Voices you can see: {', '.join(f['seen']) if f['seen'] else 'none'}",
+        f"Voices you can see: {seen_display}",
         f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
         board_line,
         currency_line,
@@ -1201,6 +1270,10 @@ class FenraApp:
         ttk.Button(top_bar, text="New voice...", command=self.new_voice).pack(side="left", padx=2)
         ttk.Button(top_bar, text="Delete voice", command=self.delete_voice).pack(side="left", padx=2)
         ttk.Button(top_bar, text="Save voice", command=self.save_voice).pack(side="left", padx=2)
+        # Per-voice pause (2026-09-12) - skips just this voice's own turn
+        # in the round-robin loop; see set_voice_paused's own docstring.
+        self.pause_voice_btn = ttk.Button(top_bar, text="Pause voice", command=self.toggle_voice_paused)
+        self.pause_voice_btn.pack(side="left", padx=2)
 
         paned = ttk.Panedwindow(frame, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=6, pady=6)
@@ -1369,7 +1442,8 @@ class FenraApp:
         self._current_voice_names = list_voices(self.world_name)
         self.voices_listbox.delete(0, "end")
         for name in self._current_voice_names:
-            self.voices_listbox.insert("end", name)
+            paused = load_voice_state(self.world_name, name).get("paused", False)
+            self.voices_listbox.insert("end", f"{name} [paused]" if paused else name)
 
     def _on_voice_select(self, event):
         selection = self.voices_listbox.curselection()
@@ -1389,11 +1463,22 @@ class FenraApp:
             var.set(f"{currencies.get(element, 0.0):.1f}")
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
+        self.pause_voice_btn.config(text="Resume voice" if state.get("paused", False) else "Pause voice")
         self._refresh_hud_summary(name)
         self._current_messages = state.get("messages", [])
         self._populate_messages_tree()
         self._clear_message_edit()
         self._refresh_urge_viewer()
+
+    def toggle_voice_paused(self):
+        if not self.displayed_voice:
+            return
+        state = load_voice_state(self.world_name, self.displayed_voice)
+        new_paused = not state.get("paused", False)
+        set_voice_paused(self.world_name, self.displayed_voice, new_paused)
+        self.pause_voice_btn.config(text="Resume voice" if new_paused else "Pause voice")
+        self._populate_voices_list()
+        self.status_var.set(f"{'Paused' if new_paused else 'Resumed'} '{self.displayed_voice}'")
 
     def _refresh_hud_summary(self, name):
         """Read-only - see hud_fields() for the actual data, shared with
@@ -1401,9 +1486,13 @@ class FenraApp:
         voice really receives."""
         f = hud_fields(self.world_name, name)
         board_summary = ", ".join(f["board_counts"]) if f["board_counts"] else "none"
+        paused_seen = set(f["paused_seen"])
+        seen_display = ", ".join(
+            f"{v} (paused)" if v in paused_seen else v for v in f["seen"]
+        ) if f["seen"] else "none"
         lines = [
             f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
-            f"Voices you can see: {', '.join(f['seen']) if f['seen'] else 'none'}",
+            f"Voices you can see: {seen_display}",
             f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
             f"Board activity: {board_summary}",
         ]
@@ -1921,6 +2010,7 @@ class FenraApp:
         self.identity_box.delete("1.0", "end")
         for var in self.currency_vars.values():
             var.set("0")
+        self.pause_voice_btn.config(text="Pause voice")
         self.hud_summary_box.config(state="normal")
         self.hud_summary_box.delete("1.0", "end")
         self.hud_summary_box.config(state="disabled")
@@ -2030,9 +2120,26 @@ class FenraApp:
     def _tick(self):
         if not self.world_voices:
             return
-        index = self.voice_rotation_index % len(self.world_voices)
-        active_voice = self.world_voices[index]
-        self.voice_rotation_index = (index + 1) % len(self.world_voices)
+        # Skip paused voices entirely (2026-09-12) - scan forward from
+        # the current rotation position for the first non-paused voice,
+        # rather than always taking whoever's at `index`. Advances
+        # `voice_rotation_index` to just past whichever voice actually
+        # ran, not always `index + 1`, so a run of paused voices doesn't
+        # get revisited next tick. If every voice is currently paused,
+        # skip the tick entirely rather than erroring or picking one
+        # anyway - a fully-paused world should stay fully idle.
+        count = len(self.world_voices)
+        active_voice = None
+        for offset in range(count):
+            index = (self.voice_rotation_index + offset) % count
+            candidate = self.world_voices[index]
+            if not load_voice_state(self.world_name, candidate).get("paused", False):
+                active_voice = candidate
+                self.voice_rotation_index = (index + 1) % count
+                break
+        if active_voice is None:
+            self.root.after(0, self.status_var.set, "All voices paused")
+            return
         self.root.after(0, self._save_world_controls)
         # "Thinking..." status (2026-09-11) - shows who's mid-call during
         # the wait on a slow model, not just after it returns. The
@@ -2138,7 +2245,14 @@ class FenraApp:
         # sees the masked version (see run_function_calls) - that a
         # call happened, never its arguments or result.
         member_groups = groups_containing(self.world_name, active_voice)
-        append_message(self.world_name, active_voice, active_voice, full_response, timestamp, groups=member_groups)
+        own_message_id = append_message(
+            self.world_name, active_voice, active_voice, full_response, timestamp, groups=member_groups
+        )
+        # Numeric-state history (2026-09-12) - tied to this exact turn's
+        # message id, capturing the real urge/currency state right after
+        # apply_urge_tick and any real function calls have already
+        # landed. See append_voice_history's own docstring.
+        append_voice_history(self.world_name, active_voice, own_message_id, timestamp)
 
         # Every OTHER member of every group the speaker belongs to - one
         # append per listener max, even if they share more than one
