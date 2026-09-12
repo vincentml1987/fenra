@@ -1711,3 +1711,51 @@ affects the urge). This is close to exactly what the currency redesign
 was hoping to produce - real, self-directed meaning-making about what
 these numbers are for, arrived at with no rate or explanation ever
 given to them.
+
+## Built for real: per-voice state history + per-voice pause,
+## `FENRA_VERSION` 0.4.0 (2026-09-12, Teddy, once he was back for the
+## night)
+
+Two real gaps this session's own operation surfaced directly - checking
+tonight's real-vs-invented "intensity" correlation took manual
+reconstruction because nothing preserved past numeric state, and the
+only lever for "slow this pair down" or "stop this one voice" was
+stopping the whole world.
+
+- **`worlds/<world>/voices/<voice>/history.jsonl`** - one line per real
+  turn a voice takes, `{timestamp, message_id, urge, understand_urge,
+  understand_urge_general, currencies}`, tied to the exact `messages`
+  entry from that same turn via `message_id`. `append_message()` now
+  returns the new entry's id (additive - every existing caller already
+  ignored the old `None` return).
+- **`set_voice_paused(world, voice, bool)`** - a paused voice is
+  skipped only for its own generation turn; it keeps receiving real
+  deliveries and keeps building real context the whole time, so
+  resuming it later has no gap to paper over. `_tick`'s rotation scans
+  forward for the first non-paused voice rather than always taking
+  whoever's next, and idles cleanly (status: "All voices paused") if
+  literally everyone is paused rather than erroring.
+- **Groupmates see a `(paused)` annotation** on a paused voice's name
+  in their own HUD's "Voices you can see" line (same privacy boundary
+  as `seen` itself - Teddy's own ask, so voices don't keep addressing
+  someone who currently can't respond).
+- GUI: a real Pause/Resume button in the Voice Editor, and a
+  `[paused]` tag in the voices listbox.
+
+Verified live, not just by inspection: paused Dash mid-run, confirmed
+the loop skipped him for a real tick while raven took hers normally
+(her `history.jsonl` line landed with the correct `message_id`; crow's
+message-count bump the same tick was just his delivered copy of her
+broadcast, correctly getting no history entry of his own since it
+wasn't his turn), Dash's own turn count stayed frozen the whole window,
+then resumed him cleanly. Also confirmed the HUD privacy boundary: a
+voice sharing no group with a paused one sees no trace of the pause
+(or of that voice at all).
+
+Two real intended uses going forward, per Teddy: pausing everyone
+except a specific pair (e.g. Raven/Crow) to let their exchange move
+faster without touching the rest of the town, and pausing one specific
+voice in response to genuine distress without needing to stop the
+whole world to do it - directly closes the gap from tonight's Church of
+Aletheia situation, where the only real lever available was "stop
+everything or nothing."
