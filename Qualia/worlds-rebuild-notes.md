@@ -1785,6 +1785,29 @@ instance of a fabricated escalating trend built on top of real-but-
 static numeric HUD data, rather than invented board/narrative content
 like Elder Rowan or the Weaver's Song.
 
+**The mechanism, precisely (Teddy's own follow-up, confirmed against
+the real transcripts)**: the HUD gives a fresh, accurate cross-voice
+currency snapshot every single turn - that part is real, legitimate
+data, available and correct at each moment. What genuinely does not
+exist anywhere in this architecture is a *time series* - nothing
+persists "what did I see last turn" except whatever a voice itself
+chose to write into its own prior message text; there is no delta, no
+history access, nothing computed for them. Checked Raven's own record
+for whether she ever actually did that: at 18:35 she wrote down real
+numbers once (her own and Crow's stats, explicitly). From 19:48 onward
+- "steadily increasing," "exponential, nearly," "the gap... widening
+still," "accelerating at a concerning rate" - **she never once returns
+to that 18:35 reading or any other recorded number to check it**. And
+the real values make the fabrication airtight rather than just
+plausible: Dash's and Marisol's Earth balances (33 each) are the exact
+figures from the original currency migration at launch - literally
+zero real transfers have touched either of them all night. Not "we
+can't tell if it's changing" - it is provably, exactly static, and
+"accelerating" is invented from nothing on top of it. The legitimate
+part of their observation (a real snapshot comparison) is what's
+getting contaminated by the illegitimate part (a trend that would
+require memory they don't have and never built for themselves).
+
 **The structural finding, prompted by Teddy noticing it directly**:
 across all three fabrications tonight (Elder Rowan, the Weaver's Song,
 and this one), **neither voice has once pushed back, asked for
