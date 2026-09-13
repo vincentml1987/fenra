@@ -178,7 +178,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.6.0"
+FENRA_VERSION = "0.6.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -2144,6 +2144,14 @@ class FenraApp:
         ttk.Button(top_bar, text="New room...", command=self.new_room).pack(side="left", padx=2)
         ttk.Button(top_bar, text="Delete room", command=self.delete_room).pack(side="left", padx=2)
         ttk.Button(top_bar, text="Rename room", command=self.rename_room).pack(side="left", padx=2)
+        # The rooms list has no reason to auto-refresh every tick the way
+        # the voices listbox does (2026-09-12 fix) - rooms are created
+        # far less often than voices pause/resume, so a manual button is
+        # enough rather than adding per-tick cost for something this
+        # rare. Also reloads the displayed room, if any, since its
+        # occupants/adjacency can change from voice-driven move_room/
+        # create_room without any GUI action to trigger a refresh.
+        ttk.Button(top_bar, text="Refresh", command=self._refresh_rooms_tab).pack(side="left", padx=2)
 
         paned = ttk.Panedwindow(frame, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=6, pady=6)
@@ -2255,10 +2263,30 @@ class FenraApp:
         board_edit_frame.grid_rowconfigure(1, weight=1)
 
     def _populate_rooms_list(self):
+        # Preserve the current selection across a repopulate (2026-09-13,
+        # same pattern as _populate_voices_list) - otherwise hitting
+        # Refresh with a room selected would lose the highlight.
+        selected_name = None
+        selection = self.rooms_listbox.curselection()
+        if selection and selection[0] < len(self._current_room_names):
+            selected_name = self._current_room_names[selection[0]]
         self._current_room_names = list_rooms(self.world_name)
         self.rooms_listbox.delete(0, "end")
         for name in self._current_room_names:
             self.rooms_listbox.insert("end", name)
+        if selected_name in self._current_room_names:
+            self.rooms_listbox.selection_set(self._current_room_names.index(selected_name))
+
+    def _refresh_rooms_tab(self):
+        """Manual refresh (2026-09-13) - a voice's create_room/move_room
+        doesn't touch the GUI at all, so the rooms list and whichever
+        room's detail panel is open can both go stale with no automatic
+        signal that anything changed. Repopulates the list (new rooms
+        show up) and reloads the currently displayed room, if any (its
+        occupants/adjacency/log/board may have changed too)."""
+        self._populate_rooms_list()
+        if self.displayed_room:
+            self._load_room(self.displayed_room)
 
     def _on_room_select(self, event):
         selection = self.rooms_listbox.curselection()
