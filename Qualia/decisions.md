@@ -2,6 +2,67 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-13 (the_commons launched; syntax-tolerance idea, parked; LLM function-call agent, parked)
+
+First real run of a world built on rooms + registers. 8 original voices
+(Wren, Cole, Marisol, Dash, Priya, Milo, Sable, Orin - models/identities
+carried over from `the_town`, everything else fresh) all started in
+`town_center`. Watched the first real hour of activity together.
+
+**Genuinely healthy signs, worth recording as a real data point against
+last session's fabrication arc**: two real hallucinated-function errors
+(Marisol's `observe()`, Orin's `chat()`) both got metabolized as real
+errors in the voice's own reasoning, not reinterpreted into invented
+lore - a stark, concrete contrast with the Church of Aletheia pattern.
+Personalities are reading clearly and distinctly through completely
+different mechanisms already (Dash's yelled joke, Marisol's curious
+board post, Sable's take-charge meeting proposal, Milo's anxious
+suspicion-building around entirely real, mundane events rather than
+invented ones - in-character neuroticism, not distress). One recurring
+minor bug: Wren echoed the HUD's own literal placeholder text
+(`⟦function_name(args)⟧`) as if it were a real call - the exact same
+shape of bug from the very first Fenra experiments (2026-08-28), not
+fully closed by the current HUD wording; worth a small reword later,
+not urgent.
+
+**Real syntax-flexibility idea, Teddy's call**: Milo twice reached for
+keyword-style call syntax (`whisper(target=Cole|text="...")`,
+`skim_board(room=town_center)`) instead of the real positional
+`target|text` form - same shape of confusion Milo/Sable's circle hit
+independently last session. Teddy's framing: "sometimes the creators
+need to flex and work with their creations" - rather than only ever
+correcting a voice's syntax, let the parser itself accept the syntax a
+voice naturally reaches for. Two shapes discussed:
+- **Deterministic (chosen, for now)**: match each function's own real
+  parameter names against `name=value` fragments in the args text, any
+  order, quotes stripped, falling back to strict positional splitting
+  only when nothing matches - no added cost, no added risk of
+  misreading intent, consistent with how the rest of the system
+  already prefers deterministic parsing over model calls wherever
+  possible (the call-syntax reminders are hard-coded for the same
+  reason).
+- **A syntax register, alongside it**: log every raw `args_text` a
+  voice actually writes, plus whether it needed normalizing to reach
+  the canonical form - cheap, low-risk, and real data on how different
+  models/voices naturally reach for syntax, independent of whether it's
+  ever used for anything more than watching.
+- Not built yet - this session stayed at the discussion stage,
+  deliberately, per Teddy's call to keep watching `the_commons` rather
+  than build immediately. Real Plan-mode pass needed before touching
+  code, since it's core dispatch, not a hot-reloadable tweak.
+
+**Parked, explicitly asked to be written down**: Teddy has independently
+thought, multiple times, about eventually using an LLM as the actual
+function-call interpreter - reading a voice's raw thought/response and
+translating whatever it wrote into the real canonical call, rather than
+requiring exact syntax at all (the "looser" option above, but as the
+long-run direction rather than a fallback). Same shape as the existing
+urge agent - a small, stateless model, one job, no memory between
+calls. Not started, not scoped - explicitly parked for a later pass,
+recorded now because the syntax-tolerance conversation surfaced it as
+something worth having in writing rather than letting it stay an
+unrecorded recurring thought.
+
 ## 2026-09-13 (rooms + registers - implemented, v0.5.0)
 
 Built the design from the same-day conceptual entry below, entirely in
