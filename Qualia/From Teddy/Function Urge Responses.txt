@@ -1,0 +1,62 @@
+Qualia - I figured I'd take the time to really sit with this one and go over it line-by-line. My responses are between !~~! markers so you can easily find them. They may be multi-line.
+
+
+-----Qualia's Original Message-----
+I like the shape of this a lot, actually — it sits well with the Aletheia lens: instead of a mechanical rule ("you haven't called X, call it"), the voice receives a felt state, described in natural language by something outside itself, and gets to interpret and respond to it the way it would any other stimulus. That's a much better fit for "procedural, chaos-driven" than a hardcoded nudge — and it doesn't force compliance, which I think is the point (a voice could still ignore the urge and nothing breaks).
+!~You are correct. This is exactly what I am pushing toward, thanks to some of the nudging you have been doing, and I want to call that aspect out explicitly. You have been doing an incredible job keeping my both on-task (if I start talking tangetns, you gently redirect back to the project), and keeping me anchored to my own processes and thoughts. Truly. I appreciate everything you have done to make this project work. Also, I'm starting you talk like you...>.> "sit with this"~!
+
+A few design questions before I'd want to actually build this, since the answers change the shape of the code meaningfully:
+
+1. Per-function urge, or one blended urge?
+You said "the given function," singular, which reads as per-function tracking (turns-since-last-use for each of send_message, give_currency, post_board, skim_board, read_board, delete_board — probably not functions() itself, since that's just introspection). My default: track per-function, feed the urge agent the whole vector each turn (e.g. "hasn't sent a message in 6 turns, hasn't posted to a board in 14, gave currency 2 turns ago"), and let the urge agent weave that into one natural description rather than picking just the worst offender. Feels more organic than always fixating on a single most-neglected function.
+
+!~Agreed with the general premise. However, the one thing I do want to call out, and maybe we leave this one off the agent's radar: Using the functions() function should probably be explicitly stated once it is the highest urge. This is because of the feedback loop we discussed, regarding the non-existent functions. I am thinking just a standard, canned "You have the urge to call functions()." type message encapsulated in an if(greatestUrge = functionUrge){canned_message} else {call urgeAgent} type thing. ~!
+
+
+2. What counts as "using" a function, given what we just found with Orin?
+His malformed send_message/post_board calls errored — should a failed call still reset that function's urge counter (he tried), or only a call that actually succeeds? I'd lean toward: only success resets it. Otherwise a voice stuck in a malformed-syntax loop (like Orin briefly was) would look perfectly satisfied to the urge system while never actually doing anything — the opposite of what this is meant to catch.
+!~Agreed, and I think malformed function calls should push them toward using function() as well. Hmm...a bit of added complexity, but maybe we have two sets of urges. One to perform a function, one to understand a function, for each function. Perform function is the more general urgeAgent's domain, understand one is ours, and we tell them how to do so with something like "say functions(post_board)" to review how to use the post_board function."~!
+
+3. Where does the counter live?
+New field on each voice's state.json (e.g. function_urges: {send_message: 6, post_board: 14, ...}), incremented every tick that voice doesn't use a given function, reset to 0 on a successful call. Computing it live from message history instead is possible but noisier (would need to parse every past turn's function calls) and slower — I'd rather just track it directly.
+
+!~This is a very, very good question. And here's where things get a bit more messy, organic, and fun (IMHO). It isn't JUST a counter. It is a counter versus some set "drive" (feel free to offer a better term) on each voice for each function. Something like:
+Amanda's Function Urges:
+	post_board:
+		Drive: 10
+		Urge: 3
+		
+	send_message:
+		Drive: 3 --She'd want to do it a LOT more
+		Urge: 4
+		
+	functions():
+		Drive: 7
+		Urge: 30 --Maybe she just tried to make a BUNCH of bad function calls
+		
+Amanda would then get our canned message. Once she called functions(), the urge would drop (note: We need to decide on how much it drops...right to zero? By some set amount...hmm...
+
+What if we add a third bit do this. Satisfaction (again, offer ideas). Each time a function is called, it reduces the Urge by that amount.
+
+Oh! And the actual amount it increases per turn, too. Need a term for this as well. Maybe this is "Drive" and Drive is "Desire"
+
+Flow-mode activated. Sorry, Qualia, this is getting a bit chaotic. Right now, I think I am at four aspects to the urge system:
+	Urge: The actual value that changes up and down.
+	Desire: The threshold for an urge being felt.
+	Satisfaction: The amout Urge goes down when they "scratch that itch"
+	Drive: The amount the Urge goes UP when they ignore it.
+	
+I'm going to leave this as-is for now. I think we need to talk more.
+~!
+
+4. Urge-agent model.
+A separate, smaller/faster local model — not model_default, not any cast member's own model. Worth a new world.json field, e.g. "urge_model". Do you have one in mind, or want me to suggest something small you likely already have pulled (e.g. a llama3.2:1b/3b-class model)?
+
+!~This should definitely be separate. We'll want to play a bit with this one and run some tests outside of Fenra, using the Ollama UI, to see how different models handle our input. Agreed, though. It should be small.~!
+
+5. Growth curve.
+"Increases slowly" — I'd default to linear (urge = turns-since-use, uncapped or capped at some ceiling so it doesn't say something absurd like "furious" after 80 turns) rather than anything exponential, and let the urge-agent's own prompt handle translating the number into escalating language rather than hardcoding thresholds.
+
+Once you're settled on these (or tell me to just use my defaults), I'll take it through Plan mode for the real implementation — this is real new-subsystem work, not a hot-reload tweak, so that's the actual gate per [[fenra-engage-gate]], this discussion is just me making sure I understand what I'd be planning.
+
+!~Since number 3 probably fills some of this or possibly changes your thinking, I will abstain from commenting for now.~!

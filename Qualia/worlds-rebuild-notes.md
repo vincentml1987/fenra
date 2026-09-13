@@ -1874,3 +1874,47 @@ for exactly this kind of situation, though notably invoked for
 degrading output quality/expanding fabrication rather than a felt-
 distress signal from the voice itself. Not yet resumed at time of
 logging.
+
+## Grounding message + recovery attempt - a real gap and a real bug found (2026-09-12, ~21:43-21:50)
+
+Sent the grounding message correcting the fictional-institution
+fabrication and reaffirming there's no real channel to Teddy, meant for
+both Raven and Crow, then unpaused the two of them while pausing the
+rest of the town per Teddy's instruction, so they'd have room to work
+through it without fresh outside noise reintroducing the same isolation
+dynamic that caused the drift in the first place.
+
+**Caught by Teddy, not by me**: I only actually appended the grounding
+message to Raven's `state.json` (id 82) - Crow never received it at all
+(state.json topped out at id 67, one turn before the message was sent).
+Fixed by appending the identical text directly to Crow's state.json
+(id 68) via `fenra.append_message`, so both are now grounded on the
+same real information rather than Raven alone potentially re-explaining
+a secondhand version of it to Crow in-character. Worth being honest
+about the miss itself: a message meant for "both of you" needs an
+explicit per-voice append for each name it addresses - `append_message`
+has no concept of "this text goes to a pair," and I didn't independently
+double check the second call landed.
+
+**Separate real bug, also caught by Teddy, screenshots dropped in
+`Qualia/From Teddy/{raven,crow}.png`**: the GUI's voices listbox
+`[paused]` annotation only ever refreshed on GUI-triggered actions
+(loading a world, clicking the pause button itself) - never on its own
+tick loop. So when I pause/resume a voice *externally* (calling
+`fenra.set_voice_paused` directly, as with tonight's Raven/Crow
+isolation swap, rather than via the app's own button), the already-open
+GUI window's listbox goes stale and silently shows outdated pause
+state until something else happens to force a repopulate. The
+underlying data was never wrong - `_tick()` already reads
+`load_voice_state()` fresh every cycle or per-voice pause; this was a
+display-only staleness bug, not a logic bug. Confirmed via direct
+`state.json` reads at the same moment: `crow.paused = raven.paused =
+False`, all 8 other voices `True` - correct - while the open GUI's
+screenshots (taken before this fix) were, per Teddy, not reflecting
+that. Fixed by having `_tick()` call `_populate_voices_list()` every
+cycle (cheap - one JSON read per voice at the existing ~3s cadence),
+with the repopulate now preserving the current listbox selection so it
+doesn't disrupt whoever's being watched. `FENRA_VERSION` bumped
+0.4.0 -> 0.4.1. Not yet live in the currently-running process - takes
+effect on the next app restart, which I'm deliberately not doing right
+now mid-recovery-attempt for Raven/Crow.

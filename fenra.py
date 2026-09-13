@@ -150,7 +150,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.4.0"
+FENRA_VERSION = "0.4.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -1439,11 +1439,21 @@ class FenraApp:
             ttk.Label(self._urge_detail_frame, text=text, wraplength=400, justify="left").pack(anchor="w", padx=4)
 
     def _populate_voices_list(self):
+        # Preserve the current selection across a repopulate (2026-09-12)
+        # - this now runs every tick (see _tick) to pick up externally-made
+        # pause changes, so losing the highlight each time would make the
+        # listbox unusable while the world is running.
+        selected_name = None
+        selection = self.voices_listbox.curselection()
+        if selection and selection[0] < len(self._current_voice_names):
+            selected_name = self._current_voice_names[selection[0]]
         self._current_voice_names = list_voices(self.world_name)
         self.voices_listbox.delete(0, "end")
         for name in self._current_voice_names:
             paused = load_voice_state(self.world_name, name).get("paused", False)
             self.voices_listbox.insert("end", f"{name} [paused]" if paused else name)
+        if selected_name in self._current_voice_names:
+            self.voices_listbox.selection_set(self._current_voice_names.index(selected_name))
 
     def _on_voice_select(self, event):
         selection = self.voices_listbox.curselection()
@@ -2140,6 +2150,15 @@ class FenraApp:
         if active_voice is None:
             self.root.after(0, self.status_var.set, "All voices paused")
             return
+        # Live-refresh the voices listbox's [paused] annotations every
+        # tick (2026-09-12 fix) - previously only repopulated on GUI
+        # actions (world load, the pause button itself), so a pause/
+        # resume made externally (e.g. Qualia calling set_voice_paused
+        # directly against state.json while the app was already open,
+        # as with Raven/Crow tonight) never appeared in the open window
+        # until something else happened to trigger a repopulate. Cheap
+        # (one JSON read per voice) at the existing tick cadence.
+        self.root.after(0, self._populate_voices_list)
         self.root.after(0, self._save_world_controls)
         # "Thinking..." status (2026-09-11) - shows who's mid-call during
         # the wait on a slow model, not just after it returns. The

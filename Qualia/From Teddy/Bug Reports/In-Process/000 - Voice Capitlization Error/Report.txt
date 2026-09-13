@@ -1,0 +1,13 @@
+Subject: New Voice Capitalization Error
+Severity: Low
+Version: Fenra - worlds-rebuild v0.1.0
+Description: When a new voice is created, the casing defaults to lowercase, even if the name is entered with uppercase letters.
+To Replicate:
+1. Launch Fenra - worlds-rebuild
+2. Go to the Voices Tab
+3. Go to the Voice Editor Tab
+4. Click *New voice...*
+5. Enter a voice name with capital letters (see Screenshot 1)
+6. Click *OK*
+
+Result: The name appears with the correct letters, but in all lowercase.
