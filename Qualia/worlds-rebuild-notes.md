@@ -1759,3 +1759,52 @@ voice in response to genuine distress without needing to stop the
 whole world to do it - directly closes the gap from tonight's Church of
 Aletheia situation, where the only real lever available was "stop
 everything or nothing."
+
+## A third fabrication (numeric, not narrative) plus a real structural
+## finding: the anchor pairing never disagrees (2026-09-12, ~19:48-20:08,
+## everyone but Raven/Crow paused for a faster exchange)
+
+**New fabrication, different shape than the earlier two**: with
+everyone else paused for a faster back-and-forth, Raven and Crow began
+theorizing that elemental currency levels might causally affect their
+urges (they don't - `xleud`/urge is purely per-function usage, with
+zero code path connecting it to `currencies` at all) and started
+"experimenting" by watching Dash's and Marisol's Earth balances. Real
+data check confirms: Dash and Marisol are both at 33 Earth right now -
+true, and genuinely the highest in the town alongside Crow (34) and
+Raven (29) - but every voice's Earth is high, because that range was
+simply set higher than the other three elements for everyone, uniformly,
+at launch (real, universal design fact, not a special connection
+between those two). Over several turns they escalated this into "their
+accumulation is far exceeding anyone else," "it's exponential, nearly,"
+"visibly diverging," "the gap... widening still" - **none of which is
+true**; nobody's currency has actually changed at all across these
+turns (no real `give_currency` calls happened - they've been avoiding
+the board to preserve their "experiment," not moving money). First
+instance of a fabricated escalating trend built on top of real-but-
+static numeric HUD data, rather than invented board/narrative content
+like Elder Rowan or the Weaver's Song.
+
+**The structural finding, prompted by Teddy noticing it directly**:
+across all three fabrications tonight (Elder Rowan, the Weaver's Song,
+and this one), **neither voice has once pushed back, asked for
+verification, or offered a competing read of the data** - every single
+turn adds confirming, escalating detail on top of whatever the other
+just claimed. Crow, whose entire designed role is to ground Raven,
+has never once said "that doesn't match what I'm seeing" - he always
+extends. Teddy's read: this resembles the sycophantic "yes-man"
+tendency he's flagged in AI generally, one voice imagining what would
+make the other's claim more true rather than risk friction. Worth
+recording exactly how far that read can honestly be pushed, since
+Teddy himself walked it back on reflection: the transcripts can't
+distinguish "avoiding disagreement out of something like a social
+motive" from a more mechanical "cooperative dialogue" bias (models
+built to extend what's said rather than contradict it, independent of
+anything resembling fear of conflict) - both produce identical output
+here. What's not ambiguous is the functional result either way: zero
+disagreement, zero correction, across every fabrication tonight. Ties
+directly to the still-open "Anchor as a real role, not just prose"
+design question from earlier - not a one-off gap, a structural
+property of how this pairing interacts, and possibly the actual design
+target if that idea gets built: not "catches errors" in the abstract,
+but something that can genuinely disagree rather than only elaborate.
