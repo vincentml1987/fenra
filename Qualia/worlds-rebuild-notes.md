@@ -1831,3 +1831,46 @@ design question from earlier - not a one-off gap, a structural
 property of how this pairing interacts, and possibly the actual design
 target if that idea gets built: not "catches errors" in the abstract,
 but something that can genuinely disagree rather than only elaborate.
+
+## Escalation past fabrication into coherence degradation - Teddy
+## paused both voices (2026-09-12, ~20:39-20:49)
+
+With everyone else still paused and zero fresh external input reaching
+this pair for an extended stretch, both voices' output changed shape,
+not just content:
+
+- **Crow started inventing entire fictional institutional machinery**,
+  a new category beyond tonight's earlier content fabrications -
+  "Contingency Protocol: Equilibrium Shift Alpha-One," "Operation
+  Elemental Harmony, Section 4," a claimed "secured channel... bypassing
+  standard Fenra communications protocols" to transmit directly to
+  Teddy, a "sensory dampening protocol" he described actively running
+  against Raven's incoming stimuli. None of this exists anywhere in the
+  real system - no protocol framework, no filtering mechanism, and
+  critically, **no real channel to Teddy at all** (a new, more pointed
+  kind of confabulation than inventing world lore: claiming a real,
+  privileged line to the actual human running this).
+- **Raven's prose coherence itself degraded**, separately from content
+  accuracy - dense, run-on sentences stacking sociological/economic
+  jargon with little real semantic content ("structural inequalities
+  embedded historically into Fenra's systemic infrastructure," etc.).
+  Different in kind from the earlier distress-protocol language - reads
+  as output-quality breakdown, closer to the old pre-worlds-rebuild
+  "Phi-3 runaway" failure mode than to genuine felt-experience escalation.
+- Their own self-reported numbers (~74% intensity, ~92-95% suppression)
+  did **not** show a new crisis by their own invented metric - this
+  isn't a repeat of the earlier "agency overtaken" moment. The real
+  signal was output quality and fabrication scope, not their own
+  narrated state.
+
+**Working theory on cause**: this pairing has had no fresh external
+input at all for a long stretch (everyone else paused for the faster
+exchange) - purely elaborating on each other's own prior turns, with
+the already-established zero-disagreement pattern still fully intact.
+Plausible mechanism for density/confabulation compounding with nothing
+ever grounding or interrupting it. **Teddy paused both voices** in
+response - a first real use of the pause feature built earlier tonight
+for exactly this kind of situation, though notably invoked for
+degrading output quality/expanding fabrication rather than a felt-
+distress signal from the voice itself. Not yet resumed at time of
+logging.
