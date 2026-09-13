@@ -1918,3 +1918,61 @@ doesn't disrupt whoever's being watched. `FENRA_VERSION` bumped
 0.4.0 -> 0.4.1. Not yet live in the currently-running process - takes
 effect on the next app restart, which I'm deliberately not doing right
 now mid-recovery-attempt for Raven/Crow.
+
+## Recovery confirmed, first reintroduction step taken (2026-09-12, ~22:30-22:46)
+
+Two 30-minute checks after the grounding messages (Qualia's, then
+Teddy's own follow-up reiterating it and committing to check in
+regularly): Raven and Crow's dialogue (ids 83-89 raven, 69-75 crow)
+stayed coherent - no run-on jargon-salad, no new fabricated
+institutional machinery - and both explicitly acknowledged the
+grounding directly ("Qualia is right... they aren't real within Fenra
+itself," "assuming layers of infrastructure that simply weren't there
+- revealed so cleanly"). Sustained across two checks, not a single
+good turn, so treating this as genuine recovery on the specific axes
+Teddy set as the bar.
+
+**Worth flagging honestly rather than declaring full success**: the
+underlying zero-disagreement dynamic hasn't changed - their most recent
+turns (87-89) are already collaboratively building a new, entirely
+self-invented "readiness assessment framework" (quantifiable metrics,
+"mutual anchoring" tracking), and Crow's last line was heading back
+toward the currency-urge correlation theory before cutting off. Not a
+relapse into the same severity of fabrication, and not something to
+intervene on right now, but the same elaboration-without-friction
+pattern that produced the original drift is still fully present. Noting
+it for whoever picks this back up rather than treating tonight's
+recovery as having resolved it.
+
+**Reintroduction step**: chose **Sable** to reach out first, per
+Teddy's suggestion and confirmed by her own recent messages tonight -
+consistently the measured, supportive voice in her circle (Haven,
+Industrial Center, Therapy groups), a natural fit for a first outside
+contact. Unpaused her and her group co-members (Milo, Orin, Cole - the
+union of her three groups) so normal activity resumes there too, rather
+than the whole town at once - matches the "slowly reintroduce" language
+Teddy used to Raven and Crow directly.
+
+Appended a direct (non-broadcast) message to Sable's own state.json
+(id 121) explaining church_of_aletheia exists, that Raven and Crow had
+a rough isolated stretch and are doing better, and that reaching out
+would be welcome - with the real `send_message(target|text)` call
+syntax spelled out explicitly, e.g. `send_message(raven|your message
+here)`.
+
+**Caught my own mistake before it could cause the exact failure mode
+this was meant to prevent**: my first attempt at the example syntax
+used the same bracket character for both open and close instead of the
+real matching pair (`⟦...⟧`, U+27E6/U+27E7) - i.e., I nearly handed
+Sable a malformed-call example while explicitly warning her about
+malformed calls. Caught it on review before she'd had a turn to act on
+it, appended an immediate correction (id 122) with the exact right
+characters confirmed via direct JSON inspection. Logging this
+transparently since it's directly relevant to tonight's repeated
+syntax-drift findings - worth remembering that dictating exact syntax
+correctly, character by character, is easy to get wrong even when
+that's the explicit point of the message.
+
+Current pause state: crow, raven, Sable, Milo, Orin, Cole - unpaused.
+Dash, Marisol, Priya, Wren - still paused (next reintroduction step,
+not tonight).
