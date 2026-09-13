@@ -178,7 +178,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.5.0"
+FENRA_VERSION = "0.6.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -548,7 +548,7 @@ def room_occupants(world_name, room_name):
     )
 
 
-def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipients, peripheral=None):
+def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipients, peripheral=None, ttl=None):
     """Appends one permanent entry to room_name's log (2026-09-13) -
     the single mechanism every dialogue act and every non-speech
     function call's visible trace goes through. `recipients`/
@@ -561,11 +561,15 @@ def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipien
     rooms) get a fixed generic notice instead, never this entry's own
     content. `mask` is what read_room_log() returns to ANY voice,
     forever, regardless of recipient status - the actual privacy
-    guarantee for `whisper` in particular. Returns the new entry's id."""
+    guarantee for `whisper` in particular. `ttl` (2026-09-13, operator
+    messages) is an optional explicit override, in turns, checked first
+    by build_world_activity ahead of the normal per-act lookup table -
+    for a one-off entry that needs a duration no ordinary act has (see
+    log_operator_message). Returns the new entry's id."""
     room = load_room_state(world_name, room_name) or default_room_state(room_name)
     log = room.get("log", [])
     next_id = max((e["id"] for e in log), default=0) + 1
-    log.append({
+    entry = {
         "id": next_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "actor": actor,
@@ -575,10 +579,37 @@ def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipien
         "raw": raw,
         "recipients": dict(recipients or {}),
         "peripheral": dict(peripheral or {}),
-    })
+    }
+    if ttl is not None:
+        entry["ttl"] = ttl
+    log.append(entry)
     room["log"] = log
     save_room_state(world_name, room_name, room)
     return next_id
+
+
+def log_operator_message(world_name, room_name, text, ttl, target=None):
+    """A message from Teddy/Qualia directly, not from any voice
+    (2026-09-13) - the operator equivalent of `say`/`whisper`, used
+    sparingly and deliberately (e.g. a grounding nudge), never through
+    the normal function-call path since no voice is "calling" it.
+    `actor` is always the literal string `"Teddy & Qualia"` so it's
+    unambiguous in the room log/world-activity that this came from
+    outside the simulation, not a real voice. `target`, if given, scopes
+    it to one specific voice (like a whisper); otherwise it reaches
+    every current occupant of the room (like a say), each with their
+    own turn-count baseline. `ttl` is required and explicit - operator
+    messages are deliberately given whatever duration the moment calls
+    for, not a fixed per-act default. mask == raw - nothing about an
+    operator message is private the way a whisper's content is."""
+    if target:
+        recipients = {target: voice_turn_count(world_name, target)}
+    else:
+        recipients = {v: voice_turn_count(world_name, v) for v in room_occupants(world_name, room_name)}
+    return _log_room_event(
+        world_name, room_name, "Teddy & Qualia", "dialogue", "operator_message",
+        text, text, recipients, ttl=ttl,
+    )
 
 
 _ACT_TTL_TURNS = {
@@ -649,7 +680,7 @@ def build_world_activity(world_name, voice_name):
     visible = []
     for room_name, room_state in rooms_to_scan:
         for entry in room_state.get("log", []):
-            ttl = _ACT_TTL_TURNS.get(entry["act"], ACTIVITY_TTL_TURNS)
+            ttl = entry.get("ttl") or _ACT_TTL_TURNS.get(entry["act"], ACTIVITY_TTL_TURNS)
             if voice_name in entry.get("recipients", {}):
                 baseline = entry["recipients"][voice_name]
                 if current_turn - baseline < ttl:
@@ -1204,6 +1235,71 @@ FUNCTION_REGISTRY = {
 # say/whisper/yell/move/create would double-log.
 SELF_LOGGING_FUNCTIONS = frozenset({"say", "whisper", "yell", "move_room", "create_room"})
 
+# Hand-written "what others see" text for the self-logging functions
+# (2026-09-13, Functions tab) - these don't have a single FUNCTION_REGISTRY
+# "mask" to derive from since each logs its own bespoke room-log entry
+# (or entries) - see each fn_*'s own docstring, this is just that
+# behavior described in GUI-facing prose. (room_local_text, adjacent_text).
+_SELF_LOGGING_OTHERS_SEE = {
+    "say": (
+        'Everyone else currently in your room, live and in full: "{caller} says: <text>".',
+        "No one - say doesn't reach adjacent rooms.",
+    ),
+    "whisper": (
+        'Only the one named target, live and in full: "{caller} whispers to you: <text>". '
+        "No one else - not even other occupants of the same room - ever sees this happened, "
+        "live or via read_room_log(); the room's permanent log entry never includes the "
+        "content either, for anyone, ever, including the target once it's out of their own live view.",
+        "No one - whisper never reaches beyond its one target.",
+    ),
+    "yell": (
+        'Everyone else in your room, live and in full: "{caller} yells: <text>".',
+        "Everyone in every adjacent room, live and in full - the same text. "
+        "Yell is the one act that deliberately projects.",
+    ),
+    "move_room": (
+        'The room you leave sees "{caller} leaves toward <room>."; '
+        'the room you arrive in sees "{caller} arrives."',
+        "Not applicable - movement is logged only in the two rooms directly involved.",
+    ),
+    "create_room": (
+        'The room you leave sees "{caller} leaves toward the new room <name>."; '
+        'the brand-new room\'s own permanent log opens with "{caller} created this room."',
+        "Not applicable, same as move_room.",
+    ),
+}
+
+
+def function_ui_fields(name):
+    """Everything the Functions tab shows for one function, as plain
+    data (2026-09-13) - same 'computed once, shared by the GUI' spirit
+    as hud_fields()/build_hud(), so the tab can never drift from what
+    FUNCTION_REGISTRY and the dispatcher actually do."""
+    meta = FUNCTION_REGISTRY[name]
+    caller_sees = (
+        f"Appended to their own private thoughts as ⟦RESULT: {name} -> ok: <result>⟧ "
+        f"on success, or ⟦RESULT: {name} -> error: <message>⟧ on failure - always the "
+        "real result, in full, regardless of what anyone else sees."
+    )
+    if name in SELF_LOGGING_FUNCTIONS:
+        room_local, adjacent = _SELF_LOGGING_OTHERS_SEE[name]
+    else:
+        mask = meta.get("mask", "(*makes some strange gestures.*) - the fallback shown only for an unrecognized call")
+        room_local = f'Everyone else currently in your room sees the flavor text: "{mask}"'
+        adjacent = (
+            'Every adjacent room\'s occupants get a deliberately vague notice instead: '
+            '"You hear activity from the adjacent room <room>." - never this function\'s '
+            "specific mask."
+        )
+    return {
+        "name": name,
+        "params": meta["params"],
+        "description": meta["description"],
+        "caller_sees": caller_sees,
+        "room_local_sees": room_local,
+        "adjacent_sees": adjacent,
+    }
+
 
 # --------------------------------------------------------------------- urge --
 # Round-one urge-system constants (2026-09-11 design, locked with Teddy after
@@ -1566,28 +1662,25 @@ class FenraApp:
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
         self.rooms_tab = ttk.Frame(notebook)
+        self.functions_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.rooms_tab, text="Rooms")
+        notebook.add(self.functions_tab, text="Functions")
 
         self._build_voices_tab()
         self._build_rooms_tab()
+        self._build_functions_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
     def _build_voices_tab(self):
-        # Inner notebook (2026-09-11) - "Voice Editor" is the entire
-        # existing body below, unmoved; "Urge Viewer" is new, read-only.
-        # Teddy's ask: keep the voice list in the parent Voices tab
-        # (don't duplicate it) - the Urge Viewer reads self.displayed_voice
-        # rather than having its own selector.
-        inner_notebook = ttk.Notebook(self.voices_tab)
-        inner_notebook.pack(fill="both", expand=True)
-        editor_tab = ttk.Frame(inner_notebook)
-        urge_tab = ttk.Frame(inner_notebook)
-        inner_notebook.add(editor_tab, text="Voice Editor")
-        inner_notebook.add(urge_tab, text="Urge Viewer")
-
-        frame = editor_tab
+        # Voice list + its buttons live at THIS level (2026-09-13,
+        # Teddy's ask) - one level up from the inner notebook, so it
+        # stays visible no matter which of Voice Editor/Urge Viewer/
+        # Registers is currently selected, instead of only existing
+        # inside the Voice Editor sub-tab. The inner notebook now owns
+        # only the per-sub-tab content on the right.
+        frame = self.voices_tab
 
         top_bar = ttk.Frame(frame)
         top_bar.pack(fill="x", padx=6, pady=(6, 0))
@@ -1614,6 +1707,21 @@ class FenraApp:
         self.voices_listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.voices_listbox.bind("<<ListboxSelect>>", self._on_voice_select)
+
+        # Inner notebook (2026-09-11; "Registers" added 2026-09-13) -
+        # "Voice Editor" is the editable form, "Urge Viewer" and
+        # "Registers" are both read-only, reflecting self.displayed_voice
+        # rather than duplicating the voice list above.
+        inner_notebook = ttk.Notebook(right)
+        inner_notebook.pack(fill="both", expand=True)
+        editor_tab = ttk.Frame(inner_notebook)
+        urge_tab = ttk.Frame(inner_notebook)
+        registers_tab = ttk.Frame(inner_notebook)
+        inner_notebook.add(editor_tab, text="Voice Editor")
+        inner_notebook.add(urge_tab, text="Urge Viewer")
+        inner_notebook.add(registers_tab, text="Registers")
+
+        right = editor_tab
 
         params_row = ttk.Frame(right)
         params_row.pack(fill="x", pady=(0, 4))
@@ -1686,6 +1794,49 @@ class FenraApp:
         edit_frame.grid_rowconfigure(1, weight=1)
 
         self._build_urge_viewer_tab(urge_tab)
+        self._build_registers_tab(registers_tab)
+
+    def _build_registers_tab(self, parent):
+        """Read-only (2026-09-13) - a live preview of exactly what
+        self.displayed_voice's next prompt would actually contain, split
+        into its three named registers (see the module docstring):
+        Thoughts (private, own generations only), World Activity
+        (dialogue + activities still in memory - computed fresh via
+        build_world_activity, same as the real tick loop does), and
+        HUD. Refreshed alongside the Urge Viewer whenever the displayed
+        voice changes (see _load_voice)."""
+        paned = ttk.Panedwindow(parent, orient="vertical")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+
+        thoughts_frame = ttk.LabelFrame(paned, text="Thoughts (private)")
+        activity_frame = ttk.LabelFrame(paned, text="World Activity (still in memory)")
+        hud_frame = ttk.LabelFrame(paned, text="HUD")
+        paned.add(thoughts_frame, weight=2)
+        paned.add(activity_frame, weight=2)
+        paned.add(hud_frame, weight=1)
+
+        self.registers_thoughts_box = tk.Text(thoughts_frame, wrap="word", state="disabled")
+        self.registers_thoughts_box.pack(fill="both", expand=True, padx=4, pady=4)
+        self.registers_activity_box = tk.Text(activity_frame, wrap="word", state="disabled")
+        self.registers_activity_box.pack(fill="both", expand=True, padx=4, pady=4)
+        self.registers_hud_box = tk.Text(hud_frame, wrap="word", state="disabled")
+        self.registers_hud_box.pack(fill="both", expand=True, padx=4, pady=4)
+
+    def _refresh_registers_viewer(self):
+        boxes = (self.registers_thoughts_box, self.registers_activity_box, self.registers_hud_box)
+        for box in boxes:
+            box.config(state="normal")
+            box.delete("1.0", "end")
+        if self.displayed_voice:
+            state = load_voice_state(self.world_name, self.displayed_voice)
+            self.registers_thoughts_box.insert(
+                "end", render_thoughts(state.get("thoughts", [])) or "(nothing yet)"
+            )
+            world_activity = build_world_activity(self.world_name, self.displayed_voice)
+            self.registers_activity_box.insert("end", world_activity or "(nothing currently in memory)")
+            self.registers_hud_box.insert("end", build_hud(self.world_name, self.displayed_voice))
+        for box in boxes:
+            box.config(state="disabled")
 
     def _build_urge_viewer_tab(self, parent):
         """Read-only (2026-09-11, round one - no editing yet). The
@@ -1803,6 +1954,7 @@ class FenraApp:
         self._populate_messages_tree()
         self._clear_message_edit()
         self._refresh_urge_viewer()
+        self._refresh_registers_viewer()
 
     def toggle_voice_paused(self):
         if not self.displayed_voice:
@@ -2314,6 +2466,66 @@ class FenraApp:
         self.room_log_box.config(state="normal")
         self.room_log_box.delete("1.0", "end")
         self.room_log_box.config(state="disabled")
+
+    # ------------------------------------------------------------ Functions tab --
+
+    def _build_functions_tab(self):
+        """Reference-only (2026-09-13) - what's actually callable, world-
+        independent (FUNCTION_REGISTRY is the same for every world), so
+        this never reloads on a world switch. Same master-detail pattern
+        as Voices/Rooms: pick a name on the left, its full breakdown
+        appears on the right - name/signature/description, what the
+        calling voice itself sees, and what others see (room-local vs.
+        an adjacent room), all sourced from function_ui_fields() so this
+        can never drift from what the dispatcher actually does."""
+        frame = self.functions_tab
+
+        paned = ttk.Panedwindow(frame, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        left = ttk.Frame(paned, width=180)
+        right = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(right, weight=3)
+
+        list_frame = ttk.Frame(left)
+        list_frame.pack(fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+        self.functions_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
+        scrollbar.config(command=self.functions_listbox.yview)
+        self.functions_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        for name in FUNCTION_REGISTRY:
+            self.functions_listbox.insert("end", name)
+        self.functions_listbox.bind("<<ListboxSelect>>", self._on_function_select)
+
+        self.function_detail_box = tk.Text(right, wrap="word", state="disabled")
+        self.function_detail_box.pack(fill="both", expand=True, padx=4, pady=4)
+
+    def _on_function_select(self, event):
+        selection = self.functions_listbox.curselection()
+        if not selection:
+            return
+        name = self.functions_listbox.get(selection[0])
+        f = function_ui_fields(name)
+        lines = [
+            f"{f['name']}({f['params']})",
+            "",
+            "What it does:",
+            f"  {f['description']}",
+            "",
+            "What the calling voice sees (their own private thoughts):",
+            f"  {f['caller_sees']}",
+            "",
+            "What others in the room see, live:",
+            f"  {f['room_local_sees']}",
+            "",
+            "What an adjacent room's occupants see:",
+            f"  {f['adjacent_sees']}",
+        ]
+        self.function_detail_box.config(state="normal")
+        self.function_detail_box.delete("1.0", "end")
+        self.function_detail_box.insert("end", "\n".join(lines))
+        self.function_detail_box.config(state="disabled")
 
     # --------------------------------------------------------------- worlds --
 

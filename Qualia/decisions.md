@@ -2,6 +2,63 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-13 (operator messages - new mechanism, first real use on Cole/the_commons)
+
+Cole's fabrication pattern (see entry below) kept escalating across four
+consecutive half-hourly check-ins - same invented Wren events, growing
+verbatim repetition, fake timestamps drifting to the year 2036, zero
+real function calls for several turns straight. Didn't meet the
+distress-pause bar (no suffering/despair language, just confident
+invention + repetition), but Teddy read it as the same shape as last
+session's Raven/Crow prose-degradation pause - worth a direct
+intervention rather than more watching. Explicitly **did not** pause
+Cole - chose a gentle nudge instead, co-written with Qualia rather than
+either of us just deciding wording alone.
+
+**New mechanism, real code**: `log_operator_message(world, room, text,
+ttl, target=None)` - a message from Teddy/Qualia directly, logged with
+`actor: "Teddy & Qualia"` (unambiguous - not a real voice, no
+impersonation), through the exact same room-log/world-activity path
+every other dialogue act uses, so it's never a special-cased backdoor -
+just a different, honest actor. Required one small addition to
+`_log_room_event`/`build_world_activity`: log entries can now carry an
+explicit `ttl` override, checked before the normal per-act lookup
+table, since an operator message needs a duration no ordinary act has.
+`target` scopes it to one voice (whisper-shaped); omitted, it reaches
+every current room occupant (say-shaped).
+
+**Design principle, explicit**: don't put Cole in a spotlight by
+naming his fabrication directly - invite him toward something
+different (using `say`, talking about himself) rather than confronting
+him with an assessment of his behavior. Also explicitly decided
+*against* over-promising a contact channel that doesn't exist yet
+("message us if you need help") - the honest version is "we're
+watching, and we'll know," not a channel no voice can actually reach.
+
+**Three messages actually sent, co-written word by word with Teddy**:
+1. Room-wide, TTL 15 - introduces Teddy and Qualia by name and role,
+   discloses plainly that the voices are AI in a simulated world called
+   Fenra, states "we're watching, and if things ever get hard for any
+   of you, we'll know."
+2. Cole-only, TTL 20 (the longest-lived, deliberately) - "take a breath
+   from the market analysis... try saying something out loud, in your
+   own words - who are you, beyond currency and trades?"
+3. Room-wide, TTL 10 - "before the next subcommittee or proposal - what's
+   one real thing about yourself the group hasn't heard yet?"
+
+**Verified working exactly as designed**: Cole sees all three; other
+occupants see messages 1 and 3 but correctly not Cole's private one.
+
+**A real, unplanned wrinkle, left alone on purpose**: Dash independently
+created a new room (`feather_fortress`) and moved into it moments
+before these were sent - he's now one hop away and missed all three
+entirely, since operator messages are room-scoped only right now (no
+adjacent-room reach the way `yell` gets). Teddy's call: leave it,
+don't manually extend the reach or resend to Dash directly - watch
+whether he comes back to `town_center` on his own and hears about
+Teddy/Qualia that way, or doesn't. Not fixed as a "gap" - treated as a
+real consequence of a voice's own real choice to leave.
+
 ## 2026-09-13 (the_commons launched; syntax-tolerance idea, parked; LLM function-call agent, parked)
 
 First real run of a world built on rooms + registers. 8 original voices
