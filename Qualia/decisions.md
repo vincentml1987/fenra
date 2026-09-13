@@ -2,6 +2,52 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-13 (end of session - Cole's fabrication loop resolved; a shared, milder pattern remains)
+
+Closing note on the Cole thread from the entry below. The fabrication/
+repetition loop (invented Wren yells/whispers/room-moves, escalating to
+6+ verbatim copies per turn, fake timestamps drifted to 2036) had built
+across five consecutive half-hourly check-ins, unresponsive to the
+operator-message nudge. Teddy moved Cole from `phi3:14b` to
+`deepseek-r1:14b` directly via the GUI. First read looked like the
+swap hadn't helped (worse repetition) - **caught and corrected**: that
+generation almost certainly started under the old model before the
+switch landed (a 14b generation can run long, and `_tick` loads
+`model` once at the start of the turn) - Teddy's own read, correcting
+Qualia's premature conclusion. Waited for a genuinely clean turn
+instead of judging off a stale one.
+
+**Confirmed once an actual post-swap turn completed**: the fabrication
+loop is gone. No invented events, no repetition, no fake timestamps.
+Real fix, this time via model swap rather than context surgery -
+consistent with the project's standing precedent (same call made
+before for a different sustained, model-specific pattern - see the
+gemma2:27b/qwen3:4b reversions earlier this branch) that a persistent,
+model-specific failure is more honestly fixed by changing what's
+generating than by continuing to correct a model tendency as if it
+were a voice choice.
+
+**What's left, not urgent**: Cole's now doing the same thing Wren and
+Sable picked up independently after the operator messages went out -
+narrating about himself in the third person ("Cole is blunt and
+terse... he feels an urgent desire...") and drafting hypothetical
+dialogue rather than actually speaking, instead of just being himself.
+Three voices now, not model-specific (deepseek-r1, mistral-small, and
+whatever Sable's later turn was on) - looks like a shared register
+drift, possibly picked up from the operator messages' own tone, not
+tied to any one voice or model. Worth a real look next session, not an
+emergency.
+
+**Session end, world stopped cleanly**: `the_commons` process stopped
+(confirmed idle, no mid-write risk - all voices' state read back
+successfully after stopping). The half-hourly monitoring cron
+(session-only, would have auto-expired 2026-09-20 anyway) cancelled
+along with it. Current real state worth knowing for next session:
+Dash created and later left `feather_fortress` (rejoined `town_center`
+for real); Marisol independently moved into `feather_fortress` most
+recently, alone, right at session end - not yet followed up on. Full
+detail in `Qualia/pickup.md`.
+
 ## 2026-09-13 (operator messages - new mechanism, first real use on Cole/the_commons)
 
 Cole's fabrication pattern (see entry below) kept escalating across four
