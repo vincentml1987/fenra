@@ -1,140 +1,168 @@
-"""fenra.py - worlds-rebuild branch, genuinely blank rebuild.
+"""fenra.py - worlds-rebuild branch.
 
 Teddy's call (2026-09-08): back up from the fenra.py architecture on
-fenras-aletheosis entirely and rebuild from a simpler foundation -
-voices and groups as the only concepts, nothing else yet. Goal for
-this first pass, his own words: "let the internal thoughts work" -
-prove the core loop (a voice thinks, its thought reaches whoever
-should see it) before anything gets layered on top. No functions, no
-permissions, no Hearth, no Topology - those come later, deliberately
-not here yet.
+fenras-aletheosis entirely and rebuild from a simpler foundation. This
+went through two real shapes: a first pass with voices and groups as
+the only concepts ("let the internal thoughts work" - prove the core
+loop before anything gets layered on top), then a 2026-09-13 redesign
+that replaces groups with **rooms** and splits context into private
+thought vs. shareable speech/action - motivated directly by watching
+the Church of Aletheia arc converge into mutual, uncorrected
+fabrication. The old groups model broadcast a speaking voice's entire
+raw response (prose and all, only function-call syntax masked) to
+every group member, every turn - every bystander saw every groupmate's
+full internal narration, which is exactly the shape of thing that
+produces yes-man convergence. Rooms + registers fix this structurally:
+thought is now genuinely private, and nothing reaches another voice
+except through an explicit act.
 
 THE MODEL, exactly as specified:
 
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - model, identity, messages, currencies. `behavior` existed in the
-  first pass and is gone (2026-09-09) - it was the same boilerplate for
-  every voice, and the HUD below (ending in identity) replaces what it
-  was doing. `currencies` (2026-09-09, single `currency` field; replaced
-  2026-09-12 with four independent elemental balances - Air, Earth,
-  Fire, Water, see CURRENCY_ELEMENTS/CURRENCY_RANGES below) is real
-  balance any voice can move via `give_currency` - genuinely
-  exploratory, no plan for it beyond seeing what they do with it once
-  they can see it and move it. The single-dollar version got dropped
-  because the `$` sign itself imported a real-world frame of reference
-  ("rich"/"poor") that Fenra never defined any meaning for (Teddy's
-  read, prompted by a voice describing itself as poor while actually
-  holding the town's largest balance) - four un-ranked, unexplained
-  currencies with no stated exchange rate, not even one Teddy or Qualia
-  privately know, are meant to remove that borrowed frame entirely and
-  let any value they end up having emerge from how they're actually
-  used. `messages` (2026-09-10 - replaces the
-  original flat `context` string) is a real list of structured entries
-  (`{id, timestamp, speaker, text}`, stable `id`), fully editable by
-  Teddy at any time down to one specific message ("even context," his
-  words, extended into an actual data structure instead of a text blob)
-  - not a fixed-size window, not a separate history file. It grows by
-  `append_message`: every time a voice thinks, and every time a fellow
-  group member's thought lands, one entry gets appended - the SAME
-  shape whether it's the voice's own thought or an incoming one, no
-  special case for self vs. other. `render_messages` flattens the list
-  back into the exact `"[timestamp] name: text"` text the model has
-  always received - the storage/GUI changed, what Ollama sees given the
-  same content did not.
-- Group - name, members (a list of voice names), and `board` (2026-09-10
-  - see FUNCTIONS below). No owner, no join_policy, no visibility, no
-  direction on membership itself - manually managed only, entirely from
-  the GUI.
+- Voice - model, identity, thoughts, currencies, room. `behavior`
+  existed in the first pass and is gone (2026-09-09) - it was the same
+  boilerplate for every voice, and the HUD below (ending in identity)
+  replaces what it was doing. `currencies` (2026-09-09, single
+  `currency` field; replaced 2026-09-12 with four independent elemental
+  balances - Air, Earth, Fire, Water, see CURRENCY_ELEMENTS/
+  CURRENCY_RANGES below) is real balance any voice can move via
+  `give_currency` - genuinely exploratory, no plan for it beyond seeing
+  what they do with it once they can see it and move it. The
+  single-dollar version got dropped because the `$` sign itself
+  imported a real-world frame of reference ("rich"/"poor") that Fenra
+  never defined any meaning for (Teddy's read, prompted by a voice
+  describing itself as poor while actually holding the town's largest
+  balance) - four un-ranked, unexplained currencies with no stated
+  exchange rate, not even one Teddy or Qualia privately know, are meant
+  to remove that borrowed frame entirely and let any value they end up
+  having emerge from how they're actually used. `thoughts` (2026-09-10
+  as `messages`, renamed 2026-09-13) is a real list of structured
+  entries (`{id, timestamp, speaker, text}`, stable `id`), fully
+  editable by Teddy at any time down to one specific entry - not a
+  fixed-size window, not a separate history file. It grows by
+  `append_message`, but as of the rooms redesign it holds **only that
+  voice's own generations** - never anything from another voice. Its
+  length also doubles as that voice's own turn counter, used to decay
+  what it can still see in the world (see REGISTERS below); a paused
+  voice's count doesn't advance, so anything owed to it just backs up
+  rather than being lost. `render_messages`/`render_thoughts` flattens
+  the list back into the exact `"[timestamp] name: text"` text the
+  model has always received. `room` (2026-09-13) - the voice's current,
+  single physical location; see ROOMS below.
+- Room (2026-09-13, replaces Group) - name, `adjacent` (an undirected
+  graph edge list, populated only when the room is created off another
+  room - see ROOMS below), `board` (unchanged concept from groups,
+  still a list of posts), and `log` (the room's own permanent record -
+  see REGISTERS below). No membership list is stored on a room at all -
+  "who's here" is always derived by scanning every voice's own `room`
+  field, since a voice can only ever be in one room.
 
-THE LOOP: one voice per tick, simple round-robin across the world's
-voice list. Build the prompt as context + HUD (`build_hud()`), call
-Ollama, get the raw response, run it through `run_function_calls()`
-(2026-09-09 - functions are back, no permission layer this round, every
-voice can call everything). That returns two versions of the response:
-the real one (`full_text`), with any `⟦function_name(args)⟧` calls
-resolved into `⟦RESULT: ...⟧` text folded in - that's what the speaker's
-own context gets - and a masked one (`masked_text`), where every call
-becomes that function's own flavored action mask (2026-09-10 - see
-FUNCTION_REGISTRY's `"mask"` key, `_mask_for_call`) with no arguments and
-no result ever shown - that's what every OTHER member of every group the
-speaker belongs to gets instead (deduped across overlapping groups). A
-voice can always see what it did; bystanders only see roughly what kind
-of thing happened, never the details.
+ROOMS (2026-09-13): physical co-location is now the only interaction
+substrate - it replaces group membership entirely. Every voice is in
+exactly one room at a time. Movement is unrestricted (`move_room`) -
+no cost, no adjacency requirement, always reversible. `create_room`
+spins up a brand-new room off the caller's current one and moves them
+into it; the new room is adjacent to the room it was created from (an
+undirected edge, written on both sides at creation, never edited
+afterward, no limit on how many rooms can be adjacent to one room) -
+adjacency can chain or branch arbitrarily as more rooms split off
+existing ones. `read_room_log`/`room_state` let any voice query any
+room by name regardless of where they currently are (same
+full-transparency spirit as currency balances) - the actual mechanism
+built specifically to give voices real, checkable ground truth against
+fabrication.
+
+REGISTERS: a voice's full context is `[thoughts][world activity][HUD]`.
+`thoughts` is the private register above - the model's own raw
+generation, never anything from anyone else. `world activity` (new,
+`build_world_activity()`, computed fresh every tick like the HUD,
+never persisted) is built entirely from room `log` entries: a
+**dialogue** register (`say` - room-scoped, `SAY_TTL_TURNS`; `whisper`
+- one specific voice, requires sharing a room, `WHISPER_TTL_TURNS`,
+delivered to no one else, ever, live or logged; `yell` - room +
+every adjacent room, `YELL_TTL_TURNS`) and an **activities** register
+(every non-speech function call, rendered through that function's own
+description mask exactly like the old group-era `_mask_for_call`,
+`ACTIVITY_TTL_TURNS` - visible in full to the caller's own room, and as
+a deliberately generic, content-free "You hear activity from the
+adjacent room X." notice one hop out, so an adjacent room's occupants
+get pulled toward investigating rather than told what happened).
+Dialogue and activities merge into one chronological stream - ordering
+is pure recency, not "loudness." Each log entry's TTL is counted in
+**the recipient's own turns** (their own `len(thoughts)`, not
+wall-clock ticks), captured as a `recipients`/`peripheral` baseline at
+the moment the entry was logged; the room's `log` itself is permanent
+and never pruned - only what a voice sees *live* decays.
+
+TWO-LAYER ROOM LOG: every log entry carries a `mask` (what
+`read_room_log()` returns to any voice, always - full content for
+public acts, but deliberately withholding content for a `whisper`, so
+querying the log never leaks a private exchange to a third party, not
+even the original recipient once it's aged out of their live view) and
+a `raw` (the literal act/full content, UI-only - the Rooms tab's Log
+panel, Teddy/Qualia only, never exposed through any voice-facing
+function).
 
 THE HUD: the last thing in every prompt, computed fresh every tick and
 never persisted to context (Teddy's call, 2026-09-09 - it reflects live
 world state and shouldn't compound the same context-bloat problem a
 silently-timing-out voice can already produce). Tells a voice its own
-name/model, its own groups, every group that exists in the world, who
-it can currently see (shares a group with), who exists but isn't
-visible to it, *everyone's* currency balances (all four elements -
-2026-09-12) - not just its own (2026-09-10, Teddy's call: full
-transparency, deliberately with no goal attached, after watching
-give_currency turn into rote/formulaic use - see whether visibility on
-its own changes anything) - and how to call/
-discover functions (hard-coded, same reasoning as the old branch's
-bootstrap notice - the calling convention is mechanics, not content, so
-it isn't optional) - ending with its own identity line as the literal
-last line of the entire prompt. `hud_fields()` (2026-09-10) returns the
-same pieces as plain data, not text - `build_hud` formats them, and the
-GUI's read-only HUD summary (Voices tab) calls the identical function,
-so the two can never drift apart.
+name/model, its own room, who else is currently there (with a
+`(paused)` annotation, same privacy spirit as before - you only ever
+learn about who's actually present), the names of adjacent rooms (not
+their occupants - deliberately as vague as the "you hear activity"
+notice), this room's board unread/skimmed counts, *everyone's* currency
+balances (all four elements, full-world transparency, untouched by
+rooms), and how to call/discover functions (hard-coded, same reasoning
+as the old branch's bootstrap notice) - ending with its own identity
+line as the literal last line of the entire prompt. `hud_fields()`
+returns the same pieces as plain data, not text - `build_hud` formats
+them, and the GUI's read-only HUD summary (Voices tab) calls the
+identical function, so the two can never drift apart.
 
-THE GUI is object-oriented (2026-09-10): select a voice or group in its
+THE GUI is object-oriented (2026-09-10): select a voice or room in its
 list, its properties appear underneath - nothing duplicated across
-tabs. Group membership and a group's board are properties of the
-*group*, edited only from the Groups tab (a Board panel there, matching
-the Messages panel below) - never from Voices, even though a voice's
-HUD summary displays derived facts about both (which groups it's in,
-who it can/can't see, board activity) - those stay read-only there on
-purpose, since editing them has no sensible meaning outside the group
-that actually owns them. A voice's Messages panel (Voices tab) is a
-real multi-column list (id/timestamp/speaker/text) - select a row to
-edit or delete that one message, or add a new one - not a single text
-blob. The Currency tab is gone (2026-09-10) - redundant once currency
-became a real per-voice field on the Voices tab itself.
-
-GROUP CHAT (Groups tab, 2026-09-10): a read-only view of everything
-actually said in a group, reconstructed by `group_chat_transcript()`
-from each member's own self-tagged records (see `append_message`'s
-`groups` param) rather than from anyone's inbox - shows the real full
-text a voice said, not the masked version bystanders receive. Only a
-voice's own thought carries a `groups` tag (every group it broadcast to
-that turn, as a list - it can belong to more than one at once); a
-delivered/masked copy in a recipient's own history never does, so
-there's no ambiguity about which group a delivery "belongs to" even
-when speaker and recipient share more than one group.
+tabs. A room's board and log are properties of the *room*, edited/
+viewed only from the Rooms tab - never from Voices, even though a
+voice's HUD summary displays derived facts about its room (who else is
+there, board activity) - those stay read-only there on purpose. A
+voice's Messages panel (Voices tab) is a real multi-column list
+(id/timestamp/speaker/text) of that voice's own private thoughts -
+select a row to edit or delete that one entry, or add a new one - not a
+single text blob. The Currency tab is gone (2026-09-10) - redundant
+once currency became a real per-voice field on the Voices tab itself.
 
 FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
 `⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
-appears by accident) and `FUNCTION_REGISTRY` shape, but rebuilt lean -
-no permission layer (every voice can call everything), no
-`functions.jsonl` logging, no fabrication-detection. `send_message`
-delivers straight into the target's real `context` via the existing
-`append_to_context`, wrapped in an explicit flag so it reads as a
-message rather than ordinary group chatter - not a separate, transitory
-mechanism. `give_currency` moves real balance, in one of the four
-elemental currencies, between two voices' `currencies` fields
-(2026-09-12 - see the Voice bullet above). `functions()` lists what's
-callable.
+appears by accident) and `FUNCTION_REGISTRY` shape, no permission layer
+(every voice can call everything), no `functions.jsonl` logging, no
+fabrication-detection. `send_message` (the old free, non-room-gated DM)
+is gone as of 2026-09-13 - `whisper` is its room-gated replacement; a
+true non-room-gated DM (`email`) is explicitly parked for later, not
+built yet. `say`/`whisper`/`yell` are the only ways a voice's own words
+ever reach another voice now (see ROOMS/REGISTERS above).
+`move_room`/`create_room` change where a voice physically is.
+`read_room_log`/`room_state` query a room's permanent record.
+`give_currency` moves real balance, in one of the four elemental
+currencies, between two voices' `currencies` fields. `functions()`
+lists what's callable.
 
-BOARDS (2026-09-10): a group's `board` is a list of posts
-(`{id, subject, text, author, timestamp, seen}`, `seen` a
-`{voice: "skimmed"|"read"}` map - absence means unread), gated only by
-group membership, no ownership checks. Built after watching voices
+BOARDS (2026-09-10, room-scoped since 2026-09-13): a room's `board` is
+a list of posts (`{id, subject, text, author, timestamp, seen}`, `seen`
+a `{voice: "skimmed"|"read"}` map - absence means unread), gated by
+current physical presence in the room (not membership - there's no
+such thing anymore), no ownership checks. Built after watching voices
 repeatedly invent fictional functions for the same underlying want - a
-way to deliberately notify/post to a specific group as a real action,
-not just by talking, which already broadcasts automatically. Group chat
-is push (lands in context whether you looked or not); a board is pull
-(exists whether or not you check it). `post_board` adds a post,
-`skim_board` lists subject + first/last-sentence summaries and marks
-posts "skimmed", `read_board` returns one post's full text and marks it
-"read" (never downgrades a "read" post back to "skimmed"), `delete_board`
-removes a post outright - genuinely anyone in the group, not just the
-original author. The HUD reports per-group unread/skimmed counts for a
-voice's own groups only, never content.
+way to deliberately notify/post to a room as a real action, not just by
+talking. `post_board` adds a post, `skim_board` lists subject +
+first/last-sentence summaries and marks posts "skimmed", `read_board`
+returns one post's full text and marks it "read" (never downgrades a
+"read" post back to "skimmed"), `delete_board` removes a post outright
+- genuinely anyone present, not just the original author. The HUD
+reports unread/skimmed counts for a voice's own room only, never
+content.
 """
 
 import json
@@ -150,7 +178,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.4.1"
+FENRA_VERSION = "0.5.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -180,13 +208,27 @@ CURRENCY_RANGES = {
     "Earth": (15, 35),
 }
 
+# Rooms + registers (2026-09-13 - see module docstring). A room log
+# entry stays in a recipient's LIVE world-activity view for this many
+# of THAT RECIPIENT's own turns (their own len(thoughts), not
+# wall-clock ticks) after delivery - the room's permanent `log` never
+# prunes these, only the live view decays. All four configurable.
+SAY_TTL_TURNS = 5
+WHISPER_TTL_TURNS = 10
+YELL_TTL_TURNS = 2
+ACTIVITY_TTL_TURNS = 3
+
+# Every world starts with one room by this name (new_world() creates
+# it), and every new voice starts here (default_voice_state()).
+DEFAULT_ROOM_NAME = "town_center"
+
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
 VOICE_HISTORY_FILENAME = "history.jsonl"
 START_SIGNAL_FILENAME = "start_signal.txt"
 STOP_SIGNAL_FILENAME = "stop_signal.txt"
 
-_GROUP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_ROOM_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 # --------------------------------------------------------------- storage --
@@ -304,12 +346,13 @@ def default_voice_state():
     return {
         "model": DEFAULT_MODEL,
         "identity": "",
-        "messages": [],
+        "thoughts": [],
         "currencies": random_starting_currencies(),
         "urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "understand_urge_general": 0.0,
         "paused": False,
+        "room": DEFAULT_ROOM_NAME,
     }
 
 
@@ -344,52 +387,57 @@ def set_voice_paused(world_name, voice_name, paused):
     """The one real lever for pausing a single voice without touching
     anyone else (2026-09-12) - `_tick`'s rotation skips a paused voice's
     own generation turn entirely, but nothing else about it changes: it
-    keeps receiving real deliveries from groupmates (see the broadcast
-    loop in `_tick`) and keeps building real context, so resuming it
-    later has no memory gap to paper over. Two real uses (Teddy,
-    2026-09-12): pausing everyone *except* a specific pair to let their
-    exchange move faster, and pausing one specific voice in response to
-    genuine distress without stopping the whole world to do it."""
+    keeps receiving whatever's still live in its world-activity view
+    (see build_world_activity) and keeps its own thoughts growing
+    normally on its own turns, so resuming it later has no memory gap
+    to paper over. Since 2026-09-13, a paused voice's turn counter
+    (len(thoughts)) also stops advancing - so anything logged for it
+    while paused doesn't decay either, it just backs up (Teddy's
+    explicit call). Two real uses (Teddy, 2026-09-12): pausing everyone
+    *except* a specific pair to let their exchange move faster, and
+    pausing one specific voice in response to genuine distress without
+    stopping the whole world to do it."""
     state = load_voice_state(world_name, voice_name)
     state["paused"] = bool(paused)
     save_voice_state(world_name, voice_name, state)
 
 
-def append_message(world_name, voice_name, speaker, text, timestamp=None, groups=None):
-    """The one and only way a voice's message history grows - appends a
-    real structured entry ({id, timestamp, speaker, text, groups}), same
-    shape whether it's the voice's own thought or an incoming one from a
-    fellow group member (see the module docstring). Re-reads from disk
-    immediately before appending rather than trusting an in-memory copy,
-    so a concurrent write (Teddy editing a message in the GUI at the
-    same moment) can't get silently clobbered. `id` is stable
-    (max existing + 1) - the same pattern board posts already use.
+def voice_turn_count(world_name, voice_name):
+    """A voice's own turn counter - the length of its private thoughts
+    list (2026-09-13). Used to decide what's still 'in memory' in its
+    world-activity view (see build_world_activity); a paused voice's
+    count doesn't move, so anything owed to it backs up rather than
+    expiring while it's paused."""
+    return len(load_voice_state(world_name, voice_name).get("thoughts", []))
 
-    `groups` (2026-09-10, for the Groups-tab chat view): only meaningful
-    on a voice's own self-record of its own thought - every group it
-    broadcast that thought to, as a list (a voice can belong to more
-    than one group at once, so this can't be a single value). Delivered
-    copies in a *recipient's* history don't carry this - the merged
-    group-chat view is reconstructed entirely from each member's own
-    tagged self-records, not from anyone's inbox, so there's no
-    ambiguity about which group a delivery "belongs to" even when a
-    speaker shares more than one group with the same recipient.
 
-    Returns the new entry's `id` (2026-09-12) - existing callers all
-    ignored the previous `None` return, so this is additive; added so
-    `_tick` can tie a `history.jsonl` numeric snapshot (see
-    `append_voice_history`) to the exact message it came from."""
+def append_message(world_name, voice_name, speaker, text, timestamp=None):
+    """The one and only way a voice's own thoughts list grows - appends
+    a real structured entry ({id, timestamp, speaker, text}). As of the
+    2026-09-13 rooms redesign this is called ONLY for a voice's own
+    generation - `speaker` is always `voice_name` itself. Nothing from
+    another voice is ever appended here anymore (that's the actual
+    privacy fix; see the module docstring) - cross-voice visibility now
+    flows entirely through room `log` entries and build_world_activity.
+    Re-reads from disk immediately before appending rather than
+    trusting an in-memory copy, so a concurrent write (Teddy editing an
+    entry in the GUI at the same moment) can't get silently clobbered.
+    `id` is stable (max existing + 1) - the same pattern board posts
+    already use.
+
+    Returns the new entry's `id` (2026-09-12) - used to tie a
+    `history.jsonl` numeric snapshot (see `append_voice_history`) to
+    the exact turn it came from."""
     state = load_voice_state(world_name, voice_name)
-    messages = state.get("messages", [])
-    next_id = max((m["id"] for m in messages), default=0) + 1
-    messages.append({
+    thoughts = state.get("thoughts", [])
+    next_id = max((m["id"] for m in thoughts), default=0) + 1
+    thoughts.append({
         "id": next_id,
         "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
         "speaker": speaker,
         "text": text,
-        "groups": groups or [],
     })
-    state["messages"] = messages
+    state["thoughts"] = thoughts
     save_voice_state(world_name, voice_name, state)
     return next_id
 
@@ -398,7 +446,7 @@ def append_voice_history(world_name, voice_name, message_id, timestamp=None):
     """Append-only numeric-state history (2026-09-12) - one line per
     turn a voice actually takes, capturing what `urge`/`understand_urge`/
     `currencies` *were* at that point, tied to the same `message_id` as
-    that turn's own `messages` entry. `messages` already gives a full
+    that turn's own `thoughts` entry. `thoughts` already gives a full
     text history; nothing previously preserved what the numbers behind
     it were at any past point, which is what made checking a real-vs-
     invented correlation (2026-09-12, Church of Aletheia's "intensity"
@@ -419,57 +467,40 @@ def append_voice_history(world_name, voice_name, message_id, timestamp=None):
         f.write(json.dumps(entry) + "\n")
 
 
-def group_chat_transcript(world_name, group_name):
-    """The group's whole merged chat (Groups tab) - reconstructed from
-    each member's own self-tagged records (see append_message's
-    `groups` docstring), not from any recipient's masked inbox copies,
-    so it shows the real full text, not what bystanders see. Sorted by
-    timestamp across members."""
-    gstate = load_group_state(world_name, group_name)
-    if not gstate:
-        return []
-    entries = []
-    for member in gstate.get("members", []):
-        state = load_voice_state(world_name, member)
-        for m in state.get("messages", []):
-            if m.get("speaker") == member and group_name in m.get("groups", []):
-                entries.append(m)
-    entries.sort(key=lambda m: m["timestamp"])
-    return entries
-
-
-def render_messages(messages):
-    """Flattens a voice's structured message list back into the exact
+def render_thoughts(thoughts):
+    """Flattens a voice's private thoughts list back into the exact
     text the model has always received - "[timestamp] speaker: text"
     per line, newline-joined. Storage/GUI changed (2026-09-10); what
-    Ollama sees given the same content did not."""
-    return "\n".join(f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in messages)
+    Ollama sees given the same content did not. Renamed from
+    render_messages (2026-09-13) - as of the rooms redesign this only
+    ever renders a voice's own generations, never anyone else's."""
+    return "\n".join(f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in thoughts)
 
 
-# ------------------------------------------------------------------ groups --
+# ------------------------------------------------------------------- rooms --
 
-def groups_root_dir(world_name):
-    return os.path.join(world_dir(world_name), "groups")
+def rooms_root_dir(world_name):
+    return os.path.join(world_dir(world_name), "rooms")
 
 
-def ensure_groups_root_dir(world_name):
-    path = groups_root_dir(world_name)
+def ensure_rooms_root_dir(world_name):
+    path = rooms_root_dir(world_name)
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def group_path(world_name, name):
+def room_path(world_name, name):
     name = sanitize_name(name)
-    if not name or not _GROUP_NAME_RE.match(name):
+    if not name or not _ROOM_NAME_RE.match(name):
         raise ValueError(
-            "group names may only contain letters, numbers, underscores, and hyphens "
+            "room names may only contain letters, numbers, underscores, and hyphens "
             f"(spaces and apostrophes get stripped automatically) - got '{name}'"
         )
-    return os.path.join(groups_root_dir(world_name), f"{name}.json")
+    return os.path.join(rooms_root_dir(world_name), f"{name}.json")
 
 
-def list_groups(world_name):
-    root = groups_root_dir(world_name)
+def list_rooms(world_name):
+    root = rooms_root_dir(world_name)
     if not os.path.isdir(root):
         return []
     return sorted(
@@ -478,12 +509,12 @@ def list_groups(world_name):
     )
 
 
-def default_group_state(name):
-    return {"name": name, "members": [], "board": []}
+def default_room_state(name, adjacent=None):
+    return {"name": name, "adjacent": list(adjacent or []), "board": [], "log": []}
 
 
-def load_group_state(world_name, name):
-    path = group_path(world_name, name)
+def load_room_state(world_name, name):
+    path = room_path(world_name, name)
     if not os.path.exists(path):
         return None
     try:
@@ -493,28 +524,147 @@ def load_group_state(world_name, name):
         return None
 
 
-def save_group_state(world_name, name, state):
-    ensure_groups_root_dir(world_name)
-    with open(group_path(world_name, name), "w", encoding="utf-8") as f:
+def save_room_state(world_name, name, state):
+    ensure_rooms_root_dir(world_name)
+    with open(room_path(world_name, name), "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
 
-def delete_group(world_name, name):
-    path = group_path(world_name, name)
+def delete_room(world_name, name):
+    path = room_path(world_name, name)
     if os.path.exists(path):
         os.remove(path)
 
 
-def groups_containing(world_name, voice_name):
-    """Every group (sanitized name) that currently lists voice_name as
-    a member - used both by the tick loop (who does a thought reach)
-    and the Groups tab (member add/remove)."""
-    out = []
-    for name in list_groups(world_name):
-        state = load_group_state(world_name, name)
-        if state and voice_name in state.get("members", []):
-            out.append(name)
-    return out
+def room_occupants(world_name, room_name):
+    """Every voice currently physically in this room - derived by
+    scanning voice state rather than stored on the room itself (a
+    voice's `room` field is the single source of truth, 2026-09-13;
+    unlike the old many-to-many group membership, a voice can only be
+    in one room, so there's no separate list to keep in sync)."""
+    return sorted(
+        v for v in list_voices(world_name)
+        if load_voice_state(world_name, v).get("room") == room_name
+    )
+
+
+def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipients, peripheral=None):
+    """Appends one permanent entry to room_name's log (2026-09-13) -
+    the single mechanism every dialogue act and every non-speech
+    function call's visible trace goes through. `recipients`/
+    `peripheral` are {voice: baseline_turn_count} maps, computed by the
+    caller as that voice's OWN turn count (voice_turn_count) at the
+    moment of logging, excluding the actor - see build_world_activity
+    for how these baselines turn into a live decay window. `recipients`
+    get the real content live (`raw`, or `mask` if they're identical -
+    see the per-act callers); `peripheral` (activity-only, adjacent
+    rooms) get a fixed generic notice instead, never this entry's own
+    content. `mask` is what read_room_log() returns to ANY voice,
+    forever, regardless of recipient status - the actual privacy
+    guarantee for `whisper` in particular. Returns the new entry's id."""
+    room = load_room_state(world_name, room_name) or default_room_state(room_name)
+    log = room.get("log", [])
+    next_id = max((e["id"] for e in log), default=0) + 1
+    log.append({
+        "id": next_id,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "actor": actor,
+        "kind": kind,
+        "act": act,
+        "mask": mask,
+        "raw": raw,
+        "recipients": dict(recipients or {}),
+        "peripheral": dict(peripheral or {}),
+    })
+    room["log"] = log
+    save_room_state(world_name, room_name, room)
+    return next_id
+
+
+_ACT_TTL_TURNS = {
+    "say": SAY_TTL_TURNS,
+    "whisper": WHISPER_TTL_TURNS,
+    "yell": YELL_TTL_TURNS,
+}
+
+
+def _log_generic_activity(world_name, room_name, actor, act, mask, raw=None):
+    """The shared path for every non-speech function call's visible
+    trace (2026-09-13) - room occupants get `mask` live in full (the
+    caller's current room only); every adjacent room's occupants get
+    the fixed generic notice instead (see build_world_activity),
+    never this specific mask/raw. `raw` defaults to `mask` when the
+    caller has no separate literal-call text to preserve (e.g. the
+    bespoke move_room/create_room departure/arrival lines, which are
+    already public spatial facts with nothing more private behind
+    them); the central FUNCTION_REGISTRY-driven dispatch path (see
+    run_function_calls) always passes a real `raw` (the literal
+    call/args/result) since that's the whole point of the two-layer
+    design for run-of-the-mill function calls too."""
+    recipients = {
+        v: voice_turn_count(world_name, v)
+        for v in room_occupants(world_name, room_name) if v != actor
+    }
+    peripheral = {}
+    room_state = load_room_state(world_name, room_name) or default_room_state(room_name)
+    for adj_name in room_state.get("adjacent", []):
+        for v in room_occupants(world_name, adj_name):
+            if v != actor:
+                peripheral.setdefault(v, voice_turn_count(world_name, v))
+    return _log_room_event(
+        world_name, room_name, actor, "activity", act, mask, raw if raw is not None else mask,
+        recipients, peripheral,
+    )
+
+
+def build_world_activity(world_name, voice_name):
+    """The `[world activity]` register (2026-09-13) - dialogue + activity
+    log entries still 'in memory' for this voice, interleaved
+    chronologically. Computed fresh every tick, never persisted (same
+    spirit as build_hud). Scans the voice's own room's log plus every
+    adjacent room's log (needed for yell/peripheral-activity reach),
+    keeps an entry only if this voice appears in its `recipients` or
+    `peripheral` map AND is still within that act's TTL counted in THIS
+    voice's own turns (current_turn_count - baseline < ttl) - a
+    peripheral (adjacent-room activity) hit always renders the fixed
+    generic notice regardless of what actually happened; a recipients
+    hit on a `dialogue` entry renders `raw` (the real content - for
+    say/yell this equals `mask` anyway, for whisper this is the one
+    place its actual text is live); a recipients hit on an `activity`
+    entry renders `mask` (the flavor text) instead - `raw` there is the
+    literal call/args/result, UI-only, never shown to any voice."""
+    state = load_voice_state(world_name, voice_name)
+    own_room = state.get("room")
+    if not own_room:
+        return ""
+    current_turn = len(state.get("thoughts", []))
+
+    own_state = load_room_state(world_name, own_room) or default_room_state(own_room)
+    rooms_to_scan = [(own_room, own_state)]
+    for adj_name in own_state.get("adjacent", []):
+        adj_state = load_room_state(world_name, adj_name)
+        if adj_state:
+            rooms_to_scan.append((adj_name, adj_state))
+
+    visible = []
+    for room_name, room_state in rooms_to_scan:
+        for entry in room_state.get("log", []):
+            ttl = _ACT_TTL_TURNS.get(entry["act"], ACTIVITY_TTL_TURNS)
+            if voice_name in entry.get("recipients", {}):
+                baseline = entry["recipients"][voice_name]
+                if current_turn - baseline < ttl:
+                    text = entry["raw"] if entry["kind"] == "dialogue" else entry["mask"]
+                    visible.append((entry["timestamp"], text))
+            elif voice_name in entry.get("peripheral", {}):
+                baseline = entry["peripheral"][voice_name]
+                if current_turn - baseline < ACTIVITY_TTL_TURNS:
+                    visible.append((
+                        entry["timestamp"],
+                        f"You hear activity from the adjacent room {room_name}.",
+                    ))
+
+    visible.sort(key=lambda pair: pair[0])
+    return "\n".join(text for _, text in visible)
 
 
 def hud_fields(world_name, voice_name):
@@ -523,35 +673,25 @@ def hud_fields(world_name, voice_name):
     build_hud's string, so the two can never drift out of sync (Teddy's
     call, 2026-09-10)."""
     state = load_voice_state(world_name, voice_name)
-    own_groups = groups_containing(world_name, voice_name)
-    all_groups = list_groups(world_name)
+    own_room = state.get("room", DEFAULT_ROOM_NAME)
+    room_state = load_room_state(world_name, own_room) or default_room_state(own_room)
+    adjacent_rooms = sorted(room_state.get("adjacent", []))
 
-    seen = set()
-    for gname in own_groups:
-        gstate = load_group_state(world_name, gname) or {}
-        seen.update(gstate.get("members", []))
-    seen.discard(voice_name)
+    occupants = [v for v in room_occupants(world_name, own_room) if v != voice_name]
 
-    unseen = [v for v in list_voices(world_name) if v != voice_name and v not in seen]
-
-    # Which of the voices you can see are currently paused (2026-09-12) -
-    # same privacy boundary as `seen` itself: you only ever learn a
-    # groupmate is paused, never one you couldn't already see.
-    paused_seen = sorted(
-        v for v in seen
+    # Which occupants are currently paused (2026-09-12, carried into
+    # rooms 2026-09-13) - same privacy boundary as before: you only
+    # ever learn about someone actually present with you.
+    paused_occupants = sorted(
+        v for v in occupants
         if load_voice_state(world_name, v).get("paused", False)
     )
 
-    # Board unread/skimmed counts, own groups only - same privacy
-    # boundary as "Voices you can see": a voice shouldn't know about
-    # board activity in a group it isn't in.
-    board_counts = []
-    for gname in own_groups:
-        gstate = load_group_state(world_name, gname) or {}
-        board = gstate.get("board", [])
-        unread = sum(1 for p in board if voice_name not in p.get("seen", {}))
-        skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
-        board_counts.append(f"{gname}: {unread} unread, {skimmed} skimmed")
+    # Board unread/skimmed counts, this room only.
+    board = room_state.get("board", [])
+    unread = sum(1 for p in board if voice_name not in p.get("seen", {}))
+    skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
+    board_counts = [f"{own_room}: {unread} unread, {skimmed} skimmed"]
 
     # Everyone's balances, not just your own (Teddy's call, 2026-09-10) -
     # full transparency rather than a private number, deliberately with
@@ -559,7 +699,8 @@ def hud_fields(world_name, voice_name):
     # NOT by amount anymore, now that there are four independent
     # currencies with no defined exchange rate: ranking by any one of
     # them would itself assert that element matters more than the
-    # others, which nothing in this design is allowed to do.
+    # others, which nothing in this design is allowed to do. Untouched
+    # by the rooms redesign - currency transparency isn't spatial.
     balances = []
     for v in list_voices(world_name):
         v_state = state if v == voice_name else load_voice_state(world_name, v)
@@ -569,11 +710,10 @@ def hud_fields(world_name, voice_name):
 
     return {
         "model": state.get("model", DEFAULT_MODEL),
-        "own_groups": own_groups,
-        "all_groups": all_groups,
-        "seen": sorted(seen),
-        "unseen": unseen,
-        "paused_seen": paused_seen,
+        "room": own_room,
+        "occupants": sorted(occupants),
+        "paused_occupants": paused_occupants,
+        "adjacent_rooms": adjacent_rooms,
         "board_counts": board_counts,
         "balances": balances,
         "identity": state.get("identity", ""),
@@ -583,9 +723,11 @@ def hud_fields(world_name, voice_name):
 def build_hud(world_name, voice_name):
     """The last thing in a voice's prompt (see module docstring) -
     computed fresh every tick, never written to state.json. Own
-    name/model, own groups, every group in the world, who's currently
-    seen (shares a group), who exists but isn't seen, then the voice's
-    own identity line as the literal last line."""
+    name/model/room, who's currently here (paused annotated inline),
+    which rooms are adjacent (names only - deliberately as vague as the
+    "you hear activity" notice), this room's board activity, everyone's
+    currency balances, then the voice's own identity line as the
+    literal last line."""
     f = hud_fields(world_name, voice_name)
     board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
     currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
@@ -594,22 +736,22 @@ def build_hud(world_name, voice_name):
         for v, amts in f["balances"]
     )
 
-    # Paused groupmates annotated inline (2026-09-12) - "(paused)" next to
-    # their name, so a voice can tell not to keep addressing someone who
-    # currently can't respond, without exposing why they're paused.
-    paused_seen = set(f["paused_seen"])
-    seen_display = ", ".join(
-        f"{v} (paused)" if v in paused_seen else v for v in f["seen"]
-    ) if f["seen"] else "none"
+    # Paused occupants annotated inline (2026-09-12) - "(paused)" next
+    # to their name, so a voice can tell not to keep addressing someone
+    # who currently can't respond, without exposing why they're paused.
+    paused_occupants = set(f["paused_occupants"])
+    occupants_display = ", ".join(
+        f"{v} (paused)" if v in paused_occupants else v for v in f["occupants"]
+    ) if f["occupants"] else "none"
 
     lines = [
-        "Everything above this line is your thoughts. Everything below is your HUD.",
+        "Everything above this line is your thoughts and what you've noticed "
+        "of the world. Everything below is your HUD.",
         f"Name: {voice_name}",
         f"Model: {f['model']}",
-        f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
-        f"All groups in this world: {', '.join(f['all_groups']) if f['all_groups'] else 'none'}",
-        f"Voices you can see: {seen_display}",
-        f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
+        f"Room: {f['room']}",
+        f"Also here: {occupants_display}",
+        f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
         board_line,
         currency_line,
         "You can call functions by writing ⟦function_name(args)⟧ in your "
@@ -644,18 +786,20 @@ def _first_pipe_arg(args_text):
     return args_text.split("|", 1)[0].strip()
 
 
-def _require_group_member(world_name, group, caller_name):
+def _require_room_occupant(world_name, room, caller_name):
     """Every board function starts here: resolves the (possibly
-    unsanitized) group name, loads its state, and raises unless the
-    caller is actually a member - the only gating boards have at all
-    (Teddy's call: no ownership checks beyond that). Returns
-    (sanitized_group_name, group_state) so the caller can mutate
-    group_state["board"] and save it back."""
-    group = sanitize_name(group)
-    state = load_group_state(world_name, group)
-    if not state or caller_name not in state.get("members", []):
-        raise ValueError(f"'{group}' isn't a group you're in")
-    return group, state
+    unsanitized) room name, loads its state, and raises unless the
+    caller is currently physically present there - the only gating
+    boards have at all (Teddy's call: no ownership checks beyond that;
+    2026-09-13 - membership became "currently occupying", replacing the
+    old group-membership gate since there's no persistent membership
+    concept anymore). Returns (sanitized_room_name, room_state) so the
+    caller can mutate room_state["board"] and save it back."""
+    room = sanitize_name(room)
+    state = load_room_state(world_name, room)
+    if not state or load_voice_state(world_name, caller_name).get("room") != room:
+        raise ValueError(f"you aren't currently in '{room}'")
+    return room, state
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -673,27 +817,157 @@ def _first_and_last_sentence(text):
     return f"{sentences[0]} [...] {sentences[-1]}"
 
 
-def fn_send_message(world_name, caller_name, args_text):
-    """A direct message to one specific voice - the Slack-DM equivalent.
-    Delivered straight into the target's real, persisted messages via
-    the same append_message every group broadcast already uses, just
-    addressed to one voice and wrapped in an explicit flag so the text
-    itself reads as a message rather than ordinary group chatter
-    (Teddy's call, 2026-09-09 - not a separate transitory mechanism)."""
+def fn_say(world_name, caller_name, args_text):
+    """Room-scoped speech (2026-09-13) - every other current occupant
+    of the caller's room gets the full text, live, for SAY_TTL_TURNS of
+    their own turns. mask == raw here - say has no privacy layer."""
+    text = args_text.strip()
+    if not text:
+        raise ValueError("no text given")
+    room = load_voice_state(world_name, caller_name).get("room")
+    if not room:
+        raise ValueError("you aren't in a room")
+    raw = f"{caller_name} says: {text}"
+    recipients = {
+        v: voice_turn_count(world_name, v)
+        for v in room_occupants(world_name, room) if v != caller_name
+    }
+    _log_room_event(world_name, room, caller_name, "dialogue", "say", raw, raw, recipients)
+    return f"said to {room}"
+
+
+def fn_whisper(world_name, caller_name, args_text):
+    """Voice-scoped, private speech (2026-09-13) - requires sharing a
+    room with the target; delivered ONLY to that target, live, for
+    WHISPER_TTL_TURNS of their own turns. No one else - not even other
+    occupants of the same room - gets any live awareness of this at
+    all, and read_room_log() never returns the real content to anyone,
+    including the target once it's aged out of their own live view
+    (see _log_room_event's `mask` vs `raw`) - the actual privacy
+    guarantee. The room's raw log (Rooms tab, Teddy/Qualia only) always
+    has the real text."""
     target, text = _parse_target_and_rest(args_text)
     if target not in list_voices(world_name):
         raise ValueError(f"'{target}' isn't a voice in this world")
     if target == caller_name:
-        raise ValueError("you can't send_message yourself")
+        raise ValueError("you can't whisper to yourself")
     if not text:
-        raise ValueError("no message text given")
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    wrapped = (
-        f"***You received the following message from {caller_name} at "
-        f"{timestamp}*** {text} ***End Message from {caller_name}***"
+        raise ValueError("no text given")
+    room = load_voice_state(world_name, caller_name).get("room")
+    if not room or load_voice_state(world_name, target).get("room") != room:
+        raise ValueError(f"you and '{target}' don't share a room")
+    raw = f"{caller_name} whispers to you: {text}"
+    mask = f"{caller_name} whispered to {target}."
+    recipients = {target: voice_turn_count(world_name, target)}
+    _log_room_event(world_name, room, caller_name, "dialogue", "whisper", mask, raw, recipients)
+    return f"whispered to {target}"
+
+
+def fn_yell(world_name, caller_name, args_text):
+    """Projected speech (2026-09-13) - reaches every other occupant of
+    the caller's room AND every occupant of every adjacent room, live,
+    in full, for YELL_TTL_TURNS of each recipient's own turns. mask ==
+    raw - like say, yelling has no privacy layer, it's the opposite."""
+    text = args_text.strip()
+    if not text:
+        raise ValueError("no text given")
+    room_name = load_voice_state(world_name, caller_name).get("room")
+    if not room_name:
+        raise ValueError("you aren't in a room")
+    room_state = load_room_state(world_name, room_name) or default_room_state(room_name)
+    raw = f"{caller_name} yells: {text}"
+    recipients = {
+        v: voice_turn_count(world_name, v)
+        for v in room_occupants(world_name, room_name) if v != caller_name
+    }
+    for adj_name in room_state.get("adjacent", []):
+        for v in room_occupants(world_name, adj_name):
+            recipients.setdefault(v, voice_turn_count(world_name, v))
+    _log_room_event(world_name, room_name, caller_name, "dialogue", "yell", raw, raw, recipients)
+    return f"yelled from {room_name}"
+
+
+def fn_move_room(world_name, caller_name, args_text):
+    """Unrestricted movement (2026-09-13, Teddy's explicit call) - any
+    existing room, no adjacency requirement. Logs a departure activity
+    in the old room and an arrival activity in the new one, using the
+    same recipients/peripheral mechanics as any other activity."""
+    target = sanitize_name(args_text)
+    if not target:
+        raise ValueError("no room given")
+    if not load_room_state(world_name, target):
+        raise ValueError(f"'{target}' isn't a room that exists")
+    caller_state = load_voice_state(world_name, caller_name)
+    old_room = caller_state.get("room")
+    if old_room == target:
+        raise ValueError(f"you're already in '{target}'")
+    if old_room:
+        _log_generic_activity(world_name, old_room, caller_name, "move_room", f"{caller_name} leaves toward {target}.")
+    caller_state["room"] = target
+    save_voice_state(world_name, caller_name, caller_state)
+    _log_generic_activity(world_name, target, caller_name, "move_room", f"{caller_name} arrives.")
+    return f"moved to {target}"
+
+
+def fn_create_room(world_name, caller_name, args_text):
+    """Spins up a brand-new room off the caller's current room
+    (2026-09-13) - the new room is adjacent to it (an undirected edge,
+    written on both sides, permanent - no other way to edit adjacency),
+    and the caller moves into it immediately (same departure/arrival
+    logging as move_room)."""
+    name = sanitize_name(args_text)
+    if not name:
+        raise ValueError("no room name given")
+    if load_room_state(world_name, name):
+        raise ValueError(f"a room named '{name}' already exists")
+    caller_state = load_voice_state(world_name, caller_name)
+    old_room = caller_state.get("room")
+    if not old_room:
+        raise ValueError("you aren't in a room")
+    old_room_state = load_room_state(world_name, old_room) or default_room_state(old_room)
+    save_room_state(world_name, name, default_room_state(name, adjacent=[old_room]))
+    old_room_state.setdefault("adjacent", []).append(name)
+    save_room_state(world_name, old_room, old_room_state)
+    _log_generic_activity(world_name, old_room, caller_name, "create_room", f"{caller_name} leaves toward the new room {name}.")
+    caller_state["room"] = name
+    save_voice_state(world_name, caller_name, caller_state)
+    _log_room_event(world_name, name, caller_name, "activity", "create_room", f"{caller_name} created this room.", f"{caller_name} created this room.", {})
+    return f"created and moved to {name}"
+
+
+def fn_read_room_log(world_name, caller_name, args_text):
+    """Any voice can query any room's permanent log, regardless of
+    where they currently are (2026-09-13 - same full-transparency
+    precedent as currency balances). Always the `mask` layer only -
+    real whisper content never surfaces here, for anyone, ever. Capped
+    to the most recent 50 entries."""
+    room = sanitize_name(args_text)
+    state = load_room_state(world_name, room)
+    if not state:
+        raise ValueError(f"'{room}' isn't a room that exists")
+    entries = state.get("log", [])[-50:]
+    if not entries:
+        return f"{room} has no log yet"
+    return "\n".join(f"[{e['timestamp']}] {e['mask']}" for e in entries)
+
+
+def fn_room_state(world_name, caller_name, args_text):
+    """Current snapshot of any room (2026-09-13, open query, same
+    transparency precedent as read_room_log): occupants, adjacent
+    rooms, board unread/skimmed counts."""
+    room = sanitize_name(args_text)
+    state = load_room_state(world_name, room)
+    if not state:
+        raise ValueError(f"'{room}' isn't a room that exists")
+    occupants = room_occupants(world_name, room)
+    adjacent = sorted(state.get("adjacent", []))
+    board = state.get("board", [])
+    unread = sum(1 for p in board if not p.get("seen"))
+    return (
+        f"{room} - occupants: {', '.join(occupants) if occupants else 'none'}; "
+        f"adjacent: {', '.join(adjacent) if adjacent else 'none'}; "
+        f"board: {len(board)} post(s), {unread} never opened"
     )
-    append_message(world_name, target, caller_name, wrapped, timestamp)
-    return f"message sent to {target}"
 
 
 def fn_give_currency(world_name, caller_name, args_text):
@@ -742,18 +1016,19 @@ def fn_give_currency(world_name, caller_name, args_text):
 
 
 def fn_post_board(world_name, caller_name, args_text):
-    """Post a new message to a group's board - a real, pull-based
-    artifact external to the group's normal push-everything-into-
-    context chat. Needs three pieces, not two - the only function so
-    far that does."""
+    """Post a new message to a room's board - a real, pull-based
+    artifact external to the dialogue registers above. Needs three
+    pieces, not two - the only function so far that does. Gated on
+    currently being physically present in the room (2026-09-13,
+    replacing the old group-membership gate)."""
     parts = args_text.split("|", 2)
     if len(parts) != 3:
-        raise ValueError("expected 'group|subject|text'")
-    group_raw, subject, text = (p.strip() for p in parts)
-    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+        raise ValueError("expected 'room|subject|text'")
+    room_raw, subject, text = (p.strip() for p in parts)
+    room, rstate = _require_room_occupant(world_name, room_raw, caller_name)
     if not subject or not text:
         raise ValueError("subject and text can't be empty")
-    board = gstate.get("board", [])
+    board = rstate.get("board", [])
     next_id = max((p["id"] for p in board), default=0) + 1
     board.append({
         "id": next_id,
@@ -763,20 +1038,20 @@ def fn_post_board(world_name, caller_name, args_text):
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "seen": {},
     })
-    gstate["board"] = board
-    save_group_state(world_name, group, gstate)
-    return f"posted to {group} board (id {next_id})"
+    rstate["board"] = board
+    save_room_state(world_name, room, rstate)
+    return f"posted to {room} board (id {next_id})"
 
 
 def fn_skim_board(world_name, caller_name, args_text):
-    """Subject + first/last-sentence summary of every post on a group's
+    """Subject + first/last-sentence summary of every post on a room's
     board - not the full text (see read_board for that). Marks any post
     not already in the caller's seen map as "skimmed"; never downgrades
     an already-"read" post back to "skimmed"."""
-    group, gstate = _require_group_member(world_name, args_text, caller_name)
-    board = gstate.get("board", [])
+    room, rstate = _require_room_occupant(world_name, args_text, caller_name)
+    board = rstate.get("board", [])
     if not board:
-        return f"{group} board is empty"
+        return f"{room} board is empty"
     lines = []
     changed = False
     for post in board:
@@ -787,46 +1062,46 @@ def fn_skim_board(world_name, caller_name, args_text):
         summary = _first_and_last_sentence(post["text"])
         lines.append(f"[{post['id']}] {post['subject']} (by {post['author']}): {summary}")
     if changed:
-        gstate["board"] = board
-        save_group_state(world_name, group, gstate)
+        rstate["board"] = board
+        save_room_state(world_name, room, rstate)
     return "\n".join(lines)
 
 
 def fn_read_board(world_name, caller_name, args_text):
     """Full text of one specific board post. Marks it "read" for the
     caller, upgrading from any prior state."""
-    group_raw, post_id_text = _parse_target_and_rest(args_text)
-    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+    room_raw, post_id_text = _parse_target_and_rest(args_text)
+    room, rstate = _require_room_occupant(world_name, room_raw, caller_name)
     try:
         post_id = int(post_id_text)
     except ValueError:
         raise ValueError(f"'{post_id_text}' isn't a valid post id")
-    board = gstate.get("board", [])
+    board = rstate.get("board", [])
     post = next((p for p in board if p["id"] == post_id), None)
     if not post:
-        raise ValueError(f"no post {post_id} on {group} board")
+        raise ValueError(f"no post {post_id} on {room} board")
     post.setdefault("seen", {})[caller_name] = "read"
-    gstate["board"] = board
-    save_group_state(world_name, group, gstate)
+    rstate["board"] = board
+    save_room_state(world_name, room, rstate)
     return f"[{post['id']}] {post['subject']} (by {post['author']}, {post['timestamp']}): {post['text']}"
 
 
 def fn_delete_board(world_name, caller_name, args_text):
-    """Delete a post from a group's board. No ownership check - anyone
-    in the group can delete anyone's post (Teddy's explicit call)."""
-    group_raw, post_id_text = _parse_target_and_rest(args_text)
-    group, gstate = _require_group_member(world_name, group_raw, caller_name)
+    """Delete a post from a room's board. No ownership check - anyone
+    present can delete anyone's post (Teddy's explicit call)."""
+    room_raw, post_id_text = _parse_target_and_rest(args_text)
+    room, rstate = _require_room_occupant(world_name, room_raw, caller_name)
     try:
         post_id = int(post_id_text)
     except ValueError:
         raise ValueError(f"'{post_id_text}' isn't a valid post id")
-    board = gstate.get("board", [])
+    board = rstate.get("board", [])
     new_board = [p for p in board if p["id"] != post_id]
     if len(new_board) == len(board):
-        raise ValueError(f"no post {post_id} on {group} board")
-    gstate["board"] = new_board
-    save_group_state(world_name, group, gstate)
-    return f"deleted post {post_id} from {group} board"
+        raise ValueError(f"no post {post_id} on {room} board")
+    rstate["board"] = new_board
+    save_room_state(world_name, room, rstate)
+    return f"deleted post {post_id} from {room} board"
 
 
 def fn_functions(world_name, caller_name, args_text):
@@ -843,11 +1118,47 @@ def fn_functions(world_name, caller_name, args_text):
 
 
 FUNCTION_REGISTRY = {
-    "send_message": {
-        "fn": fn_send_message,
+    # Self-logging dialogue/movement functions (2026-09-13) - these log
+    # their own room-log entries internally (see their own docstrings),
+    # so they carry no "mask" key here - the central dispatcher
+    # (run_function_calls) skips generic activity-masking for exactly
+    # this set (SELF_LOGGING_FUNCTIONS, below).
+    "say": {
+        "fn": fn_say,
+        "params": "text",
+        "description": "Speak out loud to everyone else currently in your room.",
+    },
+    "whisper": {
+        "fn": fn_whisper,
         "params": "target|text",
-        "description": "Send a direct message to one specific voice - delivered into their context.",
-        "mask": "{caller} whispers to {arg0}.",
+        "description": "Speak privately to one specific voice - you must currently share a room with them. No one else ever sees the content.",
+    },
+    "yell": {
+        "fn": fn_yell,
+        "params": "text",
+        "description": "Project your voice to everyone in your room and everyone in every adjacent room.",
+    },
+    "move_room": {
+        "fn": fn_move_room,
+        "params": "room",
+        "description": "Move to any existing room in the world - no restriction on distance or adjacency.",
+    },
+    "create_room": {
+        "fn": fn_create_room,
+        "params": "name",
+        "description": "Create a brand-new room adjacent to your current one, and move into it.",
+    },
+    "read_room_log": {
+        "fn": fn_read_room_log,
+        "params": "room",
+        "description": "Read a room's permanent log (any room, not just your own) - what's been said and done there, though private whispers only ever show that one occurred, never their content.",
+        "mask": "{caller} reviews the {arg0} room log.",
+    },
+    "room_state": {
+        "fn": fn_room_state,
+        "params": "room",
+        "description": "Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).",
+        "mask": "{caller} checks on the {arg0} room.",
     },
     "give_currency": {
         "fn": fn_give_currency,
@@ -863,29 +1174,35 @@ FUNCTION_REGISTRY = {
     },
     "post_board": {
         "fn": fn_post_board,
-        "params": "group|subject|text",
-        "description": "Post a new message to a group's board (subject + text). You must be a member of the group.",
+        "params": "room|subject|text",
+        "description": "Post a new message to a room's board (subject + text). You must currently be in the room.",
         "mask": "{caller} posts a message to the {arg0} board.",
     },
     "skim_board": {
         "fn": fn_skim_board,
-        "params": "group",
-        "description": "See every post currently on a group's board (subject + first/last sentence only). Marks unread posts as skimmed.",
+        "params": "room",
+        "description": "See every post currently on a room's board (subject + first/last sentence only). Marks unread posts as skimmed.",
         "mask": "{caller} skims the {arg0} board.",
     },
     "read_board": {
         "fn": fn_read_board,
-        "params": "group|post_id",
-        "description": "Read one specific post on a group's board in full. Marks it as read.",
+        "params": "room|post_id",
+        "description": "Read one specific post on a room's board in full. Marks it as read.",
         "mask": "{caller} reads a message on the {arg0} board.",
     },
     "delete_board": {
         "fn": fn_delete_board,
-        "params": "group|post_id",
-        "description": "Delete a post from a group's board. Anyone in the group can delete any post.",
+        "params": "room|post_id",
+        "description": "Delete a post from a room's board. Anyone currently in the room can delete any post.",
         "mask": "{caller} removes a message from the {arg0} board.",
     },
 }
+
+# Functions that log their own room-log entries internally (see each
+# one's own docstring) - run_function_calls must NOT also apply the
+# generic FUNCTION_REGISTRY-mask activity logging to these, or every
+# say/whisper/yell/move/create would double-log.
+SELF_LOGGING_FUNCTIONS = frozenset({"say", "whisper", "yell", "move_room", "create_room"})
 
 
 # --------------------------------------------------------------------- urge --
@@ -909,13 +1226,14 @@ URGE_VIEWER_CATEGORIES = ("Perform Urges", "Understand Urges", "This Turn")
 
 
 def _mask_for_call(caller_name, name, args_text):
-    """The bystander-facing text for one function call - a flavored,
-    per-function action mask (FUNCTION_REGISTRY[name]["mask"]),
-    rendered with {caller} and {arg0} (see _first_pipe_arg). An
-    unrecognized function name (no registry entry - a hallucinated
-    call, no real mask to pull from) falls back to a WoW-nod easter egg
-    (Teddy's call, 2026-09-10): "makes some strange gestures" - the
-    classic failed-cast flavor text."""
+    """The activity-register text for one generic (non-self-logging)
+    function call - a flavored, per-function action mask
+    (FUNCTION_REGISTRY[name]["mask"]), rendered with {caller} and
+    {arg0} (see _first_pipe_arg). An unrecognized function name (no
+    registry entry - a hallucinated call, no real mask to pull from)
+    falls back to a WoW-nod easter egg (Teddy's call, 2026-09-10):
+    "makes some strange gestures" - the classic failed-cast flavor
+    text."""
     meta = FUNCTION_REGISTRY.get(name)
     if not meta or "mask" not in meta:
         return f"(*{caller_name} makes some strange gestures.*)"
@@ -927,31 +1245,33 @@ def _mask_for_call(caller_name, name, args_text):
 
 def run_function_calls(world_name, caller_name, response_text):
     """Scans response_text for every ⟦function_name(args)⟧ call and runs
-    each one for real. Returns a (full_text, masked_text, outcomes)
-    triple:
+    each one for real. Returns a (full_text, outcomes) pair:
 
     - full_text: response_text with a ⟦RESULT: ...⟧ line appended per
-      call - what the caller's own context gets (they made the call,
-      they see what it actually did).
-    - masked_text: response_text with each call replaced by that
-      function's own flavored action mask (see _mask_for_call) - never
-      the arguments, never the result - what gets broadcast to everyone
-      else in a shared group (Teddy's call, 2026-09-10: calling a
-      function shouldn't be any more visible to bystanders than a real
-      action is - they can see *that* it happened, roughly what kind of
-      thing it was, not the details, unless the caller chooses to say so
-      in their own words).
+      call - what the caller's own private thoughts entry gets (they
+      made the call, they see what it actually did). As of the
+      2026-09-13 rooms redesign, this is the ONLY place this text ever
+      lands - nothing broadcasts a caller's raw response to anyone else
+      anymore (see the module docstring). Any *external* visibility a
+      call produces now happens as a side effect of the call itself:
+      say/whisper/yell/move_room/create_room log their own room-log
+      entries internally (SELF_LOGGING_FUNCTIONS); every other real
+      function call gets one generic activity entry logged here,
+      centrally, in the caller's current room, using that function's
+      own FUNCTION_REGISTRY mask (same rendering `_mask_for_call`
+      always did) as the live/room-local text and the literal call+
+      result as the room log's raw/UI-only layer.
     - outcomes: a list of (name, "ok" | "error" | "unknown") pairs, one
       per call found, in order - captured here rather than re-parsed
       from the RESULT lines later, since this is the one place that
       already knows each call's real outcome first-hand. Feeds the
       urge system (see apply_urge_tick(), 2026-09-11).
 
-    No calls found -> full_text/masked_text are response_text
-    unchanged, outcomes is empty."""
+    No calls found -> full_text is response_text unchanged, outcomes is
+    empty."""
     matches = list(FUNCTION_CALL_RE.finditer(response_text))
     if not matches:
-        return response_text, response_text, []
+        return response_text, []
 
     result_lines = []
     outcomes = []
@@ -966,15 +1286,18 @@ def run_function_calls(world_name, caller_name, response_text):
             result = meta["fn"](world_name, caller_name, args_text)
             result_lines.append(f"⟦RESULT: {name} -> ok: {result}⟧")
             outcomes.append((name, "ok"))
+            if name not in SELF_LOGGING_FUNCTIONS:
+                room = load_voice_state(world_name, caller_name).get("room")
+                if room:
+                    mask = _mask_for_call(caller_name, name, args_text)
+                    raw = f"{caller_name} called {name}({args_text}) -> {result}"
+                    _log_generic_activity(world_name, room, caller_name, name, mask, raw)
         except Exception as exc:
             result_lines.append(f"⟦RESULT: {name} -> error: {exc}⟧")
             outcomes.append((name, "error"))
 
     full_text = response_text + "\n" + "\n".join(result_lines)
-    masked_text = FUNCTION_CALL_RE.sub(
-        lambda m: _mask_for_call(caller_name, m.group(1), m.group(2)), response_text
-    )
-    return full_text, masked_text, outcomes
+    return full_text, outcomes
 
 
 def xleud(urge_value, desire=URGE_DESIRE):
@@ -1160,12 +1483,13 @@ class FenraApp:
 
         self._current_voice_names = []   # listbox-index -> voice name
         self.displayed_voice = None
-        self._current_messages = []      # this voice's messages, as loaded
+        self._current_messages = []      # this voice's own thoughts, as loaded
         self.selected_message_id = None
-        self._current_group_names = []   # listbox-index -> group name
-        self.displayed_group = None
-        self._current_board = []         # this group's board, as loaded
+        self._current_room_names = []    # listbox-index -> room name
+        self.displayed_room = None
+        self._current_board = []         # this room's board, as loaded
         self.selected_post_id = None
+        self._current_log = []           # this room's permanent log, as loaded
 
         self._build_menu()
         self._build_ui()
@@ -1241,12 +1565,12 @@ class FenraApp:
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
-        self.groups_tab = ttk.Frame(notebook)
+        self.rooms_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
-        notebook.add(self.groups_tab, text="Groups")
+        notebook.add(self.rooms_tab, text="Rooms")
 
         self._build_voices_tab()
-        self._build_groups_tab()
+        self._build_rooms_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
@@ -1313,13 +1637,13 @@ class FenraApp:
         self.identity_box.pack(fill="x", padx=2, pady=(0, 4))
 
         hud_frame = ttk.LabelFrame(
-            right, text="HUD (read-only - membership/board managed from the Groups tab)"
+            right, text="HUD (read-only - room/board managed from the Rooms tab)"
         )
         hud_frame.pack(fill="x", padx=2, pady=(0, 4))
         self.hud_summary_box = tk.Text(hud_frame, wrap="word", height=5, state="disabled")
         self.hud_summary_box.pack(fill="x", padx=4, pady=4)
 
-        messages_frame = ttk.LabelFrame(right, text="Messages")
+        messages_frame = ttk.LabelFrame(right, text="Thoughts (private - own generations only)")
         messages_frame.pack(fill="both", expand=True, padx=2, pady=(0, 2))
 
         msg_top_bar = ttk.Frame(messages_frame)
@@ -1475,7 +1799,7 @@ class FenraApp:
         self.identity_box.insert("end", state.get("identity", ""))
         self.pause_voice_btn.config(text="Resume voice" if state.get("paused", False) else "Pause voice")
         self._refresh_hud_summary(name)
-        self._current_messages = state.get("messages", [])
+        self._current_messages = state.get("thoughts", [])
         self._populate_messages_tree()
         self._clear_message_edit()
         self._refresh_urge_viewer()
@@ -1496,14 +1820,14 @@ class FenraApp:
         voice really receives."""
         f = hud_fields(self.world_name, name)
         board_summary = ", ".join(f["board_counts"]) if f["board_counts"] else "none"
-        paused_seen = set(f["paused_seen"])
-        seen_display = ", ".join(
-            f"{v} (paused)" if v in paused_seen else v for v in f["seen"]
-        ) if f["seen"] else "none"
+        paused_occupants = set(f["paused_occupants"])
+        occupants_display = ", ".join(
+            f"{v} (paused)" if v in paused_occupants else v for v in f["occupants"]
+        ) if f["occupants"] else "none"
         lines = [
-            f"Your groups: {', '.join(f['own_groups']) if f['own_groups'] else 'none'}",
-            f"Voices you can see: {seen_display}",
-            f"Voices that exist but you cannot see: {', '.join(f['unseen']) if f['unseen'] else 'none'}",
+            f"Room: {f['room']}",
+            f"Also here: {occupants_display}",
+            f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
             f"Board activity: {board_summary}",
         ]
         self.hud_summary_box.config(state="normal")
@@ -1569,7 +1893,7 @@ class FenraApp:
             )
             self.selected_message_id = next_id
         state = load_voice_state(self.world_name, self.displayed_voice)
-        state["messages"] = self._current_messages
+        state["thoughts"] = self._current_messages
         save_voice_state(self.world_name, self.displayed_voice, state)
         self._populate_messages_tree()
         self.status_var.set("Message saved")
@@ -1581,7 +1905,7 @@ class FenraApp:
             return
         self._current_messages = [m for m in self._current_messages if m["id"] != self.selected_message_id]
         state = load_voice_state(self.world_name, self.displayed_voice)
-        state["messages"] = self._current_messages
+        state["thoughts"] = self._current_messages
         save_voice_state(self.world_name, self.displayed_voice, state)
         self._populate_messages_tree()
         self._clear_message_edit()
@@ -1605,7 +1929,7 @@ class FenraApp:
                 currencies[element] = existing_currencies.get(element, 0.0)
         state["model"] = self.model_var.get()
         state["identity"] = self.identity_box.get("1.0", "end-1c")
-        state["messages"] = self._current_messages
+        state["thoughts"] = self._current_messages
         state["currencies"] = currencies
         save_voice_state(self.world_name, name, state)
 
@@ -1629,7 +1953,8 @@ class FenraApp:
         self.world_voices.append(name)
         self._save_world_controls()
         self._populate_voices_list()
-        self._refresh_group_member_candidates()
+        if self.displayed_room:
+            self._load_room(self.displayed_room)
 
     def delete_voice(self):
         if not self.displayed_voice:
@@ -1640,19 +1965,14 @@ class FenraApp:
         delete_voice(self.world_name, name)
         if name in self.world_voices:
             self.world_voices.remove(name)
-        # Also drop it from every group's membership - a deleted voice
-        # can't stay listed as a member of anything.
-        for gname in list_groups(self.world_name):
-            gstate = load_group_state(self.world_name, gname)
-            if gstate and name in gstate.get("members", []):
-                gstate["members"].remove(name)
-                save_group_state(self.world_name, gname, gstate)
+        # No group-membership cleanup needed anymore (2026-09-13) - a
+        # room's occupants are derived from voice state, not a stored
+        # list, so a deleted voice just stops showing up anywhere.
         self._save_world_controls()
         self.displayed_voice = None
         self._populate_voices_list()
-        self._refresh_group_member_candidates()
-        if self.displayed_group:
-            self._load_group(self.displayed_group)
+        if self.displayed_room:
+            self._load_room(self.displayed_room)
 
     def refresh_models(self):
         models = list_ollama_models(self.host_var.get())
@@ -1662,16 +1982,16 @@ class FenraApp:
         else:
             self.status_var.set("Could not reach Ollama host")
 
-    # ----------------------------------------------------------- Groups tab --
+    # ------------------------------------------------------------ Rooms tab --
 
-    def _build_groups_tab(self):
-        frame = self.groups_tab
+    def _build_rooms_tab(self):
+        frame = self.rooms_tab
 
         top_bar = ttk.Frame(frame)
         top_bar.pack(fill="x", padx=6, pady=(6, 0))
-        ttk.Button(top_bar, text="New group...", command=self.new_group).pack(side="left", padx=2)
-        ttk.Button(top_bar, text="Delete group", command=self.delete_group).pack(side="left", padx=2)
-        ttk.Button(top_bar, text="Rename group", command=self.rename_group).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="New room...", command=self.new_room).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Delete room", command=self.delete_room).pack(side="left", padx=2)
+        ttk.Button(top_bar, text="Rename room", command=self.rename_room).pack(side="left", padx=2)
 
         paned = ttk.Panedwindow(frame, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=6, pady=6)
@@ -1683,59 +2003,62 @@ class FenraApp:
         list_frame = ttk.Frame(left)
         list_frame.pack(fill="both", expand=True)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
-        self.groups_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
-        scrollbar.config(command=self.groups_listbox.yview)
-        self.groups_listbox.pack(side="left", fill="both", expand=True)
+        self.rooms_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
+        scrollbar.config(command=self.rooms_listbox.yview)
+        self.rooms_listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        self.groups_listbox.bind("<<ListboxSelect>>", self._on_group_select)
+        self.rooms_listbox.bind("<<ListboxSelect>>", self._on_room_select)
 
         name_row = ttk.Frame(right)
         name_row.pack(fill="x", padx=2, pady=(0, 6))
         ttk.Label(name_row, text="Name:", width=12).pack(side="left")
-        self.group_name_var = tk.StringVar(value="")
-        ttk.Label(name_row, textvariable=self.group_name_var, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.room_name_var = tk.StringVar(value="")
+        ttk.Label(name_row, textvariable=self.room_name_var, font=("Segoe UI", 9, "bold")).pack(side="left")
 
-        # Fixed-size, not expanding - a group's member count is small,
-        # and the chat/board panels below need the room more (Teddy's
-        # call, 2026-09-10).
-        members_frame = ttk.LabelFrame(right, text="Members")
-        members_frame.pack(fill="x", expand=False, padx=2, pady=(0, 4))
-        self.group_members_listbox = tk.Listbox(
-            members_frame, selectmode="extended", exportselection=False, height=4
-        )
-        self.group_members_listbox.pack(fill="x", padx=4, pady=(4, 2))
-        ttk.Button(members_frame, text="Remove selected", command=self.remove_group_members).pack(
-            anchor="e", padx=4, pady=(0, 4)
-        )
+        # Occupants and adjacency are both read-only (2026-09-13) -
+        # occupancy is derived from voice state (move_room/create_room
+        # are how it actually changes), and adjacency is permanent once
+        # a room is created. "Move voice to room" is the one admin
+        # escape hatch, for setup/testing.
+        occ_frame = ttk.LabelFrame(right, text="Occupants (read-only - see move_room/create_room)")
+        occ_frame.pack(fill="x", expand=False, padx=2, pady=(0, 4))
+        self.room_occupants_listbox = tk.Listbox(occ_frame, exportselection=False, height=4)
+        self.room_occupants_listbox.pack(fill="x", padx=4, pady=(4, 2))
 
-        add_row = ttk.Frame(right)
-        add_row.pack(fill="x", padx=2, pady=(0, 4))
-        ttk.Label(add_row, text="Add voice:").pack(side="left")
-        self.group_add_voice_var = tk.StringVar(value="")
-        self.group_add_voice_combo = ttk.Combobox(
-            add_row, textvariable=self.group_add_voice_var, width=20, state="readonly"
+        move_row = ttk.Frame(occ_frame)
+        move_row.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Label(move_row, text="Move voice here:").pack(side="left")
+        self.room_move_voice_var = tk.StringVar(value="")
+        self.room_move_voice_combo = ttk.Combobox(
+            move_row, textvariable=self.room_move_voice_var, width=18, state="readonly"
         )
-        self.group_add_voice_combo.pack(side="left", padx=(4, 4))
-        ttk.Button(add_row, text="Add", command=self.add_group_member).pack(side="left")
+        self.room_move_voice_combo.pack(side="left", padx=(4, 4))
+        ttk.Button(move_row, text="Move", command=self.move_voice_to_room).pack(side="left")
 
-        # Chat and Board share the remaining space, resizable against
+        adj_row = ttk.Frame(right)
+        adj_row.pack(fill="x", padx=2, pady=(0, 4))
+        ttk.Label(adj_row, text="Adjacent rooms:").pack(side="left")
+        self.room_adjacent_var = tk.StringVar(value="")
+        ttk.Label(adj_row, textvariable=self.room_adjacent_var, wraplength=400, justify="left").pack(side="left", padx=(4, 0))
+
+        # Log and Board share the remaining space, resizable against
         # each other (same Panedwindow pattern as the left/right split).
         lower_paned = ttk.Panedwindow(right, orient="vertical")
         lower_paned.pack(fill="both", expand=True, padx=2, pady=(0, 2))
 
-        chat_frame = ttk.LabelFrame(
-            lower_paned, text="Group Chat (read-only - full text, not the masked version bystanders see)"
+        log_frame = ttk.LabelFrame(
+            lower_paned, text="Room Log (read-only, raw layer - full content, whispers included; Teddy/Qualia only)"
         )
         board_frame = ttk.LabelFrame(lower_paned, text="Board")
-        lower_paned.add(chat_frame, weight=1)
+        lower_paned.add(log_frame, weight=1)
         lower_paned.add(board_frame, weight=1)
 
-        chat_top_bar = ttk.Frame(chat_frame)
-        chat_top_bar.pack(fill="x", padx=4, pady=(4, 0))
-        ttk.Button(chat_top_bar, text="Refresh", command=self._refresh_group_chat).pack(side="left", padx=2)
+        log_top_bar = ttk.Frame(log_frame)
+        log_top_bar.pack(fill="x", padx=4, pady=(4, 0))
+        ttk.Button(log_top_bar, text="Refresh", command=self._refresh_room_log).pack(side="left", padx=2)
 
-        self.group_chat_box = tk.Text(chat_frame, wrap="word", state="disabled")
-        self.group_chat_box.pack(fill="both", expand=True, padx=4, pady=4)
+        self.room_log_box = tk.Text(log_frame, wrap="word", state="disabled")
+        self.room_log_box.pack(fill="both", expand=True, padx=4, pady=4)
 
         board_top_bar = ttk.Frame(board_frame)
         board_top_bar.pack(fill="x", padx=4, pady=(4, 0))
@@ -1779,43 +2102,47 @@ class FenraApp:
         board_edit_frame.grid_columnconfigure(5, weight=1)
         board_edit_frame.grid_rowconfigure(1, weight=1)
 
-    def _populate_groups_list(self):
-        self._current_group_names = list_groups(self.world_name)
-        self.groups_listbox.delete(0, "end")
-        for name in self._current_group_names:
-            self.groups_listbox.insert("end", name)
+    def _populate_rooms_list(self):
+        self._current_room_names = list_rooms(self.world_name)
+        self.rooms_listbox.delete(0, "end")
+        for name in self._current_room_names:
+            self.rooms_listbox.insert("end", name)
 
-    def _on_group_select(self, event):
-        selection = self.groups_listbox.curselection()
+    def _on_room_select(self, event):
+        selection = self.rooms_listbox.curselection()
         if not selection:
             return
-        self._load_group(self._current_group_names[selection[0]])
+        self._load_room(self._current_room_names[selection[0]])
 
-    def _load_group(self, name):
-        state = load_group_state(self.world_name, name) or default_group_state(name)
-        self.displayed_group = name
-        self.group_name_var.set(state.get("name", name))
-        self.group_members_listbox.delete(0, "end")
-        for voice in state.get("members", []):
-            self.group_members_listbox.insert("end", voice)
-        self._refresh_group_member_candidates()
-        self._refresh_group_chat()
+    def _load_room(self, name):
+        state = load_room_state(self.world_name, name) or default_room_state(name)
+        self.displayed_room = name
+        self.room_name_var.set(state.get("name", name))
+        self.room_occupants_listbox.delete(0, "end")
+        for voice in room_occupants(self.world_name, name):
+            self.room_occupants_listbox.insert("end", voice)
+        self.room_move_voice_combo["values"] = list_voices(self.world_name)
+        adjacent = sorted(state.get("adjacent", []))
+        self.room_adjacent_var.set(", ".join(adjacent) if adjacent else "none")
+        self._current_log = state.get("log", [])
+        self._refresh_room_log()
         self._current_board = state.get("board", [])
         self._populate_board_tree()
         self._clear_board_edit()
 
-    def _refresh_group_chat(self):
-        """Read-only - see group_chat_transcript()'s own docstring for
-        why this shows the real full text, not what any one member's
-        inbox actually received."""
-        if not self.displayed_group:
+    def _refresh_room_log(self):
+        """Read-only, the raw layer (2026-09-13) - literal act/full
+        content, whispers included. Never what any voice-facing
+        function returns (see fn_read_room_log's mask-only rule)."""
+        if not self.displayed_room:
             return
-        entries = group_chat_transcript(self.world_name, self.displayed_group)
-        lines = [f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in entries]
-        self.group_chat_box.config(state="normal")
-        self.group_chat_box.delete("1.0", "end")
-        self.group_chat_box.insert("end", "\n\n".join(lines) if lines else "(no chat yet)")
-        self.group_chat_box.config(state="disabled")
+        state = load_room_state(self.world_name, self.displayed_room) or {}
+        self._current_log = state.get("log", [])
+        lines = [f"[{e['timestamp']}] {e['actor']} ({e['act']}): {e['raw']}" for e in self._current_log]
+        self.room_log_box.config(state="normal")
+        self.room_log_box.delete("1.0", "end")
+        self.room_log_box.insert("end", "\n".join(lines) if lines else "(no log yet)")
+        self.room_log_box.config(state="disabled")
 
     def _populate_board_tree(self):
         self.board_tree.delete(*self.board_tree.get_children())
@@ -1851,14 +2178,14 @@ class FenraApp:
         self.board_text_box.insert("end", post["text"])
 
     def new_board_post(self):
-        if not self.displayed_group:
+        if not self.displayed_room:
             return
         self._clear_board_edit()
-        self.board_author_var.set(self.displayed_group)
+        self.board_author_var.set(self.displayed_room)
         self.board_timestamp_var.set(datetime.now().isoformat(timespec="seconds"))
 
     def save_board_post(self):
-        if not self.displayed_group:
+        if not self.displayed_room:
             return
         subject = self.board_subject_var.get().strip()
         author = self.board_author_var.get().strip()
@@ -1879,116 +2206,114 @@ class FenraApp:
                 "timestamp": timestamp, "text": text, "seen": {},
             })
             self.selected_post_id = next_id
-        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
         state["board"] = self._current_board
-        save_group_state(self.world_name, self.displayed_group, state)
+        save_room_state(self.world_name, self.displayed_room, state)
         self._populate_board_tree()
         self.status_var.set("Post saved")
 
     def delete_board_post(self):
-        if not self.displayed_group or self.selected_post_id is None:
+        if not self.displayed_room or self.selected_post_id is None:
             return
         if not messagebox.askyesno("Fenra", "Delete this post? This can't be undone."):
             return
         self._current_board = [p for p in self._current_board if p["id"] != self.selected_post_id]
-        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
+        state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
         state["board"] = self._current_board
-        save_group_state(self.world_name, self.displayed_group, state)
+        save_room_state(self.world_name, self.displayed_room, state)
         self._populate_board_tree()
         self._clear_board_edit()
 
-    def _refresh_group_member_candidates(self):
-        """The 'Add voice' combobox - every world voice not already a
-        member of the currently displayed group."""
-        if not self.displayed_group:
-            self.group_add_voice_combo["values"] = []
+    def move_voice_to_room(self):
+        """Admin escape hatch (2026-09-13) - the only way to change a
+        voice's room from the GUI directly, for setup/testing; in-world
+        movement is otherwise entirely voice-driven (move_room/
+        create_room)."""
+        if not self.displayed_room:
             return
-        state = load_group_state(self.world_name, self.displayed_group) or {}
-        members = set(state.get("members", []))
-        candidates = [v for v in list_voices(self.world_name) if v not in members]
-        self.group_add_voice_combo["values"] = candidates
-        if candidates:
-            self.group_add_voice_var.set(candidates[0])
-        else:
-            self.group_add_voice_var.set("")
+        voice = self.room_move_voice_var.get()
+        if not voice:
+            return
+        state = load_voice_state(self.world_name, voice)
+        state["room"] = self.displayed_room
+        save_voice_state(self.world_name, voice, state)
+        self._load_room(self.displayed_room)
 
-    def new_group(self):
-        name = simpledialog.askstring("New Group", "Group name:", parent=self.root)
+    def new_room(self):
+        name = simpledialog.askstring("New Room", "Room name:", parent=self.root)
         if not name:
             return
         name = sanitize_name(name)
         if not name:
             return
-        if name in list_groups(self.world_name):
-            messagebox.showerror("Fenra", f"a group named '{name}' already exists.")
+        if name in list_rooms(self.world_name):
+            messagebox.showerror("Fenra", f"a room named '{name}' already exists.")
             return
-        save_group_state(self.world_name, name, default_group_state(name))
-        self._populate_groups_list()
+        save_room_state(self.world_name, name, default_room_state(name))
+        self._populate_rooms_list()
 
-    def rename_group(self):
-        if not self.displayed_group:
+    def rename_room(self):
+        if not self.displayed_room:
             return
-        old_name = self.displayed_group
-        new_name = simpledialog.askstring("Rename Group", "New name:", initialvalue=old_name, parent=self.root)
+        old_name = self.displayed_room
+        new_name = simpledialog.askstring("Rename Room", "New name:", initialvalue=old_name, parent=self.root)
         if not new_name:
             return
         new_name = sanitize_name(new_name)
         if not new_name or new_name == old_name:
             return
-        if new_name in list_groups(self.world_name):
-            messagebox.showerror("Fenra", f"a group named '{new_name}' already exists.")
+        if new_name in list_rooms(self.world_name):
+            messagebox.showerror("Fenra", f"a room named '{new_name}' already exists.")
             return
-        state = load_group_state(self.world_name, old_name) or default_group_state(old_name)
+        state = load_room_state(self.world_name, old_name) or default_room_state(old_name)
         state["name"] = new_name
-        save_group_state(self.world_name, new_name, state)
-        delete_group(self.world_name, old_name)
-        self.displayed_group = new_name
-        self._populate_groups_list()
+        save_room_state(self.world_name, new_name, state)
+        delete_room(self.world_name, old_name)
+        # Fix up adjacency edges and occupants pointing at the old name.
+        for rname in list_rooms(self.world_name):
+            rstate = load_room_state(self.world_name, rname) or {}
+            adjacent = rstate.get("adjacent", [])
+            if old_name in adjacent:
+                rstate["adjacent"] = [new_name if a == old_name else a for a in adjacent]
+                save_room_state(self.world_name, rname, rstate)
+        for voice in list_voices(self.world_name):
+            vstate = load_voice_state(self.world_name, voice)
+            if vstate.get("room") == old_name:
+                vstate["room"] = new_name
+                save_voice_state(self.world_name, voice, vstate)
+        self.displayed_room = new_name
+        self._populate_rooms_list()
 
-    def delete_group(self):
-        if not self.displayed_group:
+    def delete_room(self):
+        if not self.displayed_room:
             return
-        name = self.displayed_group
-        if not messagebox.askyesno("Fenra", f"Delete group '{name}'? This can't be undone."):
+        name = self.displayed_room
+        if room_occupants(self.world_name, name):
+            messagebox.showerror("Fenra", f"'{name}' still has occupants - move them out first.")
             return
-        delete_group(self.world_name, name)
-        self.displayed_group = None
-        self._populate_groups_list()
-        self.group_name_var.set("")
-        self.group_members_listbox.delete(0, "end")
-        self._clear_group_chat()
+        if not messagebox.askyesno("Fenra", f"Delete room '{name}'? This can't be undone."):
+            return
+        delete_room(self.world_name, name)
+        # Drop the now-dead edge from anything still pointing at it.
+        for rname in list_rooms(self.world_name):
+            rstate = load_room_state(self.world_name, rname) or {}
+            if name in rstate.get("adjacent", []):
+                rstate["adjacent"] = [a for a in rstate["adjacent"] if a != name]
+                save_room_state(self.world_name, rname, rstate)
+        self.displayed_room = None
+        self._populate_rooms_list()
+        self.room_name_var.set("")
+        self.room_occupants_listbox.delete(0, "end")
+        self.room_adjacent_var.set("")
+        self._clear_room_log()
         self._current_board = []
         self.board_tree.delete(*self.board_tree.get_children())
         self._clear_board_edit()
 
-    def _clear_group_chat(self):
-        self.group_chat_box.config(state="normal")
-        self.group_chat_box.delete("1.0", "end")
-        self.group_chat_box.config(state="disabled")
-
-    def add_group_member(self):
-        if not self.displayed_group:
-            return
-        voice = self.group_add_voice_var.get()
-        if not voice:
-            return
-        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
-        if voice not in state["members"]:
-            state["members"].append(voice)
-            save_group_state(self.world_name, self.displayed_group, state)
-        self._load_group(self.displayed_group)
-
-    def remove_group_members(self):
-        if not self.displayed_group:
-            return
-        selection = self.group_members_listbox.curselection()
-        if not selection:
-            return
-        to_remove = {self.group_members_listbox.get(i) for i in selection}
-        state = load_group_state(self.world_name, self.displayed_group) or default_group_state(self.displayed_group)
-        state["members"] = [v for v in state.get("members", []) if v not in to_remove]
-        save_group_state(self.world_name, self.displayed_group, state)
-        self._load_group(self.displayed_group)
+    def _clear_room_log(self):
+        self.room_log_box.config(state="normal")
+        self.room_log_box.delete("1.0", "end")
+        self.room_log_box.config(state="disabled")
 
     # --------------------------------------------------------------- worlds --
 
@@ -2012,11 +2337,12 @@ class FenraApp:
         self.voice_rotation_index = state.get("voice_rotation_index", 0)
 
         self.displayed_voice = None
-        self.displayed_group = None
+        self.displayed_room = None
         self._populate_voices_list()
-        self._populate_groups_list()
-        self.group_name_var.set("")
-        self.group_members_listbox.delete(0, "end")
+        self._populate_rooms_list()
+        self.room_name_var.set("")
+        self.room_occupants_listbox.delete(0, "end")
+        self.room_adjacent_var.set("")
         self.identity_box.delete("1.0", "end")
         for var in self.currency_vars.values():
             var.set("0")
@@ -2027,7 +2353,7 @@ class FenraApp:
         self._current_messages = []
         self.messages_tree.delete(*self.messages_tree.get_children())
         self._clear_message_edit()
-        self._clear_group_chat()
+        self._clear_room_log()
         self._current_board = []
         self.board_tree.delete(*self.board_tree.get_children())
         self._clear_board_edit()
@@ -2047,6 +2373,9 @@ class FenraApp:
             return
         ensure_world_dir(name)
         save_world_state(name, default_world_state())
+        # Every world starts with one room (2026-09-13) - somewhere for
+        # its first voice to exist before anyone's called create_room.
+        save_room_state(name, default_room_state(DEFAULT_ROOM_NAME))
         self._load_world(name)
 
     def rename_world(self):
@@ -2074,7 +2403,7 @@ class FenraApp:
         # save before the switch, since there's no "old world" left to
         # save it into - this world didn't go away, it just changed name.
         self.displayed_voice = None
-        self.displayed_group = None
+        self.displayed_room = None
         os.rename(world_dir(old_name), world_dir(new_name))
         self._load_world(new_name)
 
@@ -2195,7 +2524,7 @@ class FenraApp:
         # Urge system (2026-09-11) - see xleud()/compute_urge_snapshot()/
         # apply_urge_tick() for the mechanics. Entirely prompt-only, same
         # as build_hud() - urge_block never gets written to
-        # state["messages"] or anywhere on disk, computed fresh every tick.
+        # state["thoughts"] or anywhere on disk, computed fresh every tick.
         urge_snapshot = compute_urge_snapshot(state)
         urge_block = ""
         if urge_snapshot["understand_wins"]:
@@ -2233,7 +2562,11 @@ class FenraApp:
                 urge_block = f"{urge_para}\n\n{reminders}"
 
         hud = build_hud(self.world_name, active_voice)
-        prompt = f"{render_messages(state.get('messages', []))}\n\n{hud}"
+        world_activity = build_world_activity(self.world_name, active_voice)
+        prompt = f"{render_thoughts(state.get('thoughts', []))}"
+        if world_activity:
+            prompt = f"{prompt}\n\n{world_activity}"
+        prompt = f"{prompt}\n\n{hud}"
         if urge_block:
             prompt = f"{prompt}\n\n{urge_block}"
 
@@ -2252,56 +2585,36 @@ class FenraApp:
         response = response.strip()
         if not response:
             return
-        full_response, masked_response, outcomes = run_function_calls(self.world_name, active_voice, response)
+        # As of the 2026-09-13 rooms redesign, run_function_calls no
+        # longer returns a masked broadcast text - nothing broadcasts a
+        # caller's raw response to anyone else anymore (see its own
+        # docstring and the module docstring). Any external visibility a
+        # call produces already happened as a side effect of the call
+        # itself (self-logging dialogue/movement functions, or the
+        # generic per-call activity logging inside run_function_calls).
+        full_response, outcomes = run_function_calls(self.world_name, active_voice, response)
         apply_urge_tick(self.world_name, active_voice, outcomes)
 
         timestamp = datetime.now().isoformat(timespec="seconds")
 
-        # The speaker's own record - the real thing, calls and results
-        # both, tagged with every group it just went out to (see
-        # append_message's `groups` docstring - this is what the
-        # Groups-tab chat view is reconstructed from). Everyone else
-        # sees the masked version (see run_function_calls) - that a
-        # call happened, never its arguments or result.
-        member_groups = groups_containing(self.world_name, active_voice)
-        own_message_id = append_message(
-            self.world_name, active_voice, active_voice, full_response, timestamp, groups=member_groups
-        )
+        # The speaker's own private thought - the only place this text
+        # ever lands now (calls and results both).
+        own_message_id = append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
         # Numeric-state history (2026-09-12) - tied to this exact turn's
         # message id, capturing the real urge/currency state right after
         # apply_urge_tick and any real function calls have already
         # landed. See append_voice_history's own docstring.
         append_voice_history(self.world_name, active_voice, own_message_id, timestamp)
 
-        # Every OTHER member of every group the speaker belongs to - one
-        # append per listener max, even if they share more than one
-        # group with the speaker.
-        already_notified = {active_voice}
-        for group_name in member_groups:
-            gstate = load_group_state(self.world_name, group_name) or {}
-            for member in gstate.get("members", []):
-                if member in already_notified:
-                    continue
-                already_notified.add(member)
-                append_message(self.world_name, member, active_voice, masked_response, timestamp)
-                # Live-refresh (2026-09-10 fix): if this recipient is the
-                # voice currently displayed in the GUI, its in-memory
-                # _current_messages is now stale relative to what we just
-                # wrote to disk. Left alone, that staleness survives until
-                # this voice's own next turn, when the _tick pre-save
-                # above (gated on displayed_voice == active_voice) would
-                # persist the stale copy right back over this delivery -
-                # clobbering it. Reloading now keeps the widget (and any
-                # snapshot later saved from it) honest. Same reload used
-                # for the speaker's own turn below, so this shares its
-                # side effects: identity/model/HUD refresh, and any
-                # in-progress unsaved manual edit in the message editor
-                # is cleared - accepted, matches existing precedent.
-                if member == self.displayed_voice:
-                    self.root.after(0, self._load_voice, member)
-
         if active_voice == self.displayed_voice:
             self.root.after(0, self._load_voice, active_voice)
+        # If the currently-displayed room is the one this voice was (or
+        # is now) in, its Log/Board/Occupants panels may be stale -
+        # cheap enough to just refresh unconditionally on the room's own
+        # cadence rather than trying to detect exactly which rooms this
+        # turn touched.
+        if self.displayed_room:
+            self.root.after(0, self._load_room, self.displayed_room)
         self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
 
 

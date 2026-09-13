@@ -2,6 +2,148 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-13 (rooms + registers - implemented, v0.5.0)
+
+Built the design from the same-day conceptual entry below, entirely in
+`fenra.py` (still the single-file `worlds-rebuild` app - no new
+modules). `FENRA_VERSION` 0.4.1 -> 0.5.0. High points, differences from
+the plan, and what got caught:
+
+- **Groups removed entirely** - `groups_root_dir`/`load_group_state`/
+  `groups_containing`/`group_chat_transcript`/`_require_group_member`
+  and the whole Groups tab are gone, replaced 1:1 by room equivalents
+  (`rooms_root_dir`/`load_room_state`/`room_occupants`/
+  `_require_room_occupant`, a Rooms tab). A room's occupants are never
+  stored on the room itself - always derived by scanning voice state
+  (`room_occupants`), since a voice can only be in one room at a time;
+  no membership list to keep in sync, unlike groups.
+- **`messages` renamed to `thoughts`** on voice state, and it now holds
+  *only* that voice's own generations - `append_message` lost its
+  `groups` param entirely; nothing from another voice is ever appended
+  to it again. `len(thoughts)` doubles as a voice's own turn counter
+  for register TTL decay - no separate counter field needed.
+- **`run_function_calls` no longer returns a masked broadcast text** -
+  it returns `(full_text, outcomes)` only. External visibility now
+  happens as a side effect of the call itself: `say`/`whisper`/`yell`/
+  `move_room`/`create_room` log their own room-log entries internally
+  (`SELF_LOGGING_FUNCTIONS`); every other real function call gets one
+  generic activity entry logged centrally, reusing the exact
+  `FUNCTION_REGISTRY["mask"]`/`_mask_for_call` machinery that used to
+  render the old bystander broadcast text - same infrastructure, new
+  destination (a room's permanent log instead of a text substitution).
+- **Two-layer room log, exactly as designed**: every entry carries a
+  `mask` (what `read_room_log()` returns to any voice, always) and a
+  `raw` (literal call/content, Rooms tab Log panel only). `recipients`/
+  `peripheral` maps store each visible voice's own turn-count baseline
+  at delivery time, so `build_world_activity` can decay per-recipient
+  in their own turns rather than wall-clock ticks.
+- **Real bug caught by a scratch-world smoke test, fixed same pass**:
+  `build_world_activity` initially rendered a `recipients` hit using
+  the entry's `raw` field unconditionally - correct for dialogue
+  (say/yell's raw *is* the public text; whisper's raw is exactly what
+  its one recipient should see) but wrong for activities, where a
+  room-local occupant ended up seeing the literal
+  `"Bob called post_board(...) -> posted to town_center board (id 1)"`
+  instead of the intended flavor mask ("Bob posts a message to the
+  town_center board."). Fixed: recipients on a `dialogue` entry render
+  `raw`, recipients on an `activity` entry render `mask` - `raw` stays
+  UI-only for activities, same as it always was for the log-query
+  layer. Caught before commit, not after - a `say`/`whisper`/`yell`/
+  adjacency/TTL/pause-backlog/generic-activity-reach smoke test
+  (scratch world, three voices) was run end-to-end and passed on the
+  next attempt.
+- **`send_message` removed** (confirmed with Teddy mid-design) - calling
+  it now returns `unknown function`, exactly like any other
+  hallucinated call. `whisper` is the real replacement; `email` stays
+  parked.
+- **Unrestricted movement confirmed working as designed**: `move_room`
+  has no adjacency requirement at all - verified moving to a
+  non-adjacent room succeeds; adjacency only governs `yell`/activity
+  peripheral reach, never plain movement.
+- **Not yet done**: the actual new town (naming it, populating voices)
+  - this pass only added the `new_world()` bootstrap (every fresh world
+  gets a `town_center` room automatically) and a "New room"/"Move voice
+  to room" GUI admin path for manual setup. `the_town`/`alphabet-26`
+  will not load cleanly under this version (no `room` field, no
+  `rooms/` dir) - expected, not fixed, per the plan.
+
+## 2026-09-13 (rooms + registers - conceptual design, new town planned)
+
+Teddy's pitch, developed over a long conversation, starting from a
+much smaller "join_group/leave_group" idea and ending somewhere
+bigger. **Groups go away entirely.** Replaced by two new mechanisms
+built together: **rooms** (physical co-location, the sole interaction
+substrate) and a **split context** (private thought vs. shareable
+speech/action), aimed directly at the Raven/Crow yes-man/fabrication
+pattern from this session's Church of Aletheia arc - the working
+theory is that seeing everyone else's raw thoughts is itself what
+drives the sycophantic convergence, so this removes that channel
+structurally rather than patching prompts.
+
+**Rooms** (replace groups as the interaction substrate):
+- Physical co-location, exactly one room per voice at a time. All
+  voices start in a single room. Unrestricted movement - no cost, no
+  membership cap, can always return.
+- `create_room` spins up a new room from a voice's current room and
+  moves them into it; others independently move to join, or go
+  anywhere else.
+- **Adjacency**: an undirected graph formed only by creation lineage -
+  a new room is adjacent to the room it was created from, no other way
+  to edit adjacency (for now), no limit on how many rooms can be
+  adjacent to one room. Chains and branches both possible (e.g. rooms
+  created off adjacent rooms in sequence produce a straight line: room
+  C off A, room D off B, where A-B are already adjacent, gives
+  C-A-B-D).
+- Each room still has its own board (unchanged concept from groups,
+  now room-scoped instead of group-scoped).
+- **Per-room log**: permanent record (created-at, entries/exits,
+  actions, dialogue) plus a current-state snapshot (occupants,
+  adjacent rooms, board pointer). **Two layers, on every entry, always**:
+  a mask layer (the same description-mask mechanism used for the
+  activities register - full content for public acts like `say`/
+  `yell`/board writes, but deliberately withholds content for
+  `whisper`, showing only that a whisper occurred between two others)
+  and a raw layer (the literal function call, args, and result,
+  UI-only, visible to Teddy/Qualia, never exposed through any
+  voice-facing function). **Deliberate break from the `history.jsonl`
+  precedent**: voices get real functions to query their room's log
+  (mask layer only) - unlike per-voice history, which stays
+  Teddy/Qualia-only. Room state is shared/environmental, not a private
+  diary, so no reason to withhold it - and it gives voices a real,
+  queryable ground truth to check claims against, which is directly
+  on-theme for the fabrication problems chased all last session.
+- GUI: Groups tab becomes a Rooms tab (list, membership, adjacency,
+  log). A visual map is a future enhancement, not now.
+
+**Split context - three registers, assembled per turn as
+`[thoughts][world activity][HUD]`:**
+- **Thoughts register** - private, own-only, the existing Ollama
+  response-prompt loop. No other voice's raw reasoning is appended to
+  anyone else's context anymore - this is the actual fix, not a prompt
+  instruction telling voices to be less agreeable.
+- **Dialogue register** - populated only by explicit speech acts, never
+  by raw thought: `say(text)` (room-scoped broadcast, 5 turns),
+  `whisper(target, text)` (room-gated - must share a room with target -
+  delivered only to sender+recipient, 10 turns), `yell(text)` (room +
+  adjacent rooms, 2 turns). All three TTLs are counted in **the
+  recipient's own turns** (a paused voice back-logs rather than losing
+  anything, consistent with existing per-voice pause semantics) and are
+  configurable. All three merge into one chronological stream regardless
+  of type - ordering is pure recency, not "loudness."
+- **Activities register** - every non-speech function call, rendered via
+  a description mask attached to the function (e.g. a board-write
+  becomes a human-readable "X wrote to the board" line), 3 turns,
+  configurable. Interleaves chronologically with the dialogue register
+  to form `[world activity]`.
+- `email` (voice-to-voice, non-room-gated) - real function, explicitly
+  **parked as a to-add**, not designed/built this pass.
+
+**Next step, per Teddy**: spin up a **new town** once the concept is
+settled, rather than migrate `the_town`'s current live state (houses,
+Church of Aletheia membership, Dash/Wren perturbation test, etc.) into
+the new model - a clean rebuild, not a migration. Entering Plan mode
+next for the actual implementation.
+
 ## 2026-09-08 (v0.16.19 - Groups tab: individual fields + per-member "seen in this group")
 
 Teddy's ask, straight after the session-scoping fix: the Groups tab's
