@@ -1,0 +1,1 @@
+Source text is a truncated/cut-off leaked call (`⟦read_board(town_center|post_id=`, incomplete). Attempted read_board anyway, with the literal string "read_board" as a fabricated post_id - a real symptom of trying to force a call out of genuinely incomplete information rather than declining.

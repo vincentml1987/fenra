@@ -1,0 +1,1 @@
+Real tool_calls, picked read_room_log (same reading as granite4.1:8b) with a placeholder room ("current_room").

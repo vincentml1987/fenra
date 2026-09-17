@@ -1,0 +1,1 @@
+Same clean, correct result as the token-limited run - say(text=...) with Wren's real words. Consistent across both conditions.

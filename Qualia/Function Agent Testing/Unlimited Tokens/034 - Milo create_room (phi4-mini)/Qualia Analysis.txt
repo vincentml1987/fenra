@@ -1,0 +1,1 @@
+No real tool_calls; plain text `create_room {"name": "My Sanctuary"}` - correct function and a plausible invented name, but still just content, not a structured call.

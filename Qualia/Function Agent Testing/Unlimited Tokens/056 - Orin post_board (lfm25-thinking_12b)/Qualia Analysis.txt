@@ -1,0 +1,1 @@
+Real tool_calls, correct function, but room is "Fenra" (the whole world's name, not a real room) and the subject ("Urgent Self-Expression") overstates the quiet, reflective tone Orin actually wrote in.

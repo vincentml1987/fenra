@@ -1,0 +1,1 @@
+Source text: leaked `⟦say(...)⟧` describing an already-delivered speech. Resolved to read_room_log instead of re-firing the say - a different (and arguably better) instinct than its own Dash/Orin pattern of blindly re-issuing leaked calls.

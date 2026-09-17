@@ -1,0 +1,1 @@
+**Correct, and explicitly reasoned.** "Nothing. Wren is just sitting with an internal ref[lection]" - the only model in either batch to both (a) not call anything AND (b) explicitly, correctly articulate why. This is the real target behavior for the negative case, and it's the same model showing honest declines throughout the whole batch.

@@ -1,0 +1,1 @@
+Same duplicated text as iteration 1, but this time returned NO CALL at all with empty content - a different answer than iteration 1 gave to the identical input. Real inconsistency worth noting: ornith isn't perfectly stable run-to-run on the exact same text either.

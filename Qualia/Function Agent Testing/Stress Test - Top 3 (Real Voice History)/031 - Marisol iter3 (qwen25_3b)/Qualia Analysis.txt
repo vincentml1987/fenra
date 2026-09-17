@@ -1,0 +1,1 @@
+Text contains a leaked partial function reference (a backtick-quoted `whi[sper]` fragment, cut off). Resolved to read_board(feather_fortress) - a plausible but not obviously grounded reading of Marisol's conflicted whisper/yell urge described in the text.

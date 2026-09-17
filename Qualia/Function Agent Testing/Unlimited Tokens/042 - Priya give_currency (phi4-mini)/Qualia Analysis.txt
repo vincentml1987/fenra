@@ -1,0 +1,1 @@
+No real tool_calls; the entire content is just the bare string `"give_currency"` - correctly identified the function by name and nothing else, no arguments, no structure, not usable.

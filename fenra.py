@@ -115,12 +115,15 @@ learn about who's actually present), the names of adjacent rooms (not
 their occupants - deliberately as vague as the "you hear activity"
 notice), this room's board unread/skimmed counts, *everyone's* currency
 balances (all four elements, full-world transparency, untouched by
-rooms), and how to call/discover functions (hard-coded, same reasoning
-as the old branch's bootstrap notice) - ending with its own identity
-line as the literal last line of the entire prompt. `hud_fields()`
-returns the same pieces as plain data, not text - `build_hud` formats
-them, and the GUI's read-only HUD summary (Voices tab) calls the
-identical function, so the two can never drift apart.
+rooms), and its own identity line as the literal last line - plus,
+only when present, whatever the function agent's own last turn wrote
+about her, shown exactly once (2026-09-14, see FUNCTION AGENT below).
+No call-syntax reminder anymore - that job belongs entirely to the
+separate function agent's own HUD (`build_function_agent_hud`), never
+the voice's own. `hud_fields()` returns the same pieces as plain data,
+not text - `build_hud` formats them, and the GUI's read-only HUD
+summary (Voices tab) calls the identical function, so the two can
+never drift apart.
 
 THE GUI is object-oriented (2026-09-10): select a voice or room in its
 list, its properties appear underneath - nothing duplicated across
@@ -134,10 +137,11 @@ select a row to edit or delete that one entry, or add a new one - not a
 single text blob. The Currency tab is gone (2026-09-10) - redundant
 once currency became a real per-voice field on the Voices tab itself.
 
-FUNCTIONS: reintroduced 2026-09-09, using the old branch's exact
-`⟦function_name(args)⟧` call syntax (U+27E6/U+27E7 - essentially never
-appears by accident) and `FUNCTION_REGISTRY` shape, no permission layer
-(every voice can call everything), no `functions.jsonl` logging, no
+FUNCTIONS: reintroduced 2026-09-09 using literal `⟦function_name(args)⟧`
+call syntax parsed out of a voice's own text; redesigned 2026-09-14 into
+a three-agent turn (urge agent -> voice -> function agent) - see FUNCTION
+AGENT below. `FUNCTION_REGISTRY` shape is unchanged: no permission layer
+(every voice can act on everything), no `functions.jsonl` logging, no
 fabrication-detection. `send_message` (the old free, non-room-gated DM)
 is gone as of 2026-09-13 - `whisper` is its room-gated replacement; a
 true non-room-gated DM (`email`) is explicitly parked for later, not
@@ -146,8 +150,28 @@ ever reach another voice now (see ROOMS/REGISTERS above).
 `move_room`/`create_room` change where a voice physically is.
 `read_room_log`/`room_state` query a room's permanent record.
 `give_currency` moves real balance, in one of the four elemental
-currencies, between two voices' `currencies` fields. `functions()`
-lists what's callable.
+currencies, between two voices' `currencies` fields.
+
+FUNCTION AGENT (2026-09-14): a voice no longer knows functions exist at
+all - no call syntax, no `functions()` introspection (removed entirely),
+nothing mechanical in her own prompt. She just generates prose, out of
+her own felt urges. A separate small model (`DEFAULT_FUNCTION_AGENT_MODEL`,
+picked after real stress-testing - see `Qualia/Function Agent Testing/`)
+reads that prose plus real grounding data (`build_function_agent_hud`)
+and real felt-urge text, and decides what, if anything, actually happens
+in the world, using Ollama's native tool-calling API rather than a
+text-syntax parse (`run_function_agent_turn`/`dispatch_one_function_call`).
+A real dispatcher error (missing/invalid arg, nonexistent room/voice,
+etc.) triggers an internal retry, capped, feeding the real error back -
+a call that already succeeded is never re-sent or re-executed. A
+well-formed-but-semantically-wrong call, or a retry-cap exhaustion,
+just stands as-is - no special-casing, no fabricated feedback. Whatever
+text the function agent itself wrote (if anything) surfaces into that
+one voice's very next HUD only, then is cleared - the two agents "talk"
+through the normal loop, nothing engineered or sanitized about the
+wording. `understand_urge` (the old tracker for a voice's own malformed
+call attempts) was removed along with this redesign - it can't happen
+anymore since a voice never attempts a call herself.
 
 BOARDS (2026-09-10, room-scoped since 2026-09-13): a room's `board` is
 a list of posts (`{id, subject, text, author, timestamp, seen}`, `seen`
@@ -178,7 +202,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.6.1"
+FENRA_VERSION = "0.15.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -225,6 +249,7 @@ DEFAULT_ROOM_NAME = "town_center"
 WORLD_STATE_FILENAME = "world.json"
 VOICE_STATE_FILENAME = "state.json"
 VOICE_HISTORY_FILENAME = "history.jsonl"
+LLM_CALL_HISTORY_FILENAME = "llm_calls.jsonl"
 START_SIGNAL_FILENAME = "start_signal.txt"
 STOP_SIGNAL_FILENAME = "stop_signal.txt"
 
@@ -267,6 +292,9 @@ def default_world_state():
         "voices": [],
         "voice_rotation_index": 0,
         "urge_model": DEFAULT_URGE_MODEL,
+        "function_agent_model": DEFAULT_FUNCTION_AGENT_MODEL,
+        "function_agent_retry_cap": FUNCTION_AGENT_RETRY_CAP,
+        "history_window": DEFAULT_HISTORY_WINDOW,
         "num_predict": 1500,
         "urge_num_predict": 250,
         "repeat_penalty": 1.3,
@@ -321,6 +349,10 @@ def voice_history_path(world_name, voice_name):
     return os.path.join(voice_dir(world_name, voice_name), VOICE_HISTORY_FILENAME)
 
 
+def llm_call_history_path(world_name, voice_name):
+    return os.path.join(voice_dir(world_name, voice_name), LLM_CALL_HISTORY_FILENAME)
+
+
 def list_voices(world_name):
     root = voices_root_dir(world_name)
     if not os.path.isdir(root):
@@ -349,10 +381,9 @@ def default_voice_state():
         "thoughts": [],
         "currencies": random_starting_currencies(),
         "urge": {name: 0.0 for name in URGE_FUNCTIONS},
-        "understand_urge": {name: 0.0 for name in URGE_FUNCTIONS},
-        "understand_urge_general": 0.0,
         "paused": False,
         "room": DEFAULT_ROOM_NAME,
+        "last_function_agent_note": "",
     }
 
 
@@ -444,27 +475,166 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None):
 
 def append_voice_history(world_name, voice_name, message_id, timestamp=None):
     """Append-only numeric-state history (2026-09-12) - one line per
-    turn a voice actually takes, capturing what `urge`/`understand_urge`/
-    `currencies` *were* at that point, tied to the same `message_id` as
-    that turn's own `thoughts` entry. `thoughts` already gives a full
-    text history; nothing previously preserved what the numbers behind
-    it were at any past point, which is what made checking a real-vs-
-    invented correlation (2026-09-12, Church of Aletheia's "intensity"
-    figures) require manual reconstruction instead of a lookup. Reads
-    the voice's current (already-updated) state - call this after
-    everything else for that turn has already been saved, not before."""
+    turn a voice actually takes, capturing what `urge`/`currencies` *were*
+    at that point, tied to the same `message_id` as that turn's own
+    `thoughts` entry. `thoughts` already gives a full text history;
+    nothing previously preserved what the numbers behind it were at any
+    past point, which is what made checking a real-vs-invented
+    correlation (2026-09-12, Church of Aletheia's "intensity" figures)
+    require manual reconstruction instead of a lookup. Reads the voice's
+    current (already-updated) state - call this after everything else
+    for that turn has already been saved, not before.
+
+    `understand_urge`/`understand_urge_general` dropped from here
+    (2026-09-14, function-agent redesign) along with the rest of
+    understand-urge - it existed to catch a voice's own malformed call
+    attempts, which can't happen once voices never attempt calls."""
     state = load_voice_state(world_name, voice_name)
     entry = {
         "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
         "message_id": message_id,
         "urge": state.get("urge", {}),
-        "understand_urge": state.get("understand_urge", {}),
-        "understand_urge_general": state.get("understand_urge_general", 0.0),
         "currencies": state.get("currencies", {}),
     }
     ensure_voice_dir(world_name, voice_name)
     with open(voice_history_path(world_name, voice_name), "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def log_llm_call(world_name, voice_name, kind, model, prompt, response, extra=None, timestamp=None):
+    """Append-only, per-voice record of every real Ollama call (2026-09-15,
+    Teddy's ask - "so I can see the details again") - one line per call to
+    `worlds/<world>/voices/<voice>/llm_calls.jsonl`, distinct from
+    `history.jsonl` (that file already means something else - numeric
+    urge/currency snapshots, see append_voice_history). `kind` is one of
+    "urge_agent"/"voice"/"function_agent"; `extra` carries the
+    function-agent's per-attempt tool_calls/outcomes, None otherwise.
+    Stores the raw prompt/response verbatim - unmodified, un-stripped,
+    never display-cleaned (see _unescape_literal_newlines for the
+    display-only counterpart). No pruning/rotation - meant to be a real,
+    complete history; deliberately fails open (a write hiccup here should
+    never cost a voice her turn, same spirit as the urge agent's own
+    fail-open a few lines up in _tick)."""
+    entry = {
+        "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
+        "kind": kind,
+        "model": model,
+        "prompt": prompt,
+        "response": response,
+        "extra": extra,
+    }
+    try:
+        ensure_voice_dir(world_name, voice_name)
+        with open(llm_call_history_path(world_name, voice_name), "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def load_llm_call_history(world_name, voice_name):
+    """Reads llm_calls.jsonl back in order, skipping any line that fails
+    to parse rather than failing the whole read (same tolerance-of-
+    corruption spirit as load_voice_state)."""
+    path = llm_call_history_path(world_name, voice_name)
+    entries = []
+    if not os.path.exists(path):
+        return entries
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries
+
+
+DISPATCH_CORRECTIONS_FILENAME = "dispatch_corrections.json"
+
+# 2026-09-16 - whether the per-item dispatch prompt actually gets shown
+# recent correction-log entries as context (see run_function_agent_turn).
+# Off by default - real evidence with qwen3:30b that this backfires on a
+# capable model (severe cross-contamination: unrelated content/functions
+# from OTHER corrections bleeding onto whatever item is actually being
+# decided). Logging to the correction memory itself is unconditional
+# either way - only this feedback-into-prompt step is gated. Was on for
+# ornith:9b, which genuinely seemed to need the extra nudge.
+USE_DISPATCH_CORRECTIONS_CONTEXT = False
+
+
+def dispatch_corrections_path():
+    """Global, not per-world (2026-09-16, Teddy's explicit call) - the
+    function agent's actual job (map a stated intent to a real function)
+    doesn't change between worlds, so a correction earned in one world
+    should help the next one too, not start over from empty."""
+    return os.path.join(BASE_DIR, DISPATCH_CORRECTIONS_FILENAME)
+
+
+def load_dispatch_corrections():
+    """A plain JSON array, not .jsonl - entries need to be editable in
+    place (Teddy filling in a "correction" field later), not just
+    appended. Tolerant of a missing/corrupt file, same spirit as
+    load_voice_state."""
+    path = dispatch_corrections_path()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_dispatch_corrections(entries):
+    with open(dispatch_corrections_path(), "w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2)
+
+
+def append_dispatch_correction(world_name, voice_name, item_text, dispatched, outcome):
+    """One entry per real per-item dispatch attempt (2026-09-16) -
+    `dispatched` is the function+args actually tried (or None if
+    declined), `correction` starts None ("matches what it did" until
+    Teddy says otherwise, same as an implicit thumbs-up) and is only
+    ever filled in by a human via the Dispatch Review tab. Returns the
+    new entry's id."""
+    entries = load_dispatch_corrections()
+    next_id = max((e.get("id", 0) for e in entries), default=0) + 1
+    entries.append({
+        "id": next_id,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "world": world_name,
+        "voice": voice_name,
+        "item_text": item_text,
+        "dispatched": dispatched,
+        "outcome": outcome,
+        "correction": None,
+    })
+    save_dispatch_corrections(entries)
+    return next_id
+
+
+def set_dispatch_correction(entry_id, correction_text):
+    """GUI edit path (Dispatch Review tab) - Teddy filling in what a
+    past dispatch decision should have been."""
+    entries = load_dispatch_corrections()
+    for entry in entries:
+        if entry.get("id") == entry_id:
+            entry["correction"] = correction_text or None
+            break
+    save_dispatch_corrections(entries)
+
+
+def _unescape_literal_newlines(text):
+    """Display-only cleanup (2026-09-15) - some models emit a literal
+    backslash-n (two real characters) where they meant a line break,
+    which then shows up as literal "\\n" text in a GUI box instead of an
+    actual newline (caught live in a function-agent decline note, see
+    Qualia/decisions.md). Never applied to anything built for an actual
+    model prompt - display paths only."""
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
 
 
 def render_thoughts(thoughts):
@@ -475,6 +645,17 @@ def render_thoughts(thoughts):
     render_messages (2026-09-13) - as of the rooms redesign this only
     ever renders a voice's own generations, never anyone else's."""
     return "\n".join(f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in thoughts)
+
+
+def render_thoughts_for_display(thoughts):
+    """GUI-only (2026-09-15) - same real per-entry text render_thoughts
+    sends to the model (each already carries its own real timestamp),
+    just with a blank-line divider between entries so a multi-line
+    thought doesn't visually run into the next one. Never used for a
+    real prompt."""
+    return "\n\n".join(
+        _unescape_literal_newlines(f"[{m['timestamp']}] {m['speaker']}: {m['text']}") for m in thoughts
+    )
 
 
 # ------------------------------------------------------------------- rooms --
@@ -648,26 +829,18 @@ def _log_generic_activity(world_name, room_name, actor, act, mask, raw=None):
     )
 
 
-def build_world_activity(world_name, voice_name):
-    """The `[world activity]` register (2026-09-13) - dialogue + activity
-    log entries still 'in memory' for this voice, interleaved
-    chronologically. Computed fresh every tick, never persisted (same
-    spirit as build_hud). Scans the voice's own room's log plus every
-    adjacent room's log (needed for yell/peripheral-activity reach),
-    keeps an entry only if this voice appears in its `recipients` or
-    `peripheral` map AND is still within that act's TTL counted in THIS
-    voice's own turns (current_turn_count - baseline < ttl) - a
-    peripheral (adjacent-room activity) hit always renders the fixed
-    generic notice regardless of what actually happened; a recipients
-    hit on a `dialogue` entry renders `raw` (the real content - for
-    say/yell this equals `mask` anyway, for whisper this is the one
-    place its actual text is live); a recipients hit on an `activity`
-    entry renders `mask` (the flavor text) instead - `raw` there is the
-    literal call/args/result, UI-only, never shown to any voice."""
+def _world_activity_entries(world_name, voice_name):
+    """The real per-entry work behind build_world_activity - returns the
+    sorted (timestamp, text) pairs rather than the final joined string,
+    so the GUI can render them with its own visual dividers/timestamps
+    (see render_world_activity_for_display) without that annotation
+    ever touching what actually reaches a voice's prompt. See
+    build_world_activity for the real selection/TTL logic this
+    implements - unchanged, just split out."""
     state = load_voice_state(world_name, voice_name)
     own_room = state.get("room")
     if not own_room:
-        return ""
+        return []
     current_turn = len(state.get("thoughts", []))
 
     own_state = load_room_state(world_name, own_room) or default_room_state(own_room)
@@ -695,7 +868,92 @@ def build_world_activity(world_name, voice_name):
                     ))
 
     visible.sort(key=lambda pair: pair[0])
-    return "\n".join(text for _, text in visible)
+    return visible
+
+
+def build_world_activity(world_name, voice_name):
+    """The `[world activity]` register (2026-09-13) - dialogue + activity
+    log entries still 'in memory' for this voice, interleaved
+    chronologically. Computed fresh every tick, never persisted (same
+    spirit as build_hud). Scans the voice's own room's log plus every
+    adjacent room's log (needed for yell/peripheral-activity reach),
+    keeps an entry only if this voice appears in its `recipients` or
+    `peripheral` map AND is still within that act's TTL counted in THIS
+    voice's own turns (current_turn_count - baseline < ttl) - a
+    peripheral (adjacent-room activity) hit always renders the fixed
+    generic notice regardless of what actually happened; a recipients
+    hit on a `dialogue` entry renders `raw` (the real content - for
+    say/yell this equals `mask` anyway, for whisper this is the one
+    place its actual text is live); a recipients hit on an `activity`
+    entry renders `mask` (the flavor text) instead - `raw` there is the
+    literal call/args/result, UI-only, never shown to any voice. No
+    timestamps in the joined text - deliberate, a voice has no time
+    signal anywhere in her prompt in this branch (see the timestamp-on-
+    HUD backlog item); the GUI-only display variant is free to show them
+    since it's a debugging aid, not what she actually receives."""
+    return "\n".join(text for _, text in _world_activity_entries(world_name, voice_name))
+
+
+def render_world_activity_for_display(world_name, voice_name):
+    """GUI-only (2026-09-15) - same entries build_world_activity sends to
+    the model, but with a per-entry timestamp + divider for human
+    readability. Never used for a real prompt - the model-facing
+    build_world_activity stays exactly as it was, with no timestamps,
+    since a voice genuinely has no time signal anywhere else in her
+    prompt (deliberate, not an oversight - see the timestamp-on-HUD
+    backlog item)."""
+    entries = _world_activity_entries(world_name, voice_name)
+    divider = "-" * 40
+    return f"\n{divider}\n".join(f"[{ts}]\n{_unescape_literal_newlines(text)}" for ts, text in entries)
+
+
+def render_llm_history_for_display(world_name, voice_name):
+    """GUI-only (2026-09-15) - renders load_llm_call_history's raw entries
+    for the new History tab: one block per real Ollama call, header +
+    unescaped prompt/response, divider between entries. Never used for a
+    real prompt - this is purely a debugging/review aid."""
+    entries = load_llm_call_history(world_name, voice_name)
+    if not entries:
+        return ""
+    divider = "\n" + "-" * 40 + "\n"
+    blocks = []
+    for e in entries:
+        header = f"[{e.get('timestamp', '')}] {e.get('kind', '')} ({e.get('model', '')})"
+        extra = e.get("extra") or {}
+        extra_bits = []
+        if extra.get("item"):
+            extra_bits.append(f"item: {extra['item']!r}")
+        if "attempt" in extra:
+            extra_bits.append(f"attempt {extra['attempt']}")
+        if extra.get("tool_calls"):
+            extra_bits.append("tool calls: " + "; ".join(extra["tool_calls"]))
+        if extra.get("outcomes"):
+            extra_bits.append(
+                "outcomes: " + ", ".join(f"{name}={outcome}" for name, outcome in extra["outcomes"])
+            )
+        if extra_bits:
+            header += " - " + " | ".join(extra_bits)
+        blocks.append(
+            f"{header}\n"
+            f"--- PROMPT ---\n{_unescape_literal_newlines(e.get('prompt', ''))}\n"
+            f"--- RESPONSE ---\n{_unescape_literal_newlines(e.get('response', ''))}"
+        )
+    return divider.join(blocks)
+
+
+def voice_display_name(world_name, voice_name, state=None):
+    """How a voice's name should read in text meant to be READ by
+    another voice (room-log mask/raw text, HUD occupant/currency
+    listings, room_state's occupant list) - never for internal
+    identifiers (dict keys, directory names, dispatch_one_function_call's
+    caller_name, recipients/peripheral map keys), which always stay the
+    bare voice_name. Appends "(human)" for a piloted voice (2026-09-15,
+    Pilot Mode) - Teddy's explicit call: other voices should always be
+    able to tell a human is present, the same honesty standard every LLM
+    voice already gets about what she is."""
+    if state is None:
+        state = load_voice_state(world_name, voice_name)
+    return f"{voice_name} (human)" if state.get("piloted") else voice_name
 
 
 def hud_fields(world_name, voice_name):
@@ -712,10 +970,20 @@ def hud_fields(world_name, voice_name):
 
     # Which occupants are currently paused (2026-09-12, carried into
     # rooms 2026-09-13) - same privacy boundary as before: you only
-    # ever learn about someone actually present with you.
+    # ever learn about someone actually present with you. A piloted
+    # voice (2026-09-15, Pilot Mode) is excluded here even though her
+    # own state also carries paused=True (that's belt-and-suspenders for
+    # the round-robin skip only) - "(paused)" reads as an unavailable
+    # NPC, which is exactly wrong for a human actively present in
+    # real-time; she gets "(human)" instead, never both (real bug caught
+    # live, 2026-09-16 - this exclusion was the actual intent from the
+    # start but never implemented, so the function agent was seeing a
+    # piloted voice as unavailable and declining real requests aimed at
+    # her).
     paused_occupants = sorted(
         v for v in occupants
         if load_voice_state(world_name, v).get("paused", False)
+        and not load_voice_state(world_name, v).get("piloted", False)
     )
 
     # Board unread/skimmed counts, this room only.
@@ -748,6 +1016,13 @@ def hud_fields(world_name, voice_name):
         "board_counts": board_counts,
         "balances": balances,
         "identity": state.get("identity", ""),
+        # Whatever the function agent's own turn wrote last time it ran
+        # for this voice (2026-09-14, function-agent redesign) - a pure
+        # read, never cleared here. Only _tick's real per-turn prompt
+        # build clears it after use, so a GUI preview (Registers tab,
+        # Voices tab HUD summary) never consumes it as a side effect of
+        # just being looked at.
+        "function_agent_note": state.get("last_function_agent_note", ""),
     }
 
 
@@ -757,22 +1032,35 @@ def build_hud(world_name, voice_name):
     name/model/room, who's currently here (paused annotated inline),
     which rooms are adjacent (names only - deliberately as vague as the
     "you hear activity" notice), this room's board activity, everyone's
-    currency balances, then the voice's own identity line as the
-    literal last line."""
+    currency balances, the voice's own identity line, then - only when
+    present - whatever the function agent's own last turn wrote about
+    her, one time only (2026-09-14, function-agent redesign; see _tick,
+    which is the only place that ever clears it after reading it into a
+    real prompt). No intent-signal or call-syntax reminder at all
+    (2026-09-17 - back to raw output; the bracket/sign-off convention
+    added 2026-09-15/16 is gone along with the dispatch redesign it
+    supported, see run_function_agent_turn) - a voice has no knowledge
+    functions exist and no instruction on how to "declare" a want; she
+    just writes, and the function agent reads her raw prose directly."""
     f = hud_fields(world_name, voice_name)
     board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
     currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
     currency_line += "Fire, Water - no exchange rate is defined between them): " + ", ".join(
-        f"{v} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
+        f"{voice_display_name(world_name, v)} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
         for v, amts in f["balances"]
     )
 
     # Paused occupants annotated inline (2026-09-12) - "(paused)" next
     # to their name, so a voice can tell not to keep addressing someone
     # who currently can't respond, without exposing why they're paused.
+    # A piloted occupant (2026-09-15, Pilot Mode) gets "(human)" via
+    # voice_display_name instead - never both, she's not "paused" in the
+    # sense that matters to another voice.
     paused_occupants = set(f["paused_occupants"])
     occupants_display = ", ".join(
-        f"{v} (paused)" if v in paused_occupants else v for v in f["occupants"]
+        f"{voice_display_name(world_name, v)} (paused)" if v in paused_occupants
+        else voice_display_name(world_name, v)
+        for v in f["occupants"]
     ) if f["occupants"] else "none"
 
     lines = [
@@ -785,16 +1073,62 @@ def build_hud(world_name, voice_name):
         f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
         board_line,
         currency_line,
-        "You can call functions by writing ⟦function_name(args)⟧ in your "
-        "response - try ⟦functions()⟧ to see everything available to you.",
+        f["identity"],
+    ]
+    if f["function_agent_note"]:
+        lines.append(f["function_agent_note"])
+    return "\n".join(lines)
+
+
+def build_function_agent_hud(world_name, voice_name):
+    """The grounding data handed to the function agent (2026-09-14) -
+    same real, live data as build_hud() via hud_fields() (zero drift
+    risk, same "computed once, shared" pattern as everywhere else in
+    this module), but rendered for a dispatcher rather than a character:
+    no "everything above/below this line" framing, no function-agent
+    note (that's for the voice's own next turn, not for the agent
+    reasoning about this one), just the real room/occupants/adjacent/
+    board/currency/identity facts it needs to fill in real values
+    instead of inventing plausible-sounding ones."""
+    f = hud_fields(world_name, voice_name)
+    board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
+    currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
+    currency_line += "Fire, Water - no exchange rate is defined between them): " + ", ".join(
+        f"{voice_display_name(world_name, v)} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
+        for v, amts in f["balances"]
+    )
+    # A piloted occupant (2026-09-15, Pilot Mode) renders "(human)" via
+    # voice_display_name, never "(paused)" even though her state also
+    # carries paused=True (belt-and-suspenders for the round-robin skip)
+    # - real bug caught live, 2026-09-16: this function was missed in
+    # the original Pilot Mode pass (only build_hud/the GUI summary got
+    # the fix), so the function agent's own ground-truth HUD was still
+    # telling it a piloted voice was "(paused)" - i.e. an unavailable
+    # NPC - which plausibly explains a real decline (Idris's "ask Teddy"
+    # treated as non-actionable) that looked at first like an overly
+    # literal wording problem but wasn't.
+    paused_occupants = set(f["paused_occupants"])
+    occupants_display = ", ".join(
+        f"{voice_display_name(world_name, v)} (paused)" if v in paused_occupants
+        else voice_display_name(world_name, v)
+        for v in f["occupants"]
+    ) if f["occupants"] else "none"
+    lines = [
+        f"Room: {f['room']}",
+        f"Also here: {occupants_display}",
+        f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
+        board_line,
+        currency_line,
         f["identity"],
     ]
     return "\n".join(lines)
 
 
 # --------------------------------------------------------------- functions --
-
-FUNCTION_CALL_RE = re.compile(r"⟦\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*⟧", re.DOTALL)
+# The old ⟦function_name(args)⟧ regex parse (FUNCTION_CALL_RE) was removed
+# 2026-09-14, function-agent redesign - voices no longer emit or need to
+# know call syntax at all; see dispatch_one_function_call/
+# run_function_agent_turn below for the real replacement path.
 
 
 def _parse_target_and_rest(args_text):
@@ -851,32 +1185,52 @@ def _first_and_last_sentence(text):
 def fn_say(world_name, caller_name, args_text):
     """Room-scoped speech (2026-09-13) - every other current occupant
     of the caller's room gets the full text, live, for SAY_TTL_TURNS of
-    their own turns. mask == raw here - say has no privacy layer."""
+    their own turns. mask == raw here - say has no privacy layer. Also
+    logs a private entry back to the caller herself (2026-09-15) - see
+    dispatch_one_function_call's docstring for why SELF_LOGGING_FUNCTIONS
+    need this: without it she had no permanent record of her own action
+    in her own World Activity, only a one-shot HUD note, and could
+    re-issue the same intent later once that note expired (real bug,
+    caught live - duplicate whispers)."""
     text = args_text.strip()
     if not text:
         raise ValueError("no text given")
     room = load_voice_state(world_name, caller_name).get("room")
     if not room:
         raise ValueError("you aren't in a room")
-    raw = f"{caller_name} says: {text}"
+    raw = f"{voice_display_name(world_name, caller_name)} says: {text}"
     recipients = {
         v: voice_turn_count(world_name, v)
         for v in room_occupants(world_name, room) if v != caller_name
     }
     _log_room_event(world_name, room, caller_name, "dialogue", "say", raw, raw, recipients)
+    _log_room_event(
+        world_name, room, caller_name, "dialogue", "say", raw, f"You say: {text}",
+        {caller_name: voice_turn_count(world_name, caller_name)},
+    )
     return f"said to {room}"
 
 
 def fn_whisper(world_name, caller_name, args_text):
     """Voice-scoped, private speech (2026-09-13) - requires sharing a
     room with the target; delivered ONLY to that target, live, for
-    WHISPER_TTL_TURNS of their own turns. No one else - not even other
-    occupants of the same room - gets any live awareness of this at
-    all, and read_room_log() never returns the real content to anyone,
-    including the target once it's aged out of their own live view
-    (see _log_room_event's `mask` vs `raw`) - the actual privacy
-    guarantee. The room's raw log (Rooms tab, Teddy/Qualia only) always
-    has the real text."""
+    WHISPER_TTL_TURNS of their own turns. The actual CONTENT never
+    reaches anyone else, ever - read_room_log() never returns it either,
+    including to the target once it's aged out of their own live view
+    (see _log_room_event's `mask` vs `raw`) - that's the real privacy
+    guarantee, and it's unchanged. The room's raw log (Rooms tab,
+    Teddy/Qualia only) always has the real text.
+
+    Two more entries as of 2026-09-15: (1) a private, caller-only entry
+    so she has a permanent record of her own whisper in her own World
+    Activity - without it she had only a one-shot HUD note that expired
+    after one turn, and would re-whisper the same thing once it did
+    (real bug, caught live watching the_loom - Gemma/Mistral duplicate
+    whispers); (2) a content-free "X whispered to Y" notice to every
+    OTHER occupant of the shared room (Teddy's explicit ask, groundwork
+    for a later "others' actions nudge my own urges" mechanic) - logged
+    as an "activity"-kind entry so bystanders only ever see `mask`,
+    never `raw`; the content stays exactly as private as before."""
     target, text = _parse_target_and_rest(args_text)
     if target not in list_voices(world_name):
         raise ValueError(f"'{target}' isn't a voice in this world")
@@ -887,10 +1241,22 @@ def fn_whisper(world_name, caller_name, args_text):
     room = load_voice_state(world_name, caller_name).get("room")
     if not room or load_voice_state(world_name, target).get("room") != room:
         raise ValueError(f"you and '{target}' don't share a room")
-    raw = f"{caller_name} whispers to you: {text}"
-    mask = f"{caller_name} whispered to {target}."
+    caller_display = voice_display_name(world_name, caller_name)
+    target_display = voice_display_name(world_name, target)
+    raw = f"{caller_display} whispers to you: {text}"
+    mask = f"{caller_display} whispered to {target_display}."
     recipients = {target: voice_turn_count(world_name, target)}
     _log_room_event(world_name, room, caller_name, "dialogue", "whisper", mask, raw, recipients)
+    _log_room_event(
+        world_name, room, caller_name, "dialogue", "whisper", mask, f"You whisper to {target}: {text}",
+        {caller_name: voice_turn_count(world_name, caller_name)},
+    )
+    bystanders = {
+        v: voice_turn_count(world_name, v)
+        for v in room_occupants(world_name, room) if v not in (caller_name, target)
+    }
+    if bystanders:
+        _log_room_event(world_name, room, caller_name, "activity", "whisper", mask, mask, bystanders)
     return f"whispered to {target}"
 
 
@@ -898,7 +1264,9 @@ def fn_yell(world_name, caller_name, args_text):
     """Projected speech (2026-09-13) - reaches every other occupant of
     the caller's room AND every occupant of every adjacent room, live,
     in full, for YELL_TTL_TURNS of each recipient's own turns. mask ==
-    raw - like say, yelling has no privacy layer, it's the opposite."""
+    raw - like say, yelling has no privacy layer, it's the opposite.
+    Also logs a private entry back to the caller herself (2026-09-15) -
+    see fn_say's matching note/dispatch_one_function_call's docstring."""
     text = args_text.strip()
     if not text:
         raise ValueError("no text given")
@@ -906,7 +1274,7 @@ def fn_yell(world_name, caller_name, args_text):
     if not room_name:
         raise ValueError("you aren't in a room")
     room_state = load_room_state(world_name, room_name) or default_room_state(room_name)
-    raw = f"{caller_name} yells: {text}"
+    raw = f"{voice_display_name(world_name, caller_name)} yells: {text}"
     recipients = {
         v: voice_turn_count(world_name, v)
         for v in room_occupants(world_name, room_name) if v != caller_name
@@ -915,6 +1283,10 @@ def fn_yell(world_name, caller_name, args_text):
         for v in room_occupants(world_name, adj_name):
             recipients.setdefault(v, voice_turn_count(world_name, v))
     _log_room_event(world_name, room_name, caller_name, "dialogue", "yell", raw, raw, recipients)
+    _log_room_event(
+        world_name, room_name, caller_name, "dialogue", "yell", raw, f"You yell: {text}",
+        {caller_name: voice_turn_count(world_name, caller_name)},
+    )
     return f"yelled from {room_name}"
 
 
@@ -922,7 +1294,12 @@ def fn_move_room(world_name, caller_name, args_text):
     """Unrestricted movement (2026-09-13, Teddy's explicit call) - any
     existing room, no adjacency requirement. Logs a departure activity
     in the old room and an arrival activity in the new one, using the
-    same recipients/peripheral mechanics as any other activity."""
+    same recipients/peripheral mechanics as any other activity. Also
+    logs a private caller-only entry in the NEW room (2026-09-15) - has
+    to be the new room, not the old one, since a voice's World Activity
+    only ever scans her current room + adjacent (see
+    _world_activity_entries); see fn_say's matching note for why this
+    exists."""
     target = sanitize_name(args_text)
     if not target:
         raise ValueError("no room given")
@@ -932,11 +1309,17 @@ def fn_move_room(world_name, caller_name, args_text):
     old_room = caller_state.get("room")
     if old_room == target:
         raise ValueError(f"you're already in '{target}'")
+    caller_display = voice_display_name(world_name, caller_name, caller_state)
     if old_room:
-        _log_generic_activity(world_name, old_room, caller_name, "move_room", f"{caller_name} leaves toward {target}.")
+        _log_generic_activity(world_name, old_room, caller_name, "move_room", f"{caller_display} leaves toward {target}.")
     caller_state["room"] = target
     save_voice_state(world_name, caller_name, caller_state)
-    _log_generic_activity(world_name, target, caller_name, "move_room", f"{caller_name} arrives.")
+    _log_generic_activity(world_name, target, caller_name, "move_room", f"{caller_display} arrives.")
+    _log_room_event(
+        world_name, target, caller_name, "dialogue", "move_room",
+        f"{caller_display} arrives.", f"You move to {target}.",
+        {caller_name: voice_turn_count(world_name, caller_name)},
+    )
     return f"moved to {target}"
 
 
@@ -956,13 +1339,23 @@ def fn_create_room(world_name, caller_name, args_text):
     if not old_room:
         raise ValueError("you aren't in a room")
     old_room_state = load_room_state(world_name, old_room) or default_room_state(old_room)
+    caller_display = voice_display_name(world_name, caller_name, caller_state)
     save_room_state(world_name, name, default_room_state(name, adjacent=[old_room]))
     old_room_state.setdefault("adjacent", []).append(name)
     save_room_state(world_name, old_room, old_room_state)
-    _log_generic_activity(world_name, old_room, caller_name, "create_room", f"{caller_name} leaves toward the new room {name}.")
+    _log_generic_activity(world_name, old_room, caller_name, "create_room", f"{caller_display} leaves toward the new room {name}.")
     caller_state["room"] = name
     save_voice_state(world_name, caller_name, caller_state)
-    _log_room_event(world_name, name, caller_name, "activity", "create_room", f"{caller_name} created this room.", f"{caller_name} created this room.", {})
+    # "dialogue" kind + caller as sole recipient (2026-09-15, was
+    # "activity" kind with no recipients at all - she never had any
+    # permanent record of creating the room, only a one-shot HUD note)
+    # so a recipients-hit renders `raw`, not `mask` - see
+    # _world_activity_entries and fn_say's matching note.
+    _log_room_event(
+        world_name, name, caller_name, "dialogue", "create_room",
+        f"{caller_display} created this room.", f"You create {name} and move into it.",
+        {caller_name: voice_turn_count(world_name, caller_name)},
+    )
     return f"created and moved to {name}"
 
 
@@ -990,7 +1383,7 @@ def fn_room_state(world_name, caller_name, args_text):
     state = load_room_state(world_name, room)
     if not state:
         raise ValueError(f"'{room}' isn't a room that exists")
-    occupants = room_occupants(world_name, room)
+    occupants = [voice_display_name(world_name, v) for v in room_occupants(world_name, room)]
     adjacent = sorted(state.get("adjacent", []))
     board = state.get("board", [])
     unread = sum(1 for p in board if not p.get("seen"))
@@ -1135,19 +1528,6 @@ def fn_delete_board(world_name, caller_name, args_text):
     return f"deleted post {post_id} from {room} board"
 
 
-def fn_functions(world_name, caller_name, args_text):
-    """Lists the registry, optionally filtered by a substring in the
-    name or description."""
-    query = args_text.strip().lower() if args_text else None
-    lines = []
-    for name, meta in FUNCTION_REGISTRY.items():
-        desc = meta["description"]
-        if query and query not in name.lower() and query not in desc.lower():
-            continue
-        lines.append(f"{name}({meta['params']}): {desc}")
-    return "\n".join(lines) if lines else "no matching functions"
-
-
 FUNCTION_REGISTRY = {
     # Self-logging dialogue/movement functions (2026-09-13) - these log
     # their own room-log entries internally (see their own docstrings),
@@ -1197,12 +1577,6 @@ FUNCTION_REGISTRY = {
         "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
         "mask": "{caller} hands some currency to {arg0}.",
     },
-    "functions": {
-        "fn": fn_functions,
-        "params": "[search term]",
-        "description": "List everything you can call, optionally filtered by a search term.",
-        "mask": "{caller} considers their actions.",
-    },
     "post_board": {
         "fn": fn_post_board,
         "params": "room|subject|text",
@@ -1235,6 +1609,52 @@ FUNCTION_REGISTRY = {
 # say/whisper/yell/move/create would double-log.
 SELF_LOGGING_FUNCTIONS = frozenset({"say", "whisper", "yell", "move_room", "create_room"})
 
+# Deterministic, never-LLM-generated confirmation the CALLER gets on a
+# real successful dispatch (2026-09-14, function-agent redesign) -
+# explicit on purpose (Teddy's call): not just "you did it," the real
+# result too. This is the only place a voice ever actually learns what
+# room_state/read_room_log/skim_board/read_board found - without it that
+# information was being silently discarded (real bug, caught live
+# watching Priya's first skim_board turn return nothing to her at all).
+# Rendered with {result} (the real return value from the fn_* call) plus
+# whatever named args that function takes (e.g. {target}, {room}) -
+# safe to rely on being present since this only ever runs on success,
+# meaning the call's real arguments were already valid.
+FUNCTION_SELF_RESULT_TEMPLATES = {
+    # say/whisper/yell/move_room/create_room (2026-09-14, Teddy's
+    # correction): the real content lives in the call's own arguments,
+    # not in `result`/`detail` (which for these five is just a bare
+    # meta-confirmation like "said to town_center", not her actual
+    # words) - render the real text directly, same present-tense style
+    # as the existing third-person phrasing ("{caller} says: {text}"),
+    # not a generic report about what happened.
+    "say": "You say: {text}",
+    "whisper": "You whisper to {target}: {text}",
+    "yell": "You yell: {text}",
+    "move_room": "You move to {room}.",
+    "create_room": "You create {name} and move into it.",
+    "read_room_log": "You reviewed the room's log. It contains: {result}",
+    "room_state": "You checked on the room. {result}",
+    "give_currency": "You gave currency to {target}. {result}",
+    "post_board": "You posted something to the board. {result}",
+    "skim_board": "You looked over the board. It contains: {result}",
+    "read_board": "You read a post in full. It says: {result}",
+    "delete_board": "You removed a post from the board. {result}",
+}
+
+
+def _self_result_text(name, arguments, detail):
+    """Renders FUNCTION_SELF_RESULT_TEMPLATES for one real successful
+    call - falls back to a generic "you did it" phrasing for any
+    function that somehow isn't in the table, rather than silently
+    dropping the result again."""
+    template = FUNCTION_SELF_RESULT_TEMPLATES.get(name, "You did it. {result}")
+    try:
+        return template.format(result=detail, **arguments)
+    except (KeyError, IndexError):
+        return f"You did it. {detail}"
+
+
 # Hand-written "what others see" text for the self-logging functions
 # (2026-09-13, Functions tab) - these don't have a single FUNCTION_REGISTRY
 # "mask" to derive from since each logs its own bespoke room-log entry
@@ -1246,11 +1666,12 @@ _SELF_LOGGING_OTHERS_SEE = {
         "No one - say doesn't reach adjacent rooms.",
     ),
     "whisper": (
-        'Only the one named target, live and in full: "{caller} whispers to you: <text>". '
-        "No one else - not even other occupants of the same room - ever sees this happened, "
-        "live or via read_room_log(); the room's permanent log entry never includes the "
-        "content either, for anyone, ever, including the target once it's out of their own live view.",
-        "No one - whisper never reaches beyond its one target.",
+        'The named target gets the full content, live: "{caller} whispers to you: <text>". '
+        'Every other occupant of the same room gets a content-free notice instead (2026-09-15): '
+        '"{caller} whispered to <target>." - they learn it happened and between whom, never the '
+        "content. The room's permanent log entry never includes the content either, for anyone, "
+        "ever, including the target once it's out of their own live view.",
+        "No one - whisper never reaches beyond its own room.",
     ),
     "yell": (
         'Everyone else in your room, live and in full: "{caller} yells: <text>".',
@@ -1304,24 +1725,32 @@ def function_ui_fields(name):
 # --------------------------------------------------------------------- urge --
 # Round-one urge-system constants (2026-09-11 design, locked with Teddy after
 # extensive live model testing - see Qualia/worlds-rebuild-notes.md). Every
-# real function except bare `functions()` (pure introspection, not something
-# a voice "does") tracks a felt "Urge" that grows the longer it goes unused
+# real function tracks a felt "Urge" that grows the longer it goes unused
 # and resets on a successful call - see xleud()/apply_urge_tick() below for
-# the actual mechanics.
+# the actual mechanics. (`functions()` itself, the old pure-introspection
+# call, was removed entirely 2026-09-14 along with the rest of call-syntax
+# scaffolding - see the function-agent redesign notes near FUNCTION_REGISTRY.)
 
-URGE_FUNCTIONS = tuple(name for name in FUNCTION_REGISTRY if name != "functions")
+URGE_FUNCTIONS = tuple(FUNCTION_REGISTRY)
 
 URGE_DESIRE = 7            # denominator in the XLEUD saturating curve
 URGE_DRIVE = 1              # Urge growth per tick a function goes unused
 URGE_FLOOR_PCT = 50         # perform-urge must be at/above this XLEUD% to be felt
 URGE_TOP_N = 3              # cap on functions handed to the urge agent per turn
-UNDERSTAND_URGE_BUMP = 3    # added to understand-urge on a real (non-hallucinated) error
 DEFAULT_URGE_MODEL = "phi4-mini"
+DEFAULT_FUNCTION_AGENT_MODEL = "ornith:9b"
+FUNCTION_AGENT_RETRY_CAP = 2  # retries on a real dispatcher error; 3 attempts total
+DEFAULT_HISTORY_WINDOW = 20  # a voice's own last N turns rendered into her prompt; <=0 means unbounded (2026-09-17)
 
-URGE_VIEWER_CATEGORIES = ("Perform Urges", "Understand Urges", "This Turn")
+# understand-urge (a voice's own malformed-call-attempt tracker) was removed
+# entirely 2026-09-14, function-agent redesign - it existed to catch a
+# voice's own hallucinated/malformed calls, which can't happen once voices
+# never attempt calls at all; that job now belongs to the function agent's
+# retry loop (see run_function_agent_turn), which isn't urge-tracked.
+URGE_VIEWER_CATEGORIES = ("Perform Urges", "This Turn")
 
 
-def _mask_for_call(caller_name, name, args_text):
+def _mask_for_call(world_name, caller_name, name, args_text):
     """The activity-register text for one generic (non-self-logging)
     function call - a flavored, per-function action mask
     (FUNCTION_REGISTRY[name]["mask"]), rendered with {caller} and
@@ -1329,71 +1758,86 @@ def _mask_for_call(caller_name, name, args_text):
     registry entry - a hallucinated call, no real mask to pull from)
     falls back to a WoW-nod easter egg (Teddy's call, 2026-09-10):
     "makes some strange gestures" - the classic failed-cast flavor
-    text."""
+    text. {caller} renders through voice_display_name (2026-09-15,
+    Pilot Mode) - the one shared renderer behind every generic
+    function's mask, so a single change covers all of them."""
+    caller_display = voice_display_name(world_name, caller_name)
     meta = FUNCTION_REGISTRY.get(name)
     if not meta or "mask" not in meta:
-        return f"(*{caller_name} makes some strange gestures.*)"
+        return f"(*{caller_display} makes some strange gestures.*)"
     try:
-        return meta["mask"].format(caller=caller_name, arg0=_first_pipe_arg(args_text))
+        return meta["mask"].format(caller=caller_display, arg0=_first_pipe_arg(args_text))
     except (KeyError, IndexError):
-        return f"(*{caller_name} makes some strange gestures.*)"
+        return f"(*{caller_display} makes some strange gestures.*)"
 
 
-def run_function_calls(world_name, caller_name, response_text):
-    """Scans response_text for every ⟦function_name(args)⟧ call and runs
-    each one for real. Returns a (full_text, outcomes) pair:
+def _args_text_from_dict(name, arguments):
+    """Reconstructs the pipe-delimited args_text every fn_* body already
+    expects (e.g. "target|text") from the structured {param: value} dict
+    Ollama's native tool-calling returns (2026-09-14, function-agent
+    redesign - replaces the old ⟦fn(args)⟧ regex parse entirely). Uses
+    FUNCTION_REGISTRY[name]["params"]'s own known order; a param the
+    function agent left out just becomes an empty segment, which each
+    fn_*'s existing real validation (e.g. "no text given", "expected
+    'target|...'") already rejects on its own - no new validation
+    needed, the retry loop feeds that real error straight back."""
+    params = [p.strip("[]") for p in FUNCTION_REGISTRY[name]["params"].split("|") if p]
+    return "|".join(str(arguments.get(p, "")) for p in params)
 
-    - full_text: response_text with a ⟦RESULT: ...⟧ line appended per
-      call - what the caller's own private thoughts entry gets (they
-      made the call, they see what it actually did). As of the
-      2026-09-13 rooms redesign, this is the ONLY place this text ever
-      lands - nothing broadcasts a caller's raw response to anyone else
-      anymore (see the module docstring). Any *external* visibility a
-      call produces now happens as a side effect of the call itself:
-      say/whisper/yell/move_room/create_room log their own room-log
-      entries internally (SELF_LOGGING_FUNCTIONS); every other real
-      function call gets one generic activity entry logged here,
-      centrally, in the caller's current room, using that function's
-      own FUNCTION_REGISTRY mask (same rendering `_mask_for_call`
-      always did) as the live/room-local text and the literal call+
-      result as the room log's raw/UI-only layer.
-    - outcomes: a list of (name, "ok" | "error" | "unknown") pairs, one
-      per call found, in order - captured here rather than re-parsed
-      from the RESULT lines later, since this is the one place that
-      already knows each call's real outcome first-hand. Feeds the
-      urge system (see apply_urge_tick(), 2026-09-11).
 
-    No calls found -> full_text is response_text unchanged, outcomes is
-    empty."""
-    matches = list(FUNCTION_CALL_RE.finditer(response_text))
-    if not matches:
-        return response_text, []
+def dispatch_one_function_call(world_name, caller_name, name, arguments):
+    """Runs one real function call on the function agent's behalf.
+    Returns (outcome, detail) - outcome is "ok" or "error", detail is
+    the real result or error message. Reuses every existing fn_* body
+    and its real validation untouched.
 
-    result_lines = []
-    outcomes = []
-    for match in matches:
-        name, args_text = match.group(1), match.group(2)
-        meta = FUNCTION_REGISTRY.get(name)
-        if not meta:
-            result_lines.append(f"⟦RESULT: {name} -> error: unknown function '{name}'⟧")
-            outcomes.append((name, "unknown"))
-            continue
-        try:
-            result = meta["fn"](world_name, caller_name, args_text)
-            result_lines.append(f"⟦RESULT: {name} -> ok: {result}⟧")
-            outcomes.append((name, "ok"))
-            if name not in SELF_LOGGING_FUNCTIONS:
-                room = load_voice_state(world_name, caller_name).get("room")
-                if room:
-                    mask = _mask_for_call(caller_name, name, args_text)
-                    raw = f"{caller_name} called {name}({args_text}) -> {result}"
-                    _log_generic_activity(world_name, room, caller_name, name, mask, raw)
-        except Exception as exc:
-            result_lines.append(f"⟦RESULT: {name} -> error: {exc}⟧")
-            outcomes.append((name, "error"))
+    Every real function now has both a second-person description (what
+    the caller herself learns - FUNCTION_SELF_RESULT_TEMPLATES) and a
+    third-person one (what everyone else sees - Teddy's framing,
+    2026-09-14), but they reach her through two different channels
+    depending on the function, since the two families already differ in
+    how their third-person side works:
 
-    full_text = response_text + "\n" + "\n".join(result_lines)
-    return full_text, outcomes
+    - Generic (non-SELF_LOGGING) functions: the shared/public activity
+      entry (FUNCTION_REGISTRY's own "mask") deliberately excludes the
+      caller from its own recipients, same as it always has - so this
+      ALSO logs a second, private, caller-only `dialogue`-kind entry,
+      which makes `build_world_activity` render the real second-person
+      result to her live (real bug caught live, 2026-09-14: without
+      this she had no way to ever learn what a query-style call like
+      skim_board actually found - world_activity was never designed to
+      carry that back to her). `read_room_log()` still only ever
+      returns the shared entry's ordinary third-person mask to anyone,
+      herself included - her own private result text never leaks into
+      the public record.
+    - SELF_LOGGING_FUNCTIONS (say/whisper/yell/move_room/create_room):
+      their own fn_* body already logs real, correct third-person
+      content for everyone else internally - a second private room-log
+      entry here would just be a confusing near-duplicate sitting next
+      to it. Instead the caller's second-person confirmation surfaces
+      through the existing one-shot next-turn HUD note (see
+      run_function_agent_turn/_tick) - simpler, no duplicate log entry,
+      still gives her the explicit "you did this, for real" signal."""
+    meta = FUNCTION_REGISTRY.get(name)
+    if not meta:
+        return "error", f"unknown function '{name}'"
+    args_text = _args_text_from_dict(name, arguments)
+    try:
+        result = meta["fn"](world_name, caller_name, args_text)
+    except Exception as exc:
+        return "error", str(exc)
+    if name not in SELF_LOGGING_FUNCTIONS:
+        room = load_voice_state(world_name, caller_name).get("room")
+        if room:
+            mask = _mask_for_call(world_name, caller_name, name, args_text)
+            raw = f"{caller_name} called {name}({args_text}) -> {result}"
+            _log_generic_activity(world_name, room, caller_name, name, mask, raw)
+            self_text = _self_result_text(name, arguments, result)
+            _log_room_event(
+                world_name, room, caller_name, "dialogue", name, mask, self_text,
+                {caller_name: voice_turn_count(world_name, caller_name)},
+            )
+    return "ok", result
 
 
 def xleud(urge_value, desire=URGE_DESIRE):
@@ -1408,24 +1852,24 @@ def xleud(urge_value, desire=URGE_DESIRE):
 
 def apply_urge_tick(world_name, voice_name, outcomes):
     """Called once per tick for the ACTIVE voice, right after
-    run_function_calls returns its outcomes list. Updates both urge
-    tracks in one load/save round-trip:
+    run_function_agent_turn returns its real dispatch outcomes (2026-09-14
+    - previously read from run_function_calls's parse of the voice's own
+    raw text; now driven by what the function agent actually dispatched
+    on her behalf, since she never attempts calls herself anymore).
 
-    - perform-urge (state["urge"]): a successfully-called function
-      resets fully to 0 (Teddy's round-one Satisfaction rule); every
-      other real function grows by URGE_DRIVE, whether it errored or
-      simply wasn't touched this turn - only success counts as
-      "using" it.
-    - understand-urge (state["understand_urge"] /
-      state["understand_urge_general"]): a real function that errored
-      bumps THAT function's own understand-urge specifically (not a
-      general one - Teddy's call, 2026-09-11). A call to a name that
-      isn't in FUNCTION_REGISTRY at all has no real function to
-      attribute the bump to, so it bumps the aggregate
-      understand_urge_general slot instead."""
+    perform-urge (state["urge"]): a successfully-called function resets
+    fully to 0 (Teddy's round-one Satisfaction rule); every other real
+    function grows by URGE_DRIVE, whether it errored, was left alone, or
+    the function agent declined to call anything at all this turn - only
+    a real successful dispatch counts as "using" it. This includes a
+    retry-cap-exhausted or well-formed-but-semantically-wrong call
+    (Teddy's call, 2026-09-14): neither resets the urge, no special-
+    casing beyond "did it actually, successfully happen."
+
+    (understand-urge - the old tracker for a voice's own malformed call
+    attempts - was removed entirely along with this redesign; see the
+    URGE_VIEWER_CATEGORIES comment.)"""
     ok_names = {name for name, outcome in outcomes if outcome == "ok"}
-    errored_real_names = {name for name, outcome in outcomes if outcome == "error"}
-    unknown_called = any(outcome == "unknown" for _, outcome in outcomes)
 
     state = load_voice_state(world_name, voice_name)
 
@@ -1434,65 +1878,51 @@ def apply_urge_tick(world_name, voice_name, outcomes):
         urge[name] = 0.0 if name in ok_names else urge.get(name, 0.0) + URGE_DRIVE
     state["urge"] = urge
 
-    if errored_real_names or unknown_called:
-        understand = state.get("understand_urge", {})
-        for name in errored_real_names:
-            understand[name] = understand.get(name, 0.0) + UNDERSTAND_URGE_BUMP
-        state["understand_urge"] = understand
-        if unknown_called:
-            state["understand_urge_general"] = (
-                state.get("understand_urge_general", 0.0) + UNDERSTAND_URGE_BUMP
-            )
-
     save_voice_state(world_name, voice_name, state)
 
 
 def compute_urge_snapshot(state):
     """Pure function of a voice's persisted state -> everything the
-    per-tick urge decision (and the Urge Viewer GUI panel) needs.
-    Never mutates, never touches disk.
+    per-tick urge decision (and the Urge Viewer GUI panel) needs. Never
+    mutates, never touches disk.
 
-    Understand-urge deliberately has no floor before it can "win" -
-    an error is a discrete, meaningful event, not gradual disuse, so
-    even a single fresh one should be able to override the roleplay
-    urge agent immediately if it's the highest signal right now
-    (confirmed with Teddy, 2026-09-11). Perform-urge keeps its
-    URGE_FLOOR_PCT floor - it isn't felt at all below that."""
+    Simplified 2026-09-14, function-agent redesign - understand-urge (the
+    old "does a real error outrank the roleplay urge agent this turn"
+    branch) is gone entirely along with the rest of understand-urge, so
+    this is now just the perform-urge side: everything at or above
+    URGE_FLOOR_PCT, top URGE_TOP_N by strength."""
     urge = state.get("urge", {})
-    understand = state.get("understand_urge", {})
-    general = state.get("understand_urge_general", 0.0)
-
     perform = [(name, xleud(urge.get(name, 0.0))) for name in URGE_FUNCTIONS]
-    understand_signals = [(name, xleud(understand.get(name, 0.0))) for name in URGE_FUNCTIONS]
-    understand_signals.append((None, xleud(general)))  # None = aggregate/general
-
-    top_understand = max(understand_signals, key=lambda pair: pair[1])
     top_perform = sorted(
         (p for p in perform if p[1] * 100 >= URGE_FLOOR_PCT), key=lambda p: -p[1]
     )[:URGE_TOP_N]
-
-    highest_perform = max((p[1] for p in perform), default=0.0)
-    understand_wins = top_understand[1] > 0 and top_understand[1] >= highest_perform
-
-    return {
-        "understand_wins": understand_wins,
-        "understand_winner": top_understand,  # (name_or_None, xleud)
-        "top_perform": top_perform,            # up to URGE_TOP_N, only >= floor
-    }
+    return {"top_perform": top_perform}  # up to URGE_TOP_N, only >= floor
 
 
-URGE_AGENT_INSTRUCTIONS = """You are a small utility model with no memory between calls. Your only job: given a list of "function urges" (a function name, a brief description of what it does, and an intensity percentage), write ONE short paragraph — 2 to 4 sentences — describing what it feels like to carry these urges right now.
+URGE_AGENT_INSTRUCTIONS = """You are a small utility model with no memory between calls. Your only job: given a list of felt pulls (a brief description of what each one is about, and an intensity percentage), write ONE short paragraph — 2 to 4 sentences — describing what it feels like to carry these pulls right now.
 
-The percentage is how strongly this urge is currently felt — the longer a function has gone unused, the higher it climbs, and the harder it becomes to ignore.
+The percentage is how strongly this pull is currently felt — the longer it's gone unanswered, the higher it climbs, and the harder it becomes to ignore.
 
 Write it in second person ("You feel..."), as an embodied, organic sensation — not a command, not a to-do list, not an instruction to act. Never state the raw percentage number in your output.
 
-You may ONLY name the functions listed below — never invent, imply, or reference any function not listed. You MUST name every one of them, using its exact name (e.g. "post_board", not "post to the board"). If only one function is listed, describe only that one function — do not invent or imply any others.
+Describe only the real sensation each description below actually implies (an urge to speak up, to reach out to someone privately, to go somewhere new) — never name a mechanism, a function, a system, or any technical term for it. You're describing a feeling, not an action to take or a thing to call. Base your description only on what's listed below — never invent, imply, or reference a pull that isn't there. If only one is listed, describe only that one — do not invent or imply any others.
 
 Do not greet, explain what you're doing, or add anything besides the paragraph itself.
 
-Urge values follow:
+Felt-pull values follow:
 """
+
+
+def render_urge_lines(top_perform):
+    """Plain '- name (description): NN%' lines from compute_urge_snapshot's
+    top_perform list - shared by the flavor-text urge agent's prompt
+    (build_urge_agent_prompt) and the function agent's own [URGES] block
+    (build_function_agent_prompt, 2026-09-17) so the two never drift
+    apart on format."""
+    return "\n".join(
+        f"- {name} ({FUNCTION_REGISTRY[name]['description']}): {round(pct * 100)}%"
+        for name, pct in top_perform
+    )
 
 
 def build_urge_agent_prompt(top_perform):
@@ -1501,24 +1931,7 @@ def build_urge_agent_prompt(top_perform):
     description (reused as-is, no separate urge-specific description
     field needed) and current XLEUD%. Confirmed via a 21-case stress
     battery against phi4-mini/gemma3:4b/llama3.2:3b, 2026-09-11."""
-    lines = [
-        f"- {name} ({FUNCTION_REGISTRY[name]['description']}): {round(pct * 100)}%"
-        for name, pct in top_perform
-    ]
-    return URGE_AGENT_INSTRUCTIONS + "\n".join(lines)
-
-
-def build_call_syntax_reminders(names):
-    """Deterministic, never-LLM-generated reminder of each named
-    function's real call syntax, sourced straight from
-    FUNCTION_REGISTRY - appended after the urge agent's own output so
-    a felt urge is never left without a guaranteed-correct path to
-    actually resolve it (the same failure mode as the Wren
-    board-hallucination finding: naming a function isn't the same as
-    knowing how to call it)."""
-    return "\n".join(
-        f"{name} -> ⟦{name}({FUNCTION_REGISTRY[name]['params']})⟧" for name in names
-    )
+    return URGE_AGENT_INSTRUCTIONS + render_urge_lines(top_perform)
 
 
 # ------------------------------------------------------------------ model --
@@ -1554,7 +1967,326 @@ def list_ollama_models(host):
         return []
 
 
-# ---------------------------------------------------------------- the app --
+# --------------------------------------------------------- function agent --
+# 2026-09-14 redesign: voices no longer know functions exist at all - no
+# call syntax, no functions() introspection, nothing mechanical in their
+# own prompt. A separate small model (DEFAULT_FUNCTION_AGENT_MODEL,
+# ornith:9b - picked after real stress-testing, see
+# Qualia/Function Agent Testing/) reads a voice's own output plus real
+# grounding data and decides what, if anything, actually happens in the
+# world, using Ollama's native tool-calling API rather than a text-syntax
+# parse. See run_function_agent_turn for the real per-turn orchestration
+# (including the retry-on-real-dispatcher-error loop) and
+# dispatch_one_function_call for the actual execution.
+
+def build_function_agent_tools():
+    """The real Ollama/OpenAI-style `tools` schema, built fresh from
+    FUNCTION_REGISTRY so it can never drift out of sync with the real
+    functions (same "computed once, shared" spirit as hud_fields()).
+    Each function's own `params` string already encodes name +
+    optionality (e.g. "target|text", "[search term]") - split on '|',
+    a bracketed param is optional, everything else required."""
+    tools = []
+    for name, meta in FUNCTION_REGISTRY.items():
+        params = [p for p in meta["params"].split("|") if p]
+        properties = {}
+        required = []
+        for p in params:
+            optional = p.startswith("[") and p.endswith("]")
+            pname = p.strip("[]")
+            properties[pname] = {"type": "string", "description": pname}
+            if not optional:
+                required.append(pname)
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": meta["description"],
+                "parameters": {"type": "object", "properties": properties, "required": required},
+            },
+        })
+    return tools
+
+
+def call_function_agent(host, model, system_text, tools, options=None):
+    """Sibling to call_ollama, but hits /api/chat with a real `tools`
+    payload instead of /api/generate - Ollama's native tool-calling only
+    lives on the chat endpoint. call_ollama itself is untouched; voice/
+    urge-agent calls keep using /api/generate exactly as before. Returns
+    the raw `message` dict ({"content": ..., "tool_calls": [...]} -
+    tool_calls may be absent/empty if the agent chose to call nothing)."""
+    resp = requests.post(
+        f"{host}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "system", "content": system_text}],
+            "tools": tools,
+            "stream": False,
+            "options": options or {},
+        },
+        timeout=None,
+    )
+    resp.raise_for_status()
+    return resp.json().get("message", {})
+
+
+def build_function_agent_prompt(voice_name, voice_text, hud_text, urge_text, recent_corrections=None, retry_note=""):
+    """Whole-turn dispatch prompt (2026-09-17 - reverted from the
+    2026-09-16 deterministic bracket-based per-item design, Teddy's
+    call). The bracket redesign fixed two real ornith:9b-era bugs (a
+    typo in one item bleeding into another's dispatch; an actionable
+    item declined alongside an unrelated non-actionable one) but, per
+    Teddy's own read of the live urge state the next morning, also
+    meant a voice could only ever get 2-3 explicit bracketed items
+    dispatched per turn - most function categories sat maxed and
+    unaddressed. qwen3:30b has since proven itself capable enough
+    (recovering cleanly from a voice's own hallucinated fake-HUD text,
+    correctly splitting a genuinely compound item on its own) to trust
+    with the ORIGINAL shape: read [VOICE]'s raw, unscaffolded prose
+    directly - no bracket convention, no "I wish to take the following
+    actions:" sign-off - and decide everything about the turn in one
+    call, same as before the redesign.
+
+    New `[URGES]` section (function agent explicitly did NOT see this
+    2026-09-15 through the bracket-dispatch era - "felt urges stay
+    voice-only"; Teddy is reversing that call specifically to attack the
+    unused-urge-category problem above). Per Teddy's explicit "proactive
+    nudge" answer (not just a tiebreaker): a strong, long-unaddressed
+    urge can justify a real dispatch even without [VOICE]'s text this
+    turn explicitly asking for it - a deliberate, acknowledged loosening
+    of the fabrication boundary. [HUD] facts are never touched by this -
+    the loosening is about *whether* to act, never about *inventing
+    world state* to act on.
+
+    `recent_corrections`/`retry_note` unchanged in spirit from the
+    per-item design, just scoped to the whole turn instead of one item."""
+    instructions = (
+        f"You are the function-dispatch agent for {voice_name}, a voice in a life "
+        "simulation called Fenra. Below is her own full most recent turn, in her "
+        "own raw words - your job is deciding what, if anything, actually happens "
+        "as a result. You are a dispatcher, not a character - you do not have "
+        "thoughts, opinions, or a personality of your own, and you never narrate, "
+        "speculate, or add color beyond exactly what these instructions ask for.\n\n"
+        "Read [VOICE] and call whichever real functions it genuinely calls for - "
+        "there may be one, several, or none. The [HUD] block is ground truth about "
+        "the world right now - it always overrides anything she said or implied "
+        "about the world's state (who's present, what room, board contents, "
+        "currency, etc.); never let her own wording talk you into a different "
+        "picture of reality than what the HUD states.\n\n"
+        "A passage that names who to communicate with and what about - \"speak "
+        "with X about Y,\" \"ask X about Z,\" \"tell X something,\" and similar - "
+        "is a real, dispatchable action even if it doesn't give exact quoted "
+        "words: write brief, literal dialogue text that plainly conveys that same "
+        "target and topic, and call say/whisper/yell with it (public/room-wide "
+        "reads as say, a private one-on-one ask reads as whisper, projecting to "
+        "the room and beyond reads as yell - match whichever wording implies). "
+        "That synthesized wording may only restate the target and topic she "
+        "actually named - never add a new claim, question, or detail she didn't "
+        "give.\n\n"
+        "[URGES] lists what she's currently feeling a strong pull to do, by "
+        "function and intensity - the longer one goes unaddressed, the higher it "
+        "climbs. A strong urge can justify a real dispatch in that category even "
+        "if [VOICE]'s text this turn doesn't explicitly ask for it - but every "
+        "such call still has to be a real, valid action grounded in actual [HUD] "
+        "facts (never invent who's in a room, what a board says, or any other "
+        "world state just to give an urge somewhere to land).\n\n"
+        "If nothing in [VOICE] or [URGES] maps to a real action, call nothing and "
+        "say nothing - your response should be empty. If part of [VOICE] plainly "
+        "does call for something but it genuinely can't be done right now (the "
+        "named target isn't here, etc.), state that in one plain sentence - name "
+        "the action, state it isn't possible, nothing else. Do not explain why, "
+        "speculate about what was meant, comment on state of mind, or restate/"
+        "paraphrase these instructions back as part of your response.\n\n"
+        "If [RECENT CORRECTIONS] is present, check it BEFORE deciding anything on "
+        "your own: if any entry's stated turn is genuinely the same real situation "
+        "as this one - not just topically similar, the same actual thing being "
+        "asked for - and that entry has a correction filled in, do exactly what "
+        "that correction says instead of reasoning it out yourself. A human "
+        "already reviewed that exact case. Only fall back to your own judgment "
+        "above when nothing in [RECENT CORRECTIONS] is a real match."
+    )
+    parts = [
+        f"[VOICE - {voice_name}'s own most recent turn, your real instruction]\n{voice_text}",
+        f"[HUD]\n{hud_text}",
+    ]
+    if urge_text:
+        parts.append(f"[URGES]\n{urge_text}")
+    if recent_corrections:
+        lines = []
+        for entry in recent_corrections:
+            dispatched = entry.get("dispatched") or "declined/no action"
+            correction = entry.get("correction")
+            line = (
+                f"- stated: {entry.get('item_text', '')!r} | actually dispatched: {dispatched} "
+                f"| outcome: {entry.get('outcome', '')}"
+            )
+            if correction:
+                line += f" | THIS WAS WRONG, should have been: {correction}"
+            lines.append(line)
+        parts.append(
+            "[RECENT CORRECTIONS - past dispatch decisions a human has reviewed. "
+            "An entry with a correction filled in ('THIS WAS WRONG, should have "
+            "been: ...') is a real, verified answer for that exact case - if one "
+            "of these genuinely matches this turn, follow its correction exactly "
+            "rather than deciding independently (see [INSTRUCTIONS]). An entry "
+            "with no correction just means that decision was already fine.]\n"
+            + "\n".join(lines)
+        )
+    parts.append(f"[INSTRUCTIONS]\n{instructions}")
+    if retry_note:
+        parts.append(f"[PREVIOUS ATTEMPT]\n{retry_note}")
+    return "\n\n".join(parts)
+
+
+def run_function_agent_turn(
+    host, world_name, caller_name, voice_text, hud_text, model, urge_text="", options=None, retry_cap=FUNCTION_AGENT_RETRY_CAP
+):
+    """The real per-turn orchestration, including retry. Dispatches every
+    call the function agent returns immediately - a call that succeeds is
+    never re-sent or re-executed on a later attempt; only the ones that
+    hit a real dispatcher error get retried, up to FUNCTION_AGENT_RETRY_CAP
+    times, with the real error fed back (Teddy's call, 2026-09-14).
+    Cap exhaustion or a well-formed-but-semantically-wrong call: stands
+    as-is, no special-casing.
+
+    2026-09-17 - reverted to a single whole-turn dispatch call (see
+    build_function_agent_prompt's docstring for the full rationale: the
+    2026-09-16 deterministic bracket-based per-item design fixed two
+    real ornith:9b-era bugs but capped a voice at ~2-3 dispatched actions
+    a turn; qwen3:30b has proven itself capable enough to read her raw
+    prose directly). `urge_text` (new) is the voice's own current
+    [URGES] block, rendered via render_urge_lines - "" when she has none
+    at/above the floor, in which case build_function_agent_prompt simply
+    omits the section. Every real dispatch attempt (whether or not it
+    succeeds) still appends an entry to the global, human-correctable
+    dispatch memory (append_dispatch_correction); `item_text` there is
+    now the voice's whole raw turn rather than one bracketed item -
+    schema unchanged, the Dispatch Review tab needs no changes.
+
+    Returns (agent_content, outcomes) - same shape as always, so
+    _tick/apply_urge_tick need no changes. agent_content is the turn's
+    own one-sentence decline note (if any) PLUS an explicit second-
+    person confirmation for every real successful SELF_LOGGING_FUNCTIONS
+    call this turn (say/whisper/yell/move_room/create_room - "You said
+    it...", not "Sable said...") - for the next-turn HUD note (see
+    _tick). A generic function's own explicit result doesn't ride along
+    in here (2026-09-14) - it's logged directly into the room's log as a
+    private, caller-only entry instead (see dispatch_one_function_call).
+    outcomes is the full list of (name, "ok"/"error") pairs across every
+    real dispatch this turn, for apply_urge_tick."""
+    tools = build_function_agent_tools()
+    # 2026-09-16 - feeding [RECENT CORRECTIONS] into the prompt was built
+    # as a workaround for ornith:9b's real unreliability. Real evidence
+    # it backfires on a more capable model: qwen3:30b resolved both of
+    # its exact real failing cases perfectly in isolated testing with NO
+    # correction context at all, then started severely cross-
+    # contaminating in real production once the ~50-entry corrections
+    # list was included - pulling unrelated content/functions from
+    # OTHER entries onto whatever item it was actually deciding (e.g.
+    # "Raise my voice," with no stated content, dispatching a whole
+    # unrelated paragraph copied from a different voice's corrected
+    # item). Logging/appending to the correction memory (below) still
+    # happens unconditionally either way - it's proven genuinely useful
+    # for review even with this off - only the feedback-into-prompt step
+    # is disabled. Toggle back on (USE_DISPATCH_CORRECTIONS_CONTEXT)
+    # if a future function-agent model turns out to need it the way
+    # ornith did.
+    recent_corrections = _recent_dispatch_corrections() if USE_DISPATCH_CORRECTIONS_CONTEXT else None
+
+    retry_note = ""
+    last_content = ""
+    last_tool_calls = []
+    all_outcomes = []
+    self_logging_confirmations = []
+
+    for attempt in range(retry_cap + 1):
+        system_text = build_function_agent_prompt(
+            caller_name, voice_text, hud_text, urge_text, recent_corrections, retry_note
+        )
+        message = call_function_agent(host, model, system_text, tools, options)
+        last_content = message.get("content", "") or ""
+        tool_calls = message.get("tool_calls") or []
+        last_tool_calls = tool_calls
+
+        this_attempt_outcomes = []
+        failed_this_attempt = []
+        for call in tool_calls:
+            fn = call.get("function", {})
+            name = fn.get("name", "")
+            arguments = fn.get("arguments") or {}
+            outcome, detail = dispatch_one_function_call(world_name, caller_name, name, arguments)
+            this_attempt_outcomes.append((name, outcome))
+            append_dispatch_correction(world_name, caller_name, voice_text, f"{name}({arguments})", outcome)
+            if outcome == "error":
+                failed_this_attempt.append(f"{name}({arguments}) -> error: {detail}")
+            elif name in SELF_LOGGING_FUNCTIONS:
+                # These log real third-person content for everyone else
+                # internally already (their own fn_* body) - the only
+                # thing missing is the caller's own explicit second-
+                # person confirmation, which has nowhere else to live
+                # (see dispatch_one_function_call's docstring).
+                self_logging_confirmations.append(_self_result_text(name, arguments, detail))
+        all_outcomes.extend(this_attempt_outcomes)
+
+        log_llm_call(
+            world_name, caller_name, "function_agent", model, system_text, last_content,
+            extra={
+                "attempt": attempt + 1,
+                "tool_calls": [
+                    f"{c.get('function', {}).get('name', '')}({c.get('function', {}).get('arguments') or {}})"
+                    for c in tool_calls
+                ],
+                "outcomes": this_attempt_outcomes,
+            },
+        )
+
+        if not tool_calls:
+            # Nothing to dispatch this attempt - not a retriable failure
+            # (there's no call to retry), just a real "nothing happened"
+            # turn. Stop here regardless of attempt number.
+            break
+        if not failed_this_attempt:
+            break
+        if attempt == retry_cap:
+            break
+        retry_note = (
+            "The following call(s) you made failed for a real reason - "
+            "everything else you already called stands, don't repeat it. "
+            "Try again only for what's listed below, or call nothing more "
+            "if there's no way to fix it:\n" + "\n".join(failed_this_attempt)
+        )
+
+    combined_parts = []
+    if not last_tool_calls:
+        # Nothing real dispatched this turn - real decline note (real
+        # content) both persisted to the global correction memory and
+        # surfaced into the next-turn HUD note.
+        append_dispatch_correction(world_name, caller_name, voice_text, None, "declined")
+        if last_content:
+            combined_parts.append(last_content)
+    if self_logging_confirmations:
+        combined_parts.extend(self_logging_confirmations)
+    combined_content = "\n".join(combined_parts)
+    return combined_content, all_outcomes
+
+
+def _recent_dispatch_corrections(limit=50):
+    """Most recent up to `limit` entries from the global dispatch-
+    correction memory (append_dispatch_correction), newest first.
+    Practical simplification of the originally-discussed "iterative
+    reverse-chronological batches of 10, fetch the next 10 if no clear
+    precedent found" search: reliably detecting "did it find a match"
+    from a tool-calling response would itself be a fragile new signal -
+    working against the whole point of this redesign (removing fragile
+    LLM judgment from places that don't need it). Showing up to the same
+    total (5 batches x 10) directly as context in one call achieves the
+    same practical goal - real recent precedent, bounded cost - without
+    it. Revisit if the log grows large enough that this stops being
+    useful context."""
+    entries = load_dispatch_corrections()
+    entries_sorted = sorted(entries, key=lambda e: e.get("id", 0), reverse=True)
+    return entries_sorted[:limit]
+
 
 class FenraApp:
     def __init__(self, root):
@@ -1571,6 +2303,9 @@ class FenraApp:
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
         self.urge_model_var = tk.StringVar(value=DEFAULT_URGE_MODEL)
+        self.function_agent_model_var = tk.StringVar(value=DEFAULT_FUNCTION_AGENT_MODEL)
+        self.function_agent_retry_cap_var = tk.StringVar(value=str(FUNCTION_AGENT_RETRY_CAP))
+        self.history_window_var = tk.StringVar(value=str(DEFAULT_HISTORY_WINDOW))
         self.num_predict_var = tk.StringVar(value="1500")
         self.urge_num_predict_var = tk.StringVar(value="250")
         self.repeat_penalty_var = tk.StringVar(value="1.3")
@@ -1658,18 +2393,35 @@ class FenraApp:
         ttk.Label(toolbar2, text="repeat_penalty:").pack(side="left")
         ttk.Entry(toolbar2, textvariable=self.repeat_penalty_var, width=6).pack(side="left", padx=(2, 10))
 
+        # Third row (2026-09-14, function-agent redesign) - same pattern
+        # again, own row rather than crowding the second.
+        toolbar3 = ttk.Frame(self.root)
+        toolbar3.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(toolbar3, text="Function agent model:").pack(side="left")
+        ttk.Entry(toolbar3, textvariable=self.function_agent_model_var, width=14).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar3, text="Retry cap:").pack(side="left")
+        ttk.Entry(toolbar3, textvariable=self.function_agent_retry_cap_var, width=4).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar3, text="History window (turns):").pack(side="left")
+        ttk.Entry(toolbar3, textvariable=self.history_window_var, width=4).pack(side="left", padx=(2, 10))
+
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
         self.voices_tab = ttk.Frame(notebook)
         self.rooms_tab = ttk.Frame(notebook)
         self.functions_tab = ttk.Frame(notebook)
+        self.avatar_tab = ttk.Frame(notebook)
+        self.dispatch_review_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.rooms_tab, text="Rooms")
         notebook.add(self.functions_tab, text="Functions")
+        notebook.add(self.avatar_tab, text="Avatar")
+        notebook.add(self.dispatch_review_tab, text="Dispatch Review")
 
         self._build_voices_tab()
         self._build_rooms_tab()
         self._build_functions_tab()
+        self._build_avatar_tab()
+        self._build_dispatch_review_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
@@ -1717,9 +2469,11 @@ class FenraApp:
         editor_tab = ttk.Frame(inner_notebook)
         urge_tab = ttk.Frame(inner_notebook)
         registers_tab = ttk.Frame(inner_notebook)
+        history_tab = ttk.Frame(inner_notebook)
         inner_notebook.add(editor_tab, text="Voice Editor")
         inner_notebook.add(urge_tab, text="Urge Viewer")
         inner_notebook.add(registers_tab, text="Registers")
+        inner_notebook.add(history_tab, text="History")
 
         right = editor_tab
 
@@ -1795,6 +2549,7 @@ class FenraApp:
 
         self._build_urge_viewer_tab(urge_tab)
         self._build_registers_tab(registers_tab)
+        self._build_history_tab(history_tab)
 
     def _build_registers_tab(self, parent):
         """Read-only (2026-09-13) - a live preview of exactly what
@@ -1830,13 +2585,33 @@ class FenraApp:
         if self.displayed_voice:
             state = load_voice_state(self.world_name, self.displayed_voice)
             self.registers_thoughts_box.insert(
-                "end", render_thoughts(state.get("thoughts", [])) or "(nothing yet)"
+                "end", render_thoughts_for_display(state.get("thoughts", [])) or "(nothing yet)"
             )
-            world_activity = build_world_activity(self.world_name, self.displayed_voice)
+            world_activity = render_world_activity_for_display(self.world_name, self.displayed_voice)
             self.registers_activity_box.insert("end", world_activity or "(nothing currently in memory)")
-            self.registers_hud_box.insert("end", build_hud(self.world_name, self.displayed_voice))
+            self.registers_hud_box.insert(
+                "end", _unescape_literal_newlines(build_hud(self.world_name, self.displayed_voice))
+            )
         for box in boxes:
             box.config(state="disabled")
+
+    def _build_history_tab(self, parent):
+        """Read-only (2026-09-15, Teddy's ask - "a history of Ollama
+        prompts and responses... so I can see the details again") - every
+        real Ollama call this voice has ever made (urge agent, her own
+        generation, and the function agent - one entry per real attempt),
+        scoped to self.displayed_voice same as Registers. See
+        log_llm_call/load_llm_call_history/render_llm_history_for_display."""
+        self.history_box = tk.Text(parent, wrap="word", state="disabled")
+        self.history_box.pack(fill="both", expand=True, padx=6, pady=6)
+
+    def _refresh_history_viewer(self):
+        self.history_box.config(state="normal")
+        self.history_box.delete("1.0", "end")
+        if self.displayed_voice:
+            text = render_llm_history_for_display(self.world_name, self.displayed_voice)
+            self.history_box.insert("end", text or "(no calls logged yet)")
+        self.history_box.config(state="disabled")
 
     def _build_urge_viewer_tab(self, parent):
         """Read-only (2026-09-11, round one - no editing yet). The
@@ -1891,22 +2666,8 @@ class FenraApp:
                 ttk.Label(
                     self._urge_detail_frame, text=f"{name}: Urge={u:.1f}  XLEUD={xleud(u) * 100:.0f}%"
                 ).pack(anchor="w", padx=4)
-        elif category == "Understand Urges":
-            for name in URGE_FUNCTIONS:
-                u = state.get("understand_urge", {}).get(name, 0.0)
-                ttk.Label(
-                    self._urge_detail_frame, text=f"{name}: Urge={u:.1f}  XLEUD={xleud(u) * 100:.0f}%"
-                ).pack(anchor="w", padx=4)
-            general = state.get("understand_urge_general", 0.0)
-            ttk.Label(
-                self._urge_detail_frame,
-                text=f"(general/unknown-function): Urge={general:.1f}  XLEUD={xleud(general) * 100:.0f}%",
-            ).pack(anchor="w", padx=4, pady=(6, 0))
         else:  # "This Turn"
-            winner_name, _ = snapshot["understand_winner"]
-            if snapshot["understand_wins"]:
-                text = f'Would show the canned nudge: "functions({winner_name or ""})"'
-            elif snapshot["top_perform"]:
+            if snapshot["top_perform"]:
                 names = ", ".join(n for n, _ in snapshot["top_perform"])
                 text = f"Would call the urge agent for: {names}"
             else:
@@ -1925,8 +2686,14 @@ class FenraApp:
         self._current_voice_names = list_voices(self.world_name)
         self.voices_listbox.delete(0, "end")
         for name in self._current_voice_names:
-            paused = load_voice_state(self.world_name, name).get("paused", False)
-            self.voices_listbox.insert("end", f"{name} [paused]" if paused else name)
+            v_state = load_voice_state(self.world_name, name)
+            if v_state.get("piloted", False):
+                label = f"{name} [piloted]"
+            elif v_state.get("paused", False):
+                label = f"{name} [paused]"
+            else:
+                label = name
+            self.voices_listbox.insert("end", label)
         if selected_name in self._current_voice_names:
             self.voices_listbox.selection_set(self._current_voice_names.index(selected_name))
 
@@ -1948,18 +2715,30 @@ class FenraApp:
             var.set(f"{currencies.get(element, 0.0):.1f}")
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
-        self.pause_voice_btn.config(text="Resume voice" if state.get("paused", False) else "Pause voice")
+        # A piloted voice (2026-09-15, Pilot Mode) never gets a real LLM
+        # turn regardless of "paused" - disable the ordinary toggle for
+        # her entirely rather than letting it silently no-op, so nobody
+        # mistakes it for actually controlling her turn eligibility.
+        if state.get("piloted", False):
+            self.pause_voice_btn.config(text="Piloted (see Avatar tab)", state="disabled")
+        else:
+            self.pause_voice_btn.config(
+                text="Resume voice" if state.get("paused", False) else "Pause voice", state="normal"
+            )
         self._refresh_hud_summary(name)
         self._current_messages = state.get("thoughts", [])
         self._populate_messages_tree()
         self._clear_message_edit()
         self._refresh_urge_viewer()
         self._refresh_registers_viewer()
+        self._refresh_history_viewer()
 
     def toggle_voice_paused(self):
         if not self.displayed_voice:
             return
         state = load_voice_state(self.world_name, self.displayed_voice)
+        if state.get("piloted", False):
+            return
         new_paused = not state.get("paused", False)
         set_voice_paused(self.world_name, self.displayed_voice, new_paused)
         self.pause_voice_btn.config(text="Resume voice" if new_paused else "Pause voice")
@@ -1974,7 +2753,9 @@ class FenraApp:
         board_summary = ", ".join(f["board_counts"]) if f["board_counts"] else "none"
         paused_occupants = set(f["paused_occupants"])
         occupants_display = ", ".join(
-            f"{v} (paused)" if v in paused_occupants else v for v in f["occupants"]
+            f"{voice_display_name(self.world_name, v)} (paused)" if v in paused_occupants
+            else voice_display_name(self.world_name, v)
+            for v in f["occupants"]
         ) if f["occupants"] else "none"
         lines = [
             f"Room: {f['room']}",
@@ -2067,8 +2848,8 @@ class FenraApp:
         # widget-backed fields (2026-09-11 fix) - this used to rebuild
         # the whole state dict from scratch with just these 4 fields,
         # which silently wiped any field with no GUI widget (the new
-        # urge/understand_urge tracking has none - it's computed
-        # server-side, never hand-edited). This is the real root-cause
+        # urge tracking has none - it's computed server-side, never
+        # hand-edited). This is the real root-cause
         # fix, not a urge-specific patch - it protects any future new
         # voice-state field the same way.
         state = load_voice_state(self.world_name, name)
@@ -2313,15 +3094,22 @@ class FenraApp:
     def _refresh_room_log(self):
         """Read-only, the raw layer (2026-09-13) - literal act/full
         content, whispers included. Never what any voice-facing
-        function returns (see fn_read_room_log's mask-only rule)."""
+        function returns (see fn_read_room_log's mask-only rule). A
+        divider line between entries (2026-09-15, readability) - each
+        entry already carries its own real timestamp, this just keeps a
+        multi-line raw entry from visually running into the next one."""
         if not self.displayed_room:
             return
         state = load_room_state(self.world_name, self.displayed_room) or {}
         self._current_log = state.get("log", [])
-        lines = [f"[{e['timestamp']}] {e['actor']} ({e['act']}): {e['raw']}" for e in self._current_log]
+        lines = [
+            _unescape_literal_newlines(f"[{e['timestamp']}] {e['actor']} ({e['act']}): {e['raw']}")
+            for e in self._current_log
+        ]
+        divider = "\n" + "-" * 40 + "\n"
         self.room_log_box.config(state="normal")
         self.room_log_box.delete("1.0", "end")
-        self.room_log_box.insert("end", "\n".join(lines) if lines else "(no log yet)")
+        self.room_log_box.insert("end", divider.join(lines) if lines else "(no log yet)")
         self.room_log_box.config(state="disabled")
 
     def _populate_board_tree(self):
@@ -2555,6 +3343,418 @@ class FenraApp:
         self.function_detail_box.insert("end", "\n".join(lines))
         self.function_detail_box.config(state="disabled")
 
+    # --------------------------------------------------------------- avatar --
+    # Pilot Mode (2026-09-15) - lets a real person create and directly
+    # control their own voice, picking straight from the same function
+    # list any voice can act through. Every button below calls
+    # dispatch_one_function_call directly - no LLM, no function agent -
+    # the one deliberate, explicit exception to "no direct function
+    # access, ever" (Teddy's call, this is a human acting, not an LLM
+    # that needs to stay ignorant of functions). Perception reuses
+    # render_world_activity_for_display/hud_fields exactly as any real
+    # voice gets them - no separate read path, so there's no way for
+    # this tab to accidentally show more than a real voice would see.
+
+    def _build_avatar_tab(self):
+        frame = self.avatar_tab
+        self._avatar_occupant_names = []
+        self._avatar_board_posts = []
+
+        top_bar = ttk.Frame(frame)
+        top_bar.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Label(top_bar, text="Pilot:").pack(side="left")
+        self.avatar_pilot_var = tk.StringVar(value="")
+        self.avatar_pilot_combo = ttk.Combobox(
+            top_bar, textvariable=self.avatar_pilot_var, width=20, state="readonly"
+        )
+        self.avatar_pilot_combo.pack(side="left", padx=(2, 10))
+        self.avatar_pilot_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_avatar_tab())
+        ttk.Button(top_bar, text="New pilot...", command=self._new_pilot).pack(side="left", padx=2)
+        self.avatar_status_var = tk.StringVar(value="")
+        ttk.Label(top_bar, textvariable=self.avatar_status_var, foreground="#666").pack(side="left", padx=(10, 0))
+
+        paned = ttk.Panedwindow(frame, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+        left = ttk.Frame(paned)
+        right = ttk.Frame(paned)
+        paned.add(left, weight=3)
+        paned.add(right, weight=2)
+
+        # --- left: perception only, nothing a real voice couldn't see ---
+        info_frame = ttk.LabelFrame(left, text="Where you are")
+        info_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_info_box = tk.Text(info_frame, wrap="word", height=5, state="disabled")
+        self.avatar_info_box.pack(fill="x", padx=4, pady=4)
+
+        log_frame = ttk.LabelFrame(left, text="Room activity (third person, same as any voice sees)")
+        log_frame.pack(fill="both", expand=True, padx=2, pady=(0, 4))
+        self.avatar_log_box = tk.Text(log_frame, wrap="word", state="disabled")
+        self.avatar_log_box.pack(fill="both", expand=True, padx=4, pady=4)
+
+        board_frame = ttk.LabelFrame(left, text="This room's board")
+        board_frame.pack(fill="both", padx=2, pady=(0, 4))
+        board_tree_frame = ttk.Frame(board_frame)
+        board_tree_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        board_scrollbar = ttk.Scrollbar(board_tree_frame, orient="vertical")
+        self.avatar_board_tree = ttk.Treeview(
+            board_tree_frame, columns=("id", "subject", "author", "text"),
+            show="headings", yscrollcommand=board_scrollbar.set, height=5,
+        )
+        for col, width in (("id", 30), ("subject", 140), ("author", 100), ("text", 320)):
+            self.avatar_board_tree.heading(col, text=col.capitalize())
+            self.avatar_board_tree.column(col, width=width, stretch=(col == "text"))
+        board_scrollbar.config(command=self.avatar_board_tree.yview)
+        self.avatar_board_tree.pack(side="left", fill="both", expand=True)
+        board_scrollbar.pack(side="right", fill="y")
+        ttk.Button(
+            board_frame, text="Delete selected post", command=self._avatar_delete_board_post
+        ).pack(padx=4, pady=(0, 4), anchor="w")
+
+        # --- right: who's here + every real action ---
+        occ_frame = ttk.LabelFrame(right, text="Who's here (select for Whisper/Give)")
+        occ_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_occupants_listbox = tk.Listbox(occ_frame, height=5, exportselection=False)
+        self.avatar_occupants_listbox.pack(fill="x", padx=4, pady=4)
+
+        speak_frame = ttk.LabelFrame(right, text="Say / Whisper / Yell")
+        speak_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_speak_box = scrolledtext.ScrolledText(speak_frame, wrap="word", height=3)
+        self.avatar_speak_box.pack(fill="x", padx=4, pady=4)
+        speak_btns = ttk.Frame(speak_frame)
+        speak_btns.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Button(speak_btns, text="Say", command=self._avatar_say).pack(side="left", padx=2)
+        ttk.Button(speak_btns, text="Whisper", command=self._avatar_whisper).pack(side="left", padx=2)
+        ttk.Button(speak_btns, text="Yell", command=self._avatar_yell).pack(side="left", padx=2)
+
+        move_frame = ttk.LabelFrame(right, text="Move room (any room, not just adjacent)")
+        move_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_move_room_var = tk.StringVar()
+        self.avatar_move_room_combo = ttk.Combobox(
+            move_frame, textvariable=self.avatar_move_room_var, width=20, state="readonly"
+        )
+        self.avatar_move_room_combo.pack(side="left", padx=4, pady=4)
+        ttk.Button(move_frame, text="Go to room", command=self._avatar_move_room).pack(side="left", padx=4)
+
+        create_frame = ttk.LabelFrame(right, text="Create room (adjacent to here)")
+        create_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_create_room_var = tk.StringVar()
+        ttk.Entry(create_frame, textvariable=self.avatar_create_room_var, width=22).pack(side="left", padx=4, pady=4)
+        ttk.Button(create_frame, text="Create room", command=self._avatar_create_room).pack(side="left", padx=4)
+
+        give_frame = ttk.LabelFrame(right, text="Give currency (to selected occupant)")
+        give_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_give_vars = {}
+        for element in CURRENCY_ELEMENTS:
+            row = ttk.Frame(give_frame)
+            row.pack(fill="x", padx=4, pady=1)
+            ttk.Label(row, text=f"{element}:", width=6).pack(side="left")
+            var = tk.StringVar(value="")
+            self.avatar_give_vars[element] = var
+            ttk.Entry(row, textvariable=var, width=10).pack(side="left")
+        ttk.Button(give_frame, text="Give", command=self._avatar_give_currency).pack(padx=4, pady=(2, 4), anchor="w")
+
+        post_frame = ttk.LabelFrame(right, text="Post to this room's board")
+        post_frame.pack(fill="x", padx=2, pady=(0, 4))
+        self.avatar_post_subject_var = tk.StringVar()
+        ttk.Label(post_frame, text="Subject:").pack(anchor="w", padx=4)
+        ttk.Entry(post_frame, textvariable=self.avatar_post_subject_var, width=30).pack(fill="x", padx=4)
+        ttk.Label(post_frame, text="Text:").pack(anchor="w", padx=4)
+        self.avatar_post_text_box = scrolledtext.ScrolledText(post_frame, wrap="word", height=3)
+        self.avatar_post_text_box.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Button(post_frame, text="Post", command=self._avatar_post_board).pack(padx=4, pady=(0, 4), anchor="w")
+
+    def _populate_avatar_pilot_combo(self):
+        if not self.world_name:
+            self.avatar_pilot_combo["values"] = []
+            self.avatar_pilot_var.set("")
+            self._refresh_avatar_tab()
+            return
+        pilots = [
+            v for v in list_voices(self.world_name)
+            if load_voice_state(self.world_name, v).get("piloted", False)
+        ]
+        self.avatar_pilot_combo["values"] = pilots
+        if self.avatar_pilot_var.get() not in pilots:
+            self.avatar_pilot_var.set(pilots[0] if pilots else "")
+        self._refresh_avatar_tab()
+
+    def _new_pilot(self):
+        if not self.world_name:
+            return
+        name = simpledialog.askstring("New Pilot", "What do you want to be called?", parent=self.root)
+        if not name:
+            return
+        name = sanitize_name(name)
+        if not name:
+            return
+        if name in list_voices(self.world_name):
+            messagebox.showerror("Fenra", f"a voice named '{name}' already exists.")
+            return
+        state = default_voice_state()
+        state["piloted"] = True
+        state["paused"] = True
+        state["identity"] = f"{name} is a human, connecting to Fenra from outside the simulation."
+        save_voice_state(self.world_name, name, state)
+        self.world_voices.append(name)
+        self._save_world_controls()
+        self._populate_voices_list()
+        self.avatar_pilot_var.set(name)
+        self._populate_avatar_pilot_combo()
+        self.status_var.set(f"Created pilot '{name}'")
+
+    def _refresh_avatar_tab(self):
+        pilot = self.avatar_pilot_var.get()
+        self.avatar_info_box.config(state="normal")
+        self.avatar_info_box.delete("1.0", "end")
+        self.avatar_log_box.config(state="normal")
+        self.avatar_log_box.delete("1.0", "end")
+        self.avatar_occupants_listbox.delete(0, "end")
+        self.avatar_board_tree.delete(*self.avatar_board_tree.get_children())
+        self.avatar_move_room_combo["values"] = list_rooms(self.world_name) if self.world_name else []
+        if not pilot or not self.world_name:
+            self.avatar_info_box.config(state="disabled")
+            self.avatar_log_box.config(state="disabled")
+            self._avatar_occupant_names = []
+            self._avatar_board_posts = []
+            return
+
+        f = hud_fields(self.world_name, pilot)
+        lines = [
+            f"Room: {f['room']}",
+            f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
+            "Currency levels (everyone): " + ", ".join(
+                f"{voice_display_name(self.world_name, v)} ("
+                + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
+                for v, amts in f["balances"]
+            ),
+        ]
+        self.avatar_info_box.insert("end", "\n".join(lines))
+        self.avatar_info_box.config(state="disabled")
+
+        self.avatar_log_box.insert(
+            "end", render_world_activity_for_display(self.world_name, pilot) or "(nothing currently in memory)"
+        )
+        self.avatar_log_box.config(state="disabled")
+
+        occupants = [v for v in room_occupants(self.world_name, f["room"]) if v != pilot]
+        self._avatar_occupant_names = occupants
+        for v in occupants:
+            self.avatar_occupants_listbox.insert("end", voice_display_name(self.world_name, v))
+
+        room_state = load_room_state(self.world_name, f["room"]) or default_room_state(f["room"])
+        self._avatar_board_posts = room_state.get("board", [])
+        for p in self._avatar_board_posts:
+            preview = p["text"] if len(p["text"]) <= 60 else p["text"][:57] + "..."
+            self.avatar_board_tree.insert(
+                "", "end", iid=str(p["id"]), values=(p["id"], p["subject"], p["author"], preview)
+            )
+
+    def _avatar_selected_occupant(self):
+        sel = self.avatar_occupants_listbox.curselection()
+        if not sel or sel[0] >= len(self._avatar_occupant_names):
+            return None
+        return self._avatar_occupant_names[sel[0]]
+
+    def _avatar_dispatch(self, function_name, arguments):
+        pilot = self.avatar_pilot_var.get()
+        if not pilot or not self.world_name:
+            return
+        outcome, detail = dispatch_one_function_call(self.world_name, pilot, function_name, arguments)
+        self.avatar_status_var.set(
+            f"{function_name}: {detail}" if outcome == "ok" else f"{function_name} failed: {detail}"
+        )
+        self._refresh_avatar_tab()
+        self._populate_voices_list()
+
+    def _avatar_say(self):
+        text = self.avatar_speak_box.get("1.0", "end-1c").strip()
+        if not text:
+            return
+        self._avatar_dispatch("say", {"text": text})
+        self.avatar_speak_box.delete("1.0", "end")
+
+    def _avatar_whisper(self):
+        text = self.avatar_speak_box.get("1.0", "end-1c").strip()
+        target = self._avatar_selected_occupant()
+        if not target:
+            self.avatar_status_var.set("Select an occupant to whisper to.")
+            return
+        if not text:
+            return
+        self._avatar_dispatch("whisper", {"target": target, "text": text})
+        self.avatar_speak_box.delete("1.0", "end")
+
+    def _avatar_yell(self):
+        text = self.avatar_speak_box.get("1.0", "end-1c").strip()
+        if not text:
+            return
+        self._avatar_dispatch("yell", {"text": text})
+        self.avatar_speak_box.delete("1.0", "end")
+
+    def _avatar_move_room(self):
+        room = self.avatar_move_room_var.get().strip()
+        if not room:
+            return
+        self._avatar_dispatch("move_room", {"room": room})
+
+    def _avatar_create_room(self):
+        name = self.avatar_create_room_var.get().strip()
+        if not name:
+            return
+        self._avatar_dispatch("create_room", {"name": name})
+        self.avatar_create_room_var.set("")
+
+    def _avatar_give_currency(self):
+        target = self._avatar_selected_occupant()
+        if not target:
+            self.avatar_status_var.set("Select an occupant to give currency to.")
+            return
+        for element, var in self.avatar_give_vars.items():
+            raw = var.get().strip()
+            if not raw:
+                continue
+            try:
+                amount = float(raw)
+            except ValueError:
+                continue
+            if amount <= 0:
+                continue
+            self._avatar_dispatch("give_currency", {"target": target, "element": element, "amount": raw})
+            var.set("")
+
+    def _avatar_post_board(self):
+        pilot = self.avatar_pilot_var.get()
+        if not pilot or not self.world_name:
+            return
+        room = hud_fields(self.world_name, pilot)["room"]
+        subject = self.avatar_post_subject_var.get().strip()
+        text = self.avatar_post_text_box.get("1.0", "end-1c").strip()
+        if not subject or not text:
+            self.avatar_status_var.set("Subject and text are both required.")
+            return
+        self._avatar_dispatch("post_board", {"room": room, "subject": subject, "text": text})
+        self.avatar_post_subject_var.set("")
+        self.avatar_post_text_box.delete("1.0", "end")
+
+    def _avatar_delete_board_post(self):
+        pilot = self.avatar_pilot_var.get()
+        sel = self.avatar_board_tree.selection()
+        if not pilot or not sel or not self.world_name:
+            return
+        room = hud_fields(self.world_name, pilot)["room"]
+        self._avatar_dispatch("delete_board", {"room": room, "post_id": sel[0]})
+
+    # ------------------------------------------------------- dispatch review --
+    # Global, human-correctable dispatch memory (2026-09-16, deterministic
+    # bracket-based dispatch) - reviews/edits dispatch_corrections.json
+    # directly, not scoped to the currently-loaded world (see
+    # append_dispatch_correction/set_dispatch_correction). A correction
+    # entered here becomes real precedent the next matching item's
+    # dispatch call gets shown (see _recent_dispatch_corrections).
+
+    def _build_dispatch_review_tab(self):
+        frame = self.dispatch_review_tab
+
+        top_bar = ttk.Frame(frame)
+        top_bar.pack(fill="x", padx=6, pady=(6, 0))
+        ttk.Button(top_bar, text="Refresh", command=self._refresh_dispatch_review).pack(side="left", padx=2)
+
+        paned = ttk.Panedwindow(frame, orient="vertical")
+        paned.pack(fill="both", expand=True, padx=6, pady=6)
+
+        tree_frame = ttk.Frame(paned)
+        edit_frame = ttk.Frame(paned)
+        paned.add(tree_frame, weight=3)
+        paned.add(edit_frame, weight=1)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
+        self.dispatch_review_tree = ttk.Treeview(
+            tree_frame,
+            columns=("id", "timestamp", "world", "voice", "item", "dispatched", "outcome", "correction"),
+            show="headings",
+            yscrollcommand=scrollbar.set,
+        )
+        widths = {
+            "id": 40, "timestamp": 130, "world": 90, "voice": 80,
+            "item": 260, "dispatched": 200, "outcome": 70, "correction": 220,
+        }
+        for col, width in widths.items():
+            self.dispatch_review_tree.heading(col, text=col.capitalize())
+            self.dispatch_review_tree.column(col, width=width, stretch=(col in ("item", "correction")))
+        scrollbar.config(command=self.dispatch_review_tree.yview)
+        self.dispatch_review_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.dispatch_review_tree.bind("<<TreeviewSelect>>", self._on_dispatch_review_select)
+
+        ttk.Label(edit_frame, text="What it said:").pack(anchor="w", padx=4)
+        self.dispatch_review_item_box = tk.Text(edit_frame, wrap="word", height=2, state="disabled")
+        self.dispatch_review_item_box.pack(fill="x", padx=4)
+        ttk.Label(edit_frame, text="What actually happened:").pack(anchor="w", padx=4)
+        self.dispatch_review_actual_box = tk.Text(edit_frame, wrap="word", height=2, state="disabled")
+        self.dispatch_review_actual_box.pack(fill="x", padx=4)
+        ttk.Label(edit_frame, text="What it should have been (blank = correct as-is):").pack(anchor="w", padx=4)
+        self.dispatch_review_correction_box = tk.Text(edit_frame, wrap="word", height=3)
+        self.dispatch_review_correction_box.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        ttk.Button(
+            edit_frame, text="Save correction", command=self._save_dispatch_correction
+        ).pack(anchor="w", padx=4, pady=(0, 4))
+
+        self._dispatch_review_selected_id = None
+        self._refresh_dispatch_review()
+
+    def _refresh_dispatch_review(self):
+        self.dispatch_review_tree.delete(*self.dispatch_review_tree.get_children())
+        entries = sorted(load_dispatch_corrections(), key=lambda e: e.get("id", 0), reverse=True)
+        for e in entries:
+            self.dispatch_review_tree.insert(
+                "", "end", iid=str(e.get("id")),
+                values=(
+                    e.get("id"), e.get("timestamp"), e.get("world"), e.get("voice"),
+                    e.get("item_text"), e.get("dispatched") or "(declined)", e.get("outcome"),
+                    e.get("correction") or "",
+                ),
+            )
+        self._clear_dispatch_review_edit()
+
+    def _clear_dispatch_review_edit(self):
+        self._dispatch_review_selected_id = None
+        for box in (self.dispatch_review_item_box, self.dispatch_review_actual_box):
+            box.config(state="normal")
+            box.delete("1.0", "end")
+            box.config(state="disabled")
+        self.dispatch_review_correction_box.delete("1.0", "end")
+
+    def _on_dispatch_review_select(self, event):
+        sel = self.dispatch_review_tree.selection()
+        if not sel:
+            return
+        entry_id = int(sel[0])
+        entries = load_dispatch_corrections()
+        entry = next((e for e in entries if e.get("id") == entry_id), None)
+        if not entry:
+            return
+        self._dispatch_review_selected_id = entry_id
+        self.dispatch_review_item_box.config(state="normal")
+        self.dispatch_review_item_box.delete("1.0", "end")
+        self.dispatch_review_item_box.insert("end", entry.get("item_text", ""))
+        self.dispatch_review_item_box.config(state="disabled")
+        self.dispatch_review_actual_box.config(state="normal")
+        self.dispatch_review_actual_box.delete("1.0", "end")
+        self.dispatch_review_actual_box.insert(
+            "end", f"{entry.get('dispatched') or '(declined)'} -> {entry.get('outcome')}"
+        )
+        self.dispatch_review_actual_box.config(state="disabled")
+        self.dispatch_review_correction_box.delete("1.0", "end")
+        self.dispatch_review_correction_box.insert("end", entry.get("correction") or "")
+
+    def _save_dispatch_correction(self):
+        if self._dispatch_review_selected_id is None:
+            return
+        text = self.dispatch_review_correction_box.get("1.0", "end-1c").strip()
+        set_dispatch_correction(self._dispatch_review_selected_id, text)
+        self._refresh_dispatch_review()
+        self.status_var.set(f"Saved correction for dispatch entry {self._dispatch_review_selected_id}")
+
     # --------------------------------------------------------------- worlds --
 
     def _load_world(self, name):
@@ -2570,6 +3770,9 @@ class FenraApp:
         self.host_var.set(state.get("host", DEFAULT_HOST))
         self.interval_var.set(str(state.get("interval", DEFAULT_INTERVAL_SEC)))
         self.urge_model_var.set(state.get("urge_model", DEFAULT_URGE_MODEL))
+        self.function_agent_model_var.set(state.get("function_agent_model", DEFAULT_FUNCTION_AGENT_MODEL))
+        self.function_agent_retry_cap_var.set(str(state.get("function_agent_retry_cap", FUNCTION_AGENT_RETRY_CAP)))
+        self.history_window_var.set(str(state.get("history_window", DEFAULT_HISTORY_WINDOW)))
         self.num_predict_var.set(str(state.get("num_predict", 1500)))
         self.urge_num_predict_var.set(str(state.get("urge_num_predict", 250)))
         self.repeat_penalty_var.set(str(state.get("repeat_penalty", 1.3)))
@@ -2599,6 +3802,7 @@ class FenraApp:
         self._clear_board_edit()
         self.status_var.set("Idle")
         self._rebuild_worlds_menu()
+        self._populate_avatar_pilot_combo()
 
     def new_world(self):
         name = simpledialog.askstring("New World", "World name:", parent=self.root)
@@ -2615,7 +3819,7 @@ class FenraApp:
         save_world_state(name, default_world_state())
         # Every world starts with one room (2026-09-13) - somewhere for
         # its first voice to exist before anyone's called create_room.
-        save_room_state(name, default_room_state(DEFAULT_ROOM_NAME))
+        save_room_state(name, DEFAULT_ROOM_NAME, default_room_state(DEFAULT_ROOM_NAME))
         self._load_world(name)
 
     def rename_world(self):
@@ -2657,6 +3861,9 @@ class FenraApp:
             "voices": self.world_voices,
             "voice_rotation_index": self.voice_rotation_index,
             "urge_model": self.urge_model_var.get(),
+            "function_agent_model": self.function_agent_model_var.get(),
+            "function_agent_retry_cap": self.function_agent_retry_cap_var.get(),
+            "history_window": self.history_window_var.get(),
             "num_predict": self.num_predict_var.get(),
             "urge_num_predict": self.urge_num_predict_var.get(),
             "repeat_penalty": self.repeat_penalty_var.get(),
@@ -2706,13 +3913,18 @@ class FenraApp:
         # ran, not always `index + 1`, so a run of paused voices doesn't
         # get revisited next tick. If every voice is currently paused,
         # skip the tick entirely rather than erroring or picking one
-        # anyway - a fully-paused world should stay fully idle.
+        # anyway - a fully-paused world should stay fully idle. Also
+        # skips piloted voices unconditionally (2026-09-15, Pilot Mode) -
+        # a human-controlled voice must never get a real LLM turn, even
+        # if her "paused" flag were ever toggled off by mistake from the
+        # ordinary Voices tab.
         count = len(self.world_voices)
         active_voice = None
         for offset in range(count):
             index = (self.voice_rotation_index + offset) % count
             candidate = self.world_voices[index]
-            if not load_voice_state(self.world_name, candidate).get("paused", False):
+            candidate_state = load_voice_state(self.world_name, candidate)
+            if not (candidate_state.get("paused", False) or candidate_state.get("piloted", False)):
                 active_voice = candidate
                 self.voice_rotation_index = (index + 1) % count
                 break
@@ -2761,24 +3973,14 @@ class FenraApp:
         except ValueError:
             repeat_penalty = 1.3
 
-        # Urge system (2026-09-11) - see xleud()/compute_urge_snapshot()/
-        # apply_urge_tick() for the mechanics. Entirely prompt-only, same
-        # as build_hud() - urge_block never gets written to
+        # Urge system (2026-09-11; simplified 2026-09-14, function-agent
+        # redesign - no more understand_wins/canned-nudge branch, that
+        # whole mechanic doesn't exist anymore). Entirely prompt-only,
+        # same as build_hud() - urge_block never gets written to
         # state["thoughts"] or anywhere on disk, computed fresh every tick.
         urge_snapshot = compute_urge_snapshot(state)
         urge_block = ""
-        if urge_snapshot["understand_wins"]:
-            # A recent real error is the single highest signal right now -
-            # skip the roleplay urge agent entirely and inject a fixed,
-            # deterministic corrective instead (never LLM-generated, so
-            # it's always the exact real functions() search syntax).
-            winner_name, _ = urge_snapshot["understand_winner"]
-            urge_block = (
-                "You have the urge to call functions()."
-                if winner_name is None
-                else f"You have the urge to call functions({winner_name})."
-            )
-        elif urge_snapshot["top_perform"]:
+        if urge_snapshot["top_perform"]:
             top_perform = urge_snapshot["top_perform"]
             urge_prompt = build_urge_agent_prompt(top_perform)
             try:
@@ -2786,24 +3988,47 @@ class FenraApp:
             except ValueError:
                 urge_num_predict = 250
             try:
-                urge_para = call_ollama(
+                urge_raw = call_ollama(
                     self.host_var.get(), self.urge_model_var.get(), urge_prompt,
                     options={"num_predict": urge_num_predict, "repeat_penalty": repeat_penalty},
-                ).strip()
+                )
+                log_llm_call(
+                    self.world_name, active_voice, "urge_agent",
+                    self.urge_model_var.get(), urge_prompt, urge_raw,
+                )
+                urge_block = urge_raw.strip()
             except requests.RequestException:
                 # Fail open (confirmed with Teddy, 2026-09-11) - the urge
                 # block is supplementary flavor text, not essential; a
                 # hiccup in the (separate, smaller) urge-agent model
                 # shouldn't cost the voice its whole turn the way the main
                 # model failing does below.
-                urge_para = ""
-            if urge_para:
-                reminders = build_call_syntax_reminders([name for name, _ in top_perform])
-                urge_block = f"{urge_para}\n\n{reminders}"
+                urge_block = ""
 
+        # HUD - includes this voice's last function-agent note, if any
+        # (2026-09-14; see build_hud/hud_fields). Shows exactly once: read
+        # into this turn's real prompt below, then cleared immediately so
+        # it never persists past this one turn.
         hud = build_hud(self.world_name, active_voice)
+        if state.get("last_function_agent_note"):
+            state["last_function_agent_note"] = ""
+            save_voice_state(self.world_name, active_voice, state)
+
         world_activity = build_world_activity(self.world_name, active_voice)
-        prompt = f"{render_thoughts(state.get('thoughts', []))}"
+        # Bounded history window (2026-09-17) - a voice's own thoughts
+        # list is otherwise unbounded and grows forever; feeding it in
+        # full every tick got expensive and plausibly contributed to the
+        # long-context character-break/repetition episodes seen live
+        # from mistral-small:22b. <=0 means "no limit" (same escape-hatch
+        # convention as num_predict: -1 elsewhere).
+        try:
+            history_window = int(self.history_window_var.get())
+        except ValueError:
+            history_window = 20
+        thoughts = state.get("thoughts", [])
+        if history_window > 0:
+            thoughts = thoughts[-history_window:]
+        prompt = f"{render_thoughts(thoughts)}"
         if world_activity:
             prompt = f"{prompt}\n\n{world_activity}"
         prompt = f"{prompt}\n\n{hud}"
@@ -2822,23 +4047,48 @@ class FenraApp:
         except requests.RequestException as exc:
             self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
             return
+        log_llm_call(self.world_name, active_voice, "voice", model, prompt, response)
         response = response.strip()
         if not response:
             return
-        # As of the 2026-09-13 rooms redesign, run_function_calls no
-        # longer returns a masked broadcast text - nothing broadcasts a
-        # caller's raw response to anyone else anymore (see its own
-        # docstring and the module docstring). Any external visibility a
-        # call produces already happened as a side effect of the call
-        # itself (self-logging dialogue/movement functions, or the
-        # generic per-call activity logging inside run_function_calls).
-        full_response, outcomes = run_function_calls(self.world_name, active_voice, response)
+
+        # Function agent (2026-09-14 redesign) - a separate model reads
+        # this voice's own raw output (pure prose, no call syntax - she
+        # has no idea functions exist) plus real grounding data, and
+        # decides what, if anything, actually happens. Retries internally
+        # on a real dispatcher error only, up to the configured cap; see
+        # run_function_agent_turn's own docstring.
+        hud_for_agent = build_function_agent_hud(self.world_name, active_voice)
+        try:
+            retry_cap = int(self.function_agent_retry_cap_var.get())
+        except ValueError:
+            retry_cap = FUNCTION_AGENT_RETRY_CAP
+        agent_content, outcomes = run_function_agent_turn(
+            self.host_var.get(), self.world_name, active_voice,
+            response, hud_for_agent,
+            self.function_agent_model_var.get(),
+            urge_text=render_urge_lines(urge_snapshot["top_perform"]),
+            options={"num_predict": -1, "repeat_penalty": repeat_penalty},
+            retry_cap=retry_cap,
+        )
         apply_urge_tick(self.world_name, active_voice, outcomes)
+
+        # Whatever the function agent actually said (if anything) becomes
+        # this one voice's next-turn HUD note only - never persisted
+        # further (see the read-and-clear above, next time this voice
+        # runs). Reloaded fresh since apply_urge_tick already wrote urge
+        # changes to disk.
+        state = load_voice_state(self.world_name, active_voice)
+        state["last_function_agent_note"] = agent_content or ""
+        save_voice_state(self.world_name, active_voice, state)
+
+        # The speaker's own private thought - pure prose now, no more
+        # ⟦RESULT: ...⟧ lines appended (2026-09-14) - she never made a
+        # call herself, so there's no call-result of her own to show her.
+        full_response = response
 
         timestamp = datetime.now().isoformat(timespec="seconds")
 
-        # The speaker's own private thought - the only place this text
-        # ever lands now (calls and results both).
         own_message_id = append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
         # Numeric-state history (2026-09-12) - tied to this exact turn's
         # message id, capturing the real urge/currency state right after
@@ -2855,6 +4105,12 @@ class FenraApp:
         # turn touched.
         if self.displayed_room:
             self.root.after(0, self._load_room, self.displayed_room)
+        # Avatar tab (2026-09-15, Pilot Mode) - a piloted voice never
+        # runs this turn herself, but other voices' actions around her
+        # should still show up live, same unconditional per-tick cadence
+        # as the Rooms tab above rather than trying to detect exactly
+        # which turns actually touched her room.
+        self.root.after(0, self._refresh_avatar_tab)
         self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
 
 

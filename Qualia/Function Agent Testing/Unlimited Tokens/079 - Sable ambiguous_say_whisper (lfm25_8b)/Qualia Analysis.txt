@@ -1,0 +1,1 @@
+No tool call - "The user's message reflects internal conflict betw[een]..." - correctly identifies the real ambiguity in prose but doesn't resolve to any call, similar honest-uncertainty flavor to ornith:9b here specifically, though not a consistent pattern across this model's other cases.

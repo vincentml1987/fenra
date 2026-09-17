@@ -1,0 +1,30 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T18:13:34.5068425Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_2hhx9w4m",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "Priya",
+            "text": "The ground remembers steps, but does it remember *why* they were taken? Or is memory just a way for Earth to listen… even when we don’t speak aloud?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10280744400,
+  "load_duration": 4826249800,
+  "prompt_eval_count": 1694,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 4713845000,
+  "eval_count": 61,
+  "eval_duration": 729340000
+}

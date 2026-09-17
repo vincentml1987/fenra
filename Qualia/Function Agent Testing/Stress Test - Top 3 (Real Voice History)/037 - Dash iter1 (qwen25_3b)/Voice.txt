@@ -1,0 +1,2 @@
+⟦move_room(town_center)⟧
+⟦RESULT: move_room -> ok: moved to town_center⟧

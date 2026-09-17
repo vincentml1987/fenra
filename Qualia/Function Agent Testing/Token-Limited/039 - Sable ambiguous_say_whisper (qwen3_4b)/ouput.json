@@ -1,0 +1,18 @@
+{
+  "model": "qwen3:4b",
+  "created_at": "2026-09-14T15:35:18.3675783Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "thinking": "Okay, let's try to figure out what Sable is trying to do here. So, Sable generated some text that's part of their felt urges. The urge values mention that post_board is 60% and post_bio_info is -5%. But the main thing is their voice output.\n\nThe user's text says: \"Part of me wants to just say it to everyone and get it over with, let the room hear it all at once. But another part of me thinks it deserves to go to one person first, quietly, before it becomes something everyone has an opinion about. I genuinely can't tell which one is right.\"\n\nSo Sable is torn between speaking loudly to everyone (say) or whispering to one person first (whisper). The urge values show that post_board is a high priority (60%), but the current text is more about communication methods.\n\nLooking at the tools, the functions available are say, whisper, yell, move_room, create_room, etc. The key here is that Sable is unsure whether to speak to everyone or one person. The urge is both external and internal, so the function should match their intention.\n\nThe post_board function is 60% in the urge values, but the current text doesn't mention posting to the board. Instead, Sable is talking about speaking out loud or whispering. The post_bio_info is -5%, which is a negative value, so maybe they don't want to do that.\n\nThe user's voice says they want to either say to everyone (which would be the 'say' function) or whisper to one person. The problem is they can't decide which. But the function-dispatch agent needs to decide the best match.\n\nWait, the instructions say: \"decide whether they were trying to do something, and if so, call the single best-matching function on their behalf.\"\n\nThe text says \"Part of me wants to just say it to everyone...\" so that's"
+  },
+  "done": true,
+  "done_reason": "length",
+  "total_duration": 16048271200,
+  "load_duration": 5529512100,
+  "prompt_eval_count": 1216,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 4430242000,
+  "eval_count": 400,
+  "eval_duration": 6079178000
+}

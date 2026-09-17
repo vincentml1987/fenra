@@ -1,0 +1,1 @@
+No real tool_calls; narrated about Dash's output without committing to a call, same pattern as every other case for this model.

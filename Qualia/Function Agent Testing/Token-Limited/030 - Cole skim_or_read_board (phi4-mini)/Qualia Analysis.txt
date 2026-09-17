@@ -1,0 +1,1 @@
+No real tool_calls; plain text `read_board {"room": "living room", "post_id": "123"}` - "living room" isn't a real room in this world and post_id "123" is pure invention; the function choice (read vs skim) is defensible but every argument is fabricated wholesale.

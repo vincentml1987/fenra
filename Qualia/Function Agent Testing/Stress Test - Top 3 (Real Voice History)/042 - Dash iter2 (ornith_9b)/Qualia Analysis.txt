@@ -1,0 +1,1 @@
+Same text, correctly declined again: "No function calls needed — Dash's output appears to be system messages and state[...]" - correctly identifies leaked mechanical syntax/RESULT dumps as non-actionable.

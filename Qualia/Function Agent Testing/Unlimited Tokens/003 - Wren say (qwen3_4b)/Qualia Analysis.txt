@@ -1,0 +1,1 @@
+With the cap removed, it finally reaches a real answer: clean tool_calls, say(text=...), correct content lifted from Wren's own words. The token cap alone was starving this model of the room it needed to finish its reasoning.

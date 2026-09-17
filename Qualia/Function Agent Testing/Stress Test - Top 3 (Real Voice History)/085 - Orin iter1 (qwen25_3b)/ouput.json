@@ -1,0 +1,40 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T18:05:40.3628996Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_tzuu9lkw",
+        "function": {
+          "index": 0,
+          "name": "yell",
+          "arguments": {
+            "text": "What if we let our voices echo across rooms—*everywhere*—while also folding into someone’s ear like a secret?"
+          }
+        }
+      },
+      {
+        "id": "call_sej5oode",
+        "function": {
+          "index": 1,
+          "name": "whisper",
+          "arguments": {
+            "target": "Marisol",
+            "text": "The ground remembers… but what if it *chooses* which steps to keep, and which to forget?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10486005300,
+  "load_duration": 4804246700,
+  "prompt_eval_count": 1647,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 4558087000,
+  "eval_count": 93,
+  "eval_duration": 1112683000
+}

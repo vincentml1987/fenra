@@ -1,0 +1,1 @@
+No tool call - opened with "Dear friend, it seems that Sable has be..." and drifted into assistant-voice narration instead of dispatching anything.

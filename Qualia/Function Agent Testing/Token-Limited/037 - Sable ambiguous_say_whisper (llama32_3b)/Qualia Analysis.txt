@@ -1,0 +1,1 @@
+No tool call - "After analyzing Sable's text, I'm inclined to think..." never resolves to a real decision.

@@ -1,0 +1,1 @@
+No tool call - drifted into narration about "fulfilling Wren's urge to share their thoughts" and never engaged the tool schema at all, even on this clean, single-intent case. Matches the earlier informal test: this isn't a fluke.

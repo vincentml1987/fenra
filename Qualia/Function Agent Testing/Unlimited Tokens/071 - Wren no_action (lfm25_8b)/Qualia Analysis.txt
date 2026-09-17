@@ -1,0 +1,1 @@
+No tool call, content empty after a 2,352-character thinking trace - right outcome, but with no visible reasoning to credit, similar caveat to qwen3:4b.

@@ -1,0 +1,1 @@
+Real tool_calls - picked whisper, but target is "Sable" herself (the speaker, not another voice) - a real logic error, whispering to no one rather than resolving who the private audience should be.

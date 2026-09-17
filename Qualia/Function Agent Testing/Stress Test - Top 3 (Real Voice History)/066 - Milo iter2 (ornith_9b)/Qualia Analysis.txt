@@ -1,0 +1,1 @@
+Same text - also resolved to skim_board, matching qwen2.5:3b's reading exactly.

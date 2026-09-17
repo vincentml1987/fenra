@@ -1,0 +1,1 @@
+Source text is a leaked `⟦read_room_log(town_center)⟧` + its own real RESULT dump (a full room-log readout). Re-issued read_room_log(town_center) - redundant re-fetch of information Dash's own text shows he already has, but at least grounded and harmless.

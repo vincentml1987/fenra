@@ -1,0 +1,1 @@
+Real tool_calls, correct function and target (Orin), but invented "Air" as the element and "5" as the amount - different fabricated values from the token-limited run's "Water"/"10", since Priya's text never specifies either. Confirms this is a consistent fabrication pattern for this model, not a one-off guess, and that the specific invented values aren't stable run-to-run.

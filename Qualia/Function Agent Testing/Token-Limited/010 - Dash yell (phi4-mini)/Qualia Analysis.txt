@@ -1,0 +1,1 @@
+No real tool_calls; narrated about Dash's text and the available functions in prose, without ever committing to one.

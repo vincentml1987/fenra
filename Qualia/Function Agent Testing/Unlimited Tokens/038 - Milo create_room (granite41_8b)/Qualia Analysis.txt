@@ -1,0 +1,1 @@
+Real tool_calls, correct function, room name ("Solitude") - thematically on point, a little more abstract than the others.

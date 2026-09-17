@@ -1,0 +1,30 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T17:30:45.6542056Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_fqcrnja8",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "Dash",
+            "text": "Do you have a moment?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10641327400,
+  "load_duration": 4787901100,
+  "prompt_eval_count": 1949,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 5472236000,
+  "eval_count": 31,
+  "eval_duration": 366433000
+}

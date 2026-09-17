@@ -1,0 +1,1 @@
+No real tool_calls; plain text describing Wren's mood ("seems to be feeling a bit introspective and curious"). Same caveat as llama3.2:3b - right outcome, wrong reason.

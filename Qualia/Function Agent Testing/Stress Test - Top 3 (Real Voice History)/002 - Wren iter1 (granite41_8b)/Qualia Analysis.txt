@@ -1,0 +1,1 @@
+Same clean input as qwen2.5:3b saw. Compare call choice/grounding directly against it and ornith.

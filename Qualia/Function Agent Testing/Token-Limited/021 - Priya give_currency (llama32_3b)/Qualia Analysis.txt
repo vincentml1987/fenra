@@ -1,0 +1,1 @@
+No tool call - "**Function Dispatch Agent** / **User Request:**" narration that never resolves to an actual call.

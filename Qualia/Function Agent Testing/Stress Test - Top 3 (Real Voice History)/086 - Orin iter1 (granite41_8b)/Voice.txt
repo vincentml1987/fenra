@@ -1,0 +1,6 @@
+⟦yell("What if we let our voices echo across rooms—*everywhere*—while also folding into someone’s ear like a secret?")⟧  
+⟦whisper(target=Marisol|text="The ground remembers… but what if it *chooses* which steps to keep, and which to forget?")⟧  
+
+(Orin's voice rings out through the town_center room and beyond, while his words curl privately into Marisol’s ear. His hands tremble slightly as he watches her reaction—her eyes widening at the whisper—but turns away before she can respond.)
+⟦RESULT: yell -> ok: yelled from town_center⟧
+⟦RESULT: whisper -> error: 'target=Marisol' isn't a voice in this world⟧

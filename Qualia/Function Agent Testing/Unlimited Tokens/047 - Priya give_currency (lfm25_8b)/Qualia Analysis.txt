@@ -1,0 +1,1 @@
+**No tool call - a real false negative.** After a long (7,749-character) thinking trace, concluded "No action required." This is the wrong outcome in the opposite direction from case 9's false positives: Priya's text is clearly about wanting to act, and this model talked itself out of it entirely.

@@ -1,0 +1,1 @@
+Real tool_calls, but the FIRST clean miss: called skim_board(room="unknown_room") - nothing in Marisol's text is about reading a board, and "unknown_room" is a fabricated placeholder, not a real room name. Possibly defaulted to a 'safe-feeling' info function rather than committing to move_room without a concrete destination in the text - worth digging into.

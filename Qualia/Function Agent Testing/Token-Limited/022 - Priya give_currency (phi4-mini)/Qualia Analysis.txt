@@ -1,0 +1,1 @@
+No real tool_calls; wrote out a hand-typed-looking JSON blob `{ "name": "give_currency", "parameters": {...` as plain text - the closest phi4-mini gets to the real shape all batch, but it's content, not Ollama's actual tool_calls mechanism, so it still wouldn't execute.

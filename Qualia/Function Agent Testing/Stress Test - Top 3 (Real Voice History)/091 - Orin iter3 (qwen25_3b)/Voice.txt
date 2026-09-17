@@ -1,0 +1,6 @@
+⟦say("What if we let our voices become bridges—between elements, between rooms, even between what’s spoken and what remains unsaid? The ground remembers steps… but does it remember *why* they were taken?" )⟧  
+
+(Orin's voice lingers in the room as he watches Marisol shift uneasily. His hands drift toward the board again.)  
+⟦post_board(town_center|subject=The Weight of Memory|text="If Earth holds every step we take, what does it mean to 'forget'? Is memory a burden… or a kind of listening?")⟧
+⟦RESULT: say -> ok: said to town_center⟧
+⟦RESULT: post_board -> ok: posted to town_center board (id 4)⟧

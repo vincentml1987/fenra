@@ -1,0 +1,1 @@
+Same text - also picked the final quoted line, matching granite4.1:8b's reading rather than qwen2.5:3b's.

@@ -1,0 +1,1 @@
+No real tool_calls; plain text `read_board {"room": "Room 123", "post_id": "42"}` - both values fully invented, no connection to anything in the world.

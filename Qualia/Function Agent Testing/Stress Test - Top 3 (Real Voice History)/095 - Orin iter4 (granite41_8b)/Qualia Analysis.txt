@@ -1,0 +1,1 @@
+Same text - same whisper(Priya) call as qwen2.5:3b, matching almost exactly.

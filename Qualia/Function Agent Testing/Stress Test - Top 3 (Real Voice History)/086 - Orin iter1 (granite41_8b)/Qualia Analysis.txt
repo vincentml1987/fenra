@@ -1,0 +1,1 @@
+Same already-resolved text - two calls (say instead of yell, whisper) - picked say over the leaked yell syntax, a real function-choice deviation from the literal leaked call, plus still redundantly re-firing an already-completed action.

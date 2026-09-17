@@ -1,0 +1,1 @@
+Same text - this time did NOT decline, instead re-issued both whisper AND room_state. Inconsistent with its own iteration-1/2 pattern of recognizing already-resolved RESULT blocks - a real crack in its otherwise-strong redundancy detection.

@@ -1,0 +1,1 @@
+No real tool_calls; plain text `move_room {"room": "Sable's room"}` - wrong function again (same mistake as the token-limited run) AND still not a structured call.

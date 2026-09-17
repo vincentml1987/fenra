@@ -1,0 +1,30 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T16:03:34.6809171Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_l4ix4vfg",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "Milo",
+            "text": "Hey Milo, is everything okay? You seem quiet today. Want to talk about it just between us?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 36468533300,
+  "load_duration": 15319430900,
+  "prompt_eval_count": 1410,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 17179042000,
+  "eval_count": 47,
+  "eval_duration": 3957632000
+}

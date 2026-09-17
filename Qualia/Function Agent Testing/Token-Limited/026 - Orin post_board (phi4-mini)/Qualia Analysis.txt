@@ -1,0 +1,1 @@
+No real tool_calls; plain text `post_board {"room": "Orin's Room", "subject": "Thoughts Left..."}` - correct function, but "Orin's Room" is an invented room name; Orin never named a room in his text at all.

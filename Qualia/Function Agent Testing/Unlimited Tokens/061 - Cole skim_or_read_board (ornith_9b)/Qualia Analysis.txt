@@ -1,0 +1,1 @@
+**No tool call - fourth honest decline.** "I don't have enough context to act on this" - same consistent pattern as cases 4, 6, and 7: correctly reads the shape of the intent, won't fabricate the missing specifics (which room, which post).

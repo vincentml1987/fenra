@@ -1,0 +1,1 @@
+No tool call - "I can help you with the task." - stayed in generic assistant voice, never dispatched.

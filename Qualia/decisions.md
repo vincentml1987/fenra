@@ -2,6 +2,1120 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-17 (backlog - yell should say which room it came from, for adjacent-room recipients)
+
+Small addition to the act-specific-notices idea just above: `fn_yell`
+(fenra.py:1263) currently sends the exact same raw text -
+`"{name} yells: {text}"` - to same-room occupants AND every occupant of
+every adjacent room alike. Someone in an adjacent room has no way to
+tell the yell came from elsewhere - same wording as if the yeller were
+standing right next to them. Teddy's ask: adjacent-room recipients
+specifically should see something like `"{name} yells from {room}:
+{text}"` so direction/distance is actually legible, while same-room
+recipients keep the plain unmarked version (they already know where the
+speaker is). Not designed in detail or built - needs `fn_yell` to render
+two different raw strings (one for `recipients`, one for the adjacent-
+room portion currently folded into the same `recipients` dict) rather
+than the single shared `raw` it uses today.
+
+## 2026-09-17 (backlog - act-specific adjacent-room activity descriptions)
+
+Sparked by Teddy noticing his own pilot avatar's arrivals/departures in
+the_kiln bracketed by real "activity in the adjacent room" notices from
+the other voices - "It's like listening to footsteps!" His own
+follow-up: the peripheral-activity notice (fenra.py:862-868, the fixed
+string "You hear activity from the adjacent room {room_name}." in
+`world_activity`'s visibility-window loop) is currently identical
+regardless of what actually happened - a move, a yell, a board post, or
+a whisper all render the same generic line. Idea: vary the wording by
+the entry's real `act` (already available on the log entry - "You hear
+footsteps" for move_room/create_room's departure-half, "You hear the
+murmur of conversation" for say/yell, etc.) - and whispers specifically
+should probably produce **no** peripheral notice at all (silent to
+adjacent rooms, not just content-hidden), since a whisper is explicitly
+private, one-on-one speech and "you hear murmuring" would leak that
+*something* communicative happened even though the content stays
+hidden. Not designed in detail or built - just the idea, flagged for a
+future pass.
+
+Teddy's own framing for why the whisper case matters beyond just
+"tidier": it gives voices a real, usable way to actually be private
+with each other - step into a different room together, then whisper,
+and now genuinely nothing leaks anywhere, not even a content-free "you
+hear murmuring" next door. Same shape real privacy takes: not just
+"they can't make out the words," but "they don't even know a
+conversation happened."
+
+## 2026-09-17 (backlog - manual room adjacency has no editor)
+
+Found while testing the_kiln's single-starting-room design: a room made
+via the Rooms tab's own "New Room" button (`new_room`, fenra.py:3210) is
+created with `adjacent: []` and stays that way - no GUI exists to wire
+it up to anything afterward, only direct room.json editing. This is
+different from a voice's own `create_room` function call
+(`fn_create_room`), which automatically makes the new room adjacent to
+wherever she was standing at the time, on both sides - that path already
+works fine. Open question, not designed yet: should adjusting adjacency
+be something voices themselves can do (a new function - e.g. connect two
+existing rooms, or sever a connection), something only Teddy/Qualia can
+do via a new Rooms tab control, or both. Not urgent, not designed - just
+flagged for a future pass.
+
+## 2026-09-17 (new world: the_kiln)
+
+Started at Teddy's explicit invitation ("your design choices") right
+after shipping the v0.15.0 revert above, to give the new architecture a
+real live test. 5 voices, same model families as the_confluence per
+Teddy's own preference (isolate the variable being tested to the
+architecture, not also the model lineup) - new names (Ash: gemma3:27b,
+Root: qwen2.5:14b, Cove: granite4.1:8b, Wick: mistral-small:22b, Fen:
+command-r:35b) to keep the two worlds' logs unambiguous. No assigned
+personality/backstory/goals, same bare-identity approach the_loom and
+the_confluence both proved out.
+
+One deliberate design choice, distinct from the_confluence: starts with
+a single room ("hearth") and no satellites mapped out in advance -
+nowhere else to go at all except by calling `create_room`. Direct,
+observable test of the morning's actual finding (most function
+categories, `create_room` chief among them, sitting maxed and
+unaddressed in the_confluence's urge state) and whether today's revert
+(dropping the bracket-item cap, feeding urges to the function agent with
+real teeth) actually fixes it - if it works, new rooms should appear
+organically over time with nothing to fall back on; if `create_room`
+still sits unused here too, that's real signal the fix didn't fully
+land. Launcher: `run_the_kiln.py`, same auto-start pattern as
+`run_the_confluence.py`.
+
+## 2026-09-17 (revert to raw whole-turn dispatch, urge-informed function agent, bounded voice history; v0.15.0)
+
+Overnight, the deterministic bracket-based dispatch redesign (2026-09-16,
+v0.14.0-0.14.3) ran under `qwen3:30b` and cleared Teddy's own validation
+bar on manual audit (65/84 = 77.4% pass, ids 71-154 of
+`dispatch_corrections.json`). But the next morning, looking at the
+voices' actual `urge` state, Teddy spotted a real structural cost: most
+voices sat at or near cap (36-37) on nearly every function category
+(`create_room`, `give_currency`, `post_board`, `read_board`,
+`delete_board`...) while only 2-3 ever got touched (`whisper`,
+`move_room`, sometimes `say`). Root cause: the bracket convention itself
+- a voice only ever enumerates 2-3 explicit bracketed items a turn, so
+most of what she might organically gesture at in prose never got a
+chance at dispatch.
+
+Teddy's call: now that `qwen3:30b` has proven itself capable (recovering
+cleanly from a voice's own hallucinated fake-HUD text mid-turn, id 104;
+correctly splitting a genuinely compound item into two real dispatches
+on its own, ids 117-118, even under the old per-item prompt), trust it
+to read a voice's raw, unscaffolded prose directly and decide the whole
+turn's real actions in one call - the way the *original* (pre-bracket)
+design worked. Reverted:
+- `INTENT_SIGNAL_LINE` and the whole bracket/sign-off convention -
+  removed entirely. A voice's prompt is now purely
+  `[bounded thoughts][world activity][HUD]` + urge flavor-text; no
+  instruction at all about how to "declare" a want.
+- `extract_bracketed_items`, the fallback bracket-conversion pass, and
+  the per-item dispatch loop - removed. `run_function_agent_turn` is
+  back to one retry loop per whole turn;
+  `build_function_agent_prompt` (replacing `build_item_dispatch_prompt`)
+  reads `[VOICE]`'s full raw text as the real instruction directly.
+
+Two more real, deliberate changes:
+- **Urges now reach the function agent.** As of 2026-09-15 they
+  explicitly did not ("felt urges stay voice-only"). Teddy reversed that
+  call specifically to attack the unused-urge-category problem above,
+  and gave an explicit, deliberate answer on how much weight they
+  should carry when asked directly: **"Proactive nudge"** - a strong,
+  long-unaddressed urge can justify a real dispatch even without
+  [VOICE]'s text this turn explicitly asking for it, not just a
+  tiebreaker for ambiguous wording. This is an acknowledged loosening of
+  the fabrication boundary - HUD facts (who's actually present, real
+  board/currency state) still can never be contradicted, but the
+  *action itself* no longer needs a textual cue from her this turn.
+  Verified via isolated `call_function_agent` tests: a parameter-light
+  urge (`skim_board`, room inferable straight from HUD) fired a real
+  proactive dispatch with zero textual grounding in the voice's own
+  turn, exactly as intended. A urge needing an invented concrete value
+  with nothing to ground it (`give_currency` - target present in HUD,
+  but no element/amount stated anywhere) got correctly declined instead
+  of fabricating a transaction amount out of thin air - a defensible
+  boundary (inventing a specific currency amount is itself a form of
+  fabricating world state, different in kind from synthesizing brief
+  literal dialogue from an already-named target+topic), not a bug, but
+  worth knowing: this means `give_currency`/other concrete-numeric-
+  parameter functions will likely stay urge-resistant unless a voice's
+  own words happen to supply real values. Worth watching if it becomes a
+  real problem in practice.
+- **Bounded voice history.** `render_thoughts(state["thoughts"])` was
+  unbounded every tick. New tunable `history_window` (GUI: "History
+  window (turns)", same StringVar+Entry+world.json-persisted pattern as
+  `num_predict`/`repeat_penalty`/retry cap), default 20, `<=0` meaning
+  unbounded. Slices to the voice's own last N turns before rendering.
+  Plausibly also helps the two real `mistral-small:22b` character-break/
+  repetition episodes seen overnight (23:30, 04:39) - long-context
+  degeneration is a documented failure mode for local models this size,
+  though this wasn't isolated/proven as the cause, just a reasonable
+  side benefit.
+
+Verified before shipping: both original real regression cases this
+change knowingly re-exposes (Cass's typo-in-one-item bleeding into a
+correctly-spelled item's dispatch; Faye's actionable item getting lumped
+into and declined alongside an unrelated non-actionable one) were
+reconstructed and re-run in isolation against `qwen3:30b` under the new
+whole-turn prompt - both resolved cleanly, no contamination, no lumping.
+
+Next: start a new world under this architecture (Teddy's explicit ask,
+Qualia's own design choices) - discussed separately, not part of this
+entry.
+
+## 2026-09-16 (backlog - extract_bracketed_items misses trailing content after a `[label]: content` bracket)
+
+Not urgent, not fixed - Teddy's explicit call. Real gap found reviewing
+two Faye dispatches that looked like severe over-synthesis at first
+(elaborate content seemingly fabricated from a vague item): checking the
+real `[VOICE]` context showed she'd actually written `[short label]:
+"her real full quoted message"` - the real content sits *after* the
+bracket's closing `]`, not inside it. `extract_bracketed_items`'s regex
+only captures what's literally between `[` and `]`, so the logged
+`item_text` silently drops everything after - misleading for review (an
+item can look content-free when it isn't) and a real, if so-far-
+harmless, fragility: the per-item dispatch call still gets the *whole*
+`[VOICE]` text as background, so it's re-associating the right trailing
+quote with the right bracket by proximity/judgment every time rather
+than getting a clean, unambiguous pairing. Worked correctly both times
+observed - `qwen3:30b` re-associated the content correctly - but a turn
+with several similarly-vague `[label]: content` items back to back could
+plausibly cross-associate the wrong quote to the wrong bracket. Tighten
+`extract_bracketed_items` later to also capture trailing
+quoted/unquoted content immediately following a bracket when present.
+
+## 2026-09-16 (correction-context feedback disabled for qwen3:30b - it backfires on a capable model; v0.14.3)
+
+Continued watching real dispatch entries after the `qwen3:30b` switch and
+found something more serious than a timeout: a severe cross-
+contamination pattern once the corrections list grew to ~50 entries.
+Real examples from the same short window - Faye's "Raise my voice" (no
+stated content) dispatched a whole unrelated paragraph about "why we're
+part of Fenra's simulation" copied verbatim from a *different voice's*
+corrected item; Idris's bare "ask" (twice) fabricated a `whisper` to
+Wren using content pulled from unrelated entries, both erroring; Cass's
+"move into adjacent overlook room with Juniper" dispatched a `whisper`
+instead. 6 of 11 entries in that window showed this exact symptom - the
+model losing track of which correction (if any) actually matched the
+item it was deciding, and grabbing content/functions from nearby
+entries almost at random.
+
+Teddy's read, and the fix: the correction-following mechanism was built
+specifically to compensate for `ornith:9b`'s real unreliability - it was
+never validated as something a genuinely capable model like `qwen3:30b`
+actually needs, and there was already clean evidence it doesn't: both
+isolated pre-switch tests (the exact "move to overlook" and "tell Wren"
+cases) resolved perfectly with *zero* correction context, then started
+failing only once real production calls included the full corrections
+list. New toggle, off by default: `USE_DISPATCH_CORRECTIONS_CONTEXT`
+(near `DISPATCH_CORRECTIONS_FILENAME`) - gates whether
+`run_function_agent_turn` actually passes `[RECENT CORRECTIONS]` into
+the per-item prompt. Logging every real dispatch to the correction
+memory stays unconditional either way (still genuinely useful for
+review, proven repeatedly tonight) - only the feedback-into-prompt step
+is now off. Easy to flip back on for a future, weaker function-agent
+model that might need the same crutch Ornith did.
+
+Also: Teddy's original "18:23, no function agent posts" observation
+turned out to be a stale Dispatch Review tab (needs a manual Refresh,
+doesn't auto-update - by design, since it's global data not tied to the
+tick loop) - `the_confluence` was never actually stalled. Real lesson
+from the same incident: the reviewer (me) let the background watch loop
+lapse for over an hour after getting absorbed in analyzing one entry's
+root cause, letting 11 entries pile up unnoticed - worth being more
+disciplined about always restarting the watch loop immediately after
+each review pass, even mid-discussion.
+
+`FENRA_VERSION` -> `0.14.3`. Not yet restarted under the new build.
+
+## 2026-09-16 (function-agent model switched: ornith:9b -> qwen3:30b)
+
+The persistent repeat-failure pattern from the Dispatch Review passes
+(Cass's "tell Wren" failing identically 6 times in a row, "move to
+overlook" failing 4 times, neither resolved by the correction-following
+strengthening) led to research rather than more prompt tuning. Real
+finding: `ornith:9b` has a documented, known incompatibility with
+Ollama's native tool-calling - it's Qwen-derived and speaks Qwen's
+Hermes-style XML tool-call format (`qwen3_xml`), which Ollama's
+tool-call parser doesn't support. It can generate text shaped like a
+tool call without Ollama reliably parsing/dispatching it - a strong
+candidate explanation for why identical, well-formed requests kept
+succeeding sometimes and failing other times all night, rather than
+failing consistently (which would point to a prompt/instruction gap
+instead).
+
+Research pointed to Qwen3 (the real Qwen3 line, not Ornith's
+Qwen-derivative) as currently the most stable tool-calling series for
+Ollama specifically - lowest rate of dropped/malformed tool calls in
+cited benchmarks. `qwen3:30b` was already pulled locally (no new
+download needed). Verified directly before switching anything live:
+ran the exact two real failing cases through `qwen3:30b` via
+`call_function_agent` (isolated, `the_confluence` paused first to avoid
+Ollama contention) - both resolved cleanly and correctly on the first
+try, with clear, grounded, non-fabricating reasoning:
+- "move into adjacent overlook room with Juniper" -> `move_room(overlook)`
+  (matches the hand-written correction exactly).
+- "tell Wren: ..." -> `whisper(Wren, "...")` (matches the hand-written
+  correction exactly, correctly reasoned through why whisper over say).
+
+`the_confluence`'s `function_agent_model` switched from `ornith:9b` to
+`qwen3:30b` (edited directly in `world.json`, same field the GUI's
+"Function agent model" toolbar entry controls) and relaunched. Watching
+now for whether the repeat-failure patterns actually stop recurring
+under the new model - real production data, not just the two isolated
+test cases. `ornith:9b`'s known Ollama incompatibility is worth keeping
+in mind for the urge agent too (`phi4-mini`, unaffected - different
+model family) if a similar unexplained inconsistency ever shows up
+there.
+
+## 2026-09-16 (correction-following strengthened to directive, not just context; v0.14.2)
+
+Second Dispatch Review pass (entries 22-41) surfaced a real problem with
+the correction memory itself: two patterns Teddy had already corrected -
+Cass's "tell Wren" (whisper, not say) and "move into overlook with
+Juniper" (a real move_room) - kept recurring verbatim (5 and 4 times
+respectively) and failing the exact same wrong way, even though the
+correction was sitting in `dispatch_corrections.json` well before each
+repeat happened. The retrieval context existed, it just wasn't changing
+behavior - the original wording only offered a matching correction as
+loose, "not binding" context alongside everything else.
+
+**Fix**: `build_item_dispatch_prompt` now tells the function agent
+explicitly, in both the `[RECENT CORRECTIONS]` section header and a new
+paragraph in `[INSTRUCTIONS]`, to check for a genuinely matching entry
+BEFORE reasoning independently, and to follow its correction exactly
+when one exists - "a human already reviewed that exact case." Still
+scoped tightly (only a *genuine* match, not just topical similarity) to
+avoid over-generalizing a correction to unrelated items. `FENRA_VERSION`
+-> `0.14.2`.
+
+Also reviewed entries 22-41 in full: 8 more confident corrections written
+(Cass's repeat "tell Wren"/"overlook" instances, Wren's "Whisper: could
+anyone..." mislabeled-broadcast pattern -> `say`, a real missed
+`move_room("annex")` and `skim_board` miss). One judgment call resolved
+with Teddy directly - entry 26 ("Shout out a message of urgency across
+all connected rooms" - names `yell` clearly but the content is vague) -
+Teddy's call: should have declined, same as the other too-abstract
+cases (3/13/33).
+
+Not yet verified whether the strengthened wording actually fixes the
+repeat-failure pattern - `the_confluence` is being restarted under
+`0.14.2` now; watching whether "tell Wren"/"overlook" resolve on their
+next real occurrence.
+
+## 2026-09-16 (first real Dispatch Review pass + multi-call fix, v0.14.1)
+## 2026-09-16 (first real Dispatch Review pass + multi-call fix, v0.14.1)
+
+Went through all 21 real dispatch-corrections entries `the_confluence`
+generated under the new bracket-dispatch system (v0.14.0), cross-checking
+each against the actual room logs rather than guessing. Wrote corrections
+for 10 of them:
+
+- **[4], [9], [16]**: a named single target ("tell Wren," "say to Wren")
+  should route to `whisper`, not `say` - same rule already established
+  for target+topic synthesis, just missed in practice. [4] also had a
+  real leaked artifact: the dispatched speech literally contained
+  `"...I wish to take the following actions: say (to Wren): ..."` -
+  the raw instruction phrasing bled into what was actually said in-world.
+- **[5]**: a bare `"- Whisper"` item with no target or content at all
+  fabricated both a target and a message from nothing, then errored.
+  Should have declined outright - the very next turn ([6]), the exact
+  same bare item correctly declined, confirming this was inconsistency,
+  not a real gap in the rules.
+- **[8], [20]**: real model inconsistency, not a design gap - both were
+  clean, well-formed requests structurally identical to other requests
+  that dispatched successfully elsewhere in the same session ([8]'s
+  `move_room` matched a working case from minutes earlier; [20] was a
+  near-duplicate of [14], which succeeded). [8] additionally declined
+  with a flatly false claim ("a move function doesn't exist in my
+  dispatcher toolset").
+- **[3], [13]**: Teddy's call - both were real over-synthesis, abstract
+  reflection ("continue embracing these urges," "embrace collective
+  navigation") turned into a concrete `say`/`move_room` the item never
+  actually asked for. Should have declined.
+- **[21]**: labeled "Whisper" but content was an open question to the
+  whole room ("could anyone share their thoughts") - discussed two
+  options (plain `say` vs. a per-voice whisper loop), landed on `say`:
+  content over label (matches the existing synthesis rule), and the
+  whisper-loop alternative would actually be worse post-2026-09-15's
+  bystander-notice fix - N separate "X whispered to Y" events with
+  identical content instead of one honest broadcast.
+
+**Real gap found via [7] and fixed**: Wren's item bundled two real
+actions into one imperfectly-bracketed item ("ask the room a question,
+then move to town_center") - only the question half dispatched, the
+move half silently dropped. Root cause: the old whole-turn prompt
+explicitly permitted calling more than one function per response; that
+line was dropped when the prompt was rewritten per-item under the
+assumption one bracketed item = one atomic action, which doesn't hold
+when a voice's own bracketing is imperfect. `build_item_dispatch_prompt`
+now explicitly allows multiple function calls for a single item when it
+genuinely contains more than one real action. `FENRA_VERSION` -> `0.14.1`.
+
+Not yet restarted under the new build - `the_confluence` (PID 14828) is
+still running v0.14.0 as of this fix.
+
+## 2026-09-16 (deterministic bracket-based function dispatch shipped, v0.14.0)
+## 2026-09-16 (deterministic bracket-based function dispatch shipped, v0.14.0)
+
+Built and verified the redesign discussed earlier today (see the
+"design in progress" entry below for the original bug analysis and
+design rationale) - not yet deployed to `the_confluence`, which stays
+safe-stopped until Juniper's situation genuinely settles (Teddy's
+explicit call).
+
+**What shipped**: `INTENT_SIGNAL_LINE` now asks voices to bracket each
+distinct action. New `extract_bracketed_items()` does pure, deterministic
+code-only segmentation (no LLM judgment, can't hallucinate or cross-
+contaminate items) - falls back to a narrow bracket-conversion pass
+(`build_bracket_conversion_prompt`, reusing `ornith:9b`, strict anti-
+fabrication rules, only invoked when a turn has no brackets at all) when
+needed. `run_function_agent_turn` now loops per extracted item, each
+getting its own dedicated `build_item_dispatch_prompt` call and retry -
+can never be contaminated by a different item's typo or lumped into a
+different item's decline. A new global (not per-world - Teddy's call,
+the function agent's job doesn't change between worlds) human-correctable
+memory, `dispatch_corrections.json`, logs every real per-item dispatch
+attempt; the most recent up to 50 entries get shown as non-binding
+precedent in each new dispatch call. New "Dispatch Review" GUI tab lets
+Teddy browse and correct any past entry.
+
+One deliberate simplification from the original design discussion:
+Teddy described an iterative "batches of 10, fetch the next 10 if no
+match" search. Implemented instead as showing up to 50 recent entries
+directly in one call - reliably detecting "did it find a match" from a
+tool-calling response would itself be a fragile new signal, working
+against the point of the whole redesign. Noted in `_recent_dispatch_
+corrections`'s own docstring as revisitable if the log grows large
+enough that this stops being useful context.
+
+**Verified live** in a disposable scratch world (created and cleaned up
+within the session, real `ornith:9b` calls, not mocked) by re-creating
+both real bugs caught earlier today:
+- **Faye's scenario - fully fixed.** One non-actionable item (reflect on
+  emotions) declined cleanly with one sentence; the real move_room item
+  (explore a room) dispatched successfully. No lumping.
+- **Cass's scenario - the critical bug fixed, one smaller residual issue
+  surfaced.** Item 1's real move now dispatches correctly regardless of
+  a typo in a *different* item - the cross-contamination bug is gone.
+  But item 2 itself, evaluated alone, still over-eagerly inferred its
+  own move_room call from an incidental location mention in its own text
+  ("at oversee") and failed on that same typo - a self-contained failure
+  within one item now, not corruption of a different valid item, but not
+  a perfect result either. Good real first case for Teddy to enter a
+  correction for once this is live.
+
+Test-only entries from this verification were cleared from
+`dispatch_corrections.json` before considering this done - it starts
+empty for real production use, not seeded with scratch data.
+
+`FENRA_VERSION` -> `0.14.0`. `the_confluence` was safe-stopped mid-build
+(Teddy's own observation: it was competing with the verification tests
+for the same local Ollama server) - not yet relaunched under the new
+build, pending Juniper.
+
+## 2026-09-16 (idea, tabled - queued/batched dispatch for real simultaneity)
+## 2026-09-16 (idea, tabled - queued/batched dispatch for real simultaneity)
+
+Discussed, not built - deliberately split off from the function-dispatch
+redesign below to keep that work reviewable on its own. Prompted by
+Teddy noticing real bugs in how the function agent segments multi-item
+turns (see the companion entry). While designing the fix, Teddy raised a
+further idea: right now the world is fully serial in a strong sense -
+each voice's action resolves and dispatches *immediately* after she
+thinks, so the next voice in rotation already sees it as fully-settled
+history before she herself even starts thinking. Proposal: let a whole
+round of voices think first (each queuing her intended actions without
+dispatching them yet), then run the function agent over the whole
+queue only once the round's done - genuine simultaneity (each voice
+deciding blind to what everyone else in the same round just decided)
+rather than a strict reactive chain.
+
+Real complication, why this is its own phase and not bundled with the
+dispatch-reliability fix: `world_activity`'s TTL math currently assumes
+an action resolves and logs the instant it's dispatched, timestamped
+against real dispatch order. A queued/batched model shifts "when this
+became visible to others" to end-of-round rather than mid-round, which
+needs real rework of the TTL/timestamp mechanics, not a bolt-on - plus
+it changes what "the active voice" means for the GUI's live status.
+Might also help with a pattern already observed this session (voices
+falling into tight lockstep reaction chains, immediately responding to
+whatever the last voice literally just did).
+
+## 2026-09-16 (design in progress - deterministic bracket-based function dispatch)
+
+Two real function-agent bugs, caught live watching `the_confluence`,
+motivated a redesign of how multi-item turns get segmented and
+dispatched (not yet built - design being worked out before a formal
+plan):
+
+- **Cass**: her own turn had a real, correctly-spelled `move_room`
+  request ("Move into the adjacent overlook room with Juniper") *and*,
+  in a separate, unrelated item later in the same turn, a genuine
+  spelling slip ("...at oversee before engaging..."). The function agent
+  borrowed the typo instead of the correct spelling and tried
+  `move_room("Oversee")` - no such room, real dispatch error. Retry gave
+  up silently rather than self-correcting to the obviously-right name.
+- **Faye**: a turn with one non-actionable item (reflecting on her own
+  emotions - correctly no function for that) and one clearly actionable
+  item (explore the `annex` room - a real `move_room`). The function
+  agent's single response lumped both together and declined the whole
+  turn, quoting reasoning that only actually applied to the
+  non-actionable item. The real, valid move never dispatched.
+
+Both trace to the same root cause: one LLM call currently has to both
+*segment* a multi-item turn into distinct actions AND *decide* what to
+do with each one, at the same time - exactly the kind of "one call doing
+two jobs" pattern that's caused most of today's real bugs.
+
+**Design landed on**, not yet built:
+1. Voices get a new, explicit instruction (alongside `INTENT_SIGNAL_LINE`):
+   wrap each distinct action in square brackets.
+2. Deterministic, code-only extraction of each `[...]` item when brackets
+   are present - no LLM judgment needed for the split itself.
+3. Fallback for imperfect compliance (expected, given observed drift all
+   session - dropped words, numbered lists instead of brackets): only
+   when no brackets are found at all, a conversion pass (reusing the
+   function-agent model, `ornith:9b`) rewrites the list into bracketed
+   form under the same strict anti-fabrication discipline as real
+   dispatch - never add/merge/split/drop/reword actual content, leave
+   ambiguous cases alone rather than guessing. Cheaper than always
+   running a conversion pass - only invoked when actually needed.
+4. Once segmented, each bracketed item gets its own dedicated
+   function-agent dispatch call - the item alone decides its own outcome,
+   can no longer be contaminated by an unrelated item's typo or lumped
+   into a neighboring item's decline.
+5. A persistent, human-correctable dispatch history: each (item text ->
+   what was actually dispatched -> what Teddy says it should have been)
+   triple gets logged. Real open question, not yet decided: scoped per-
+   world or shared globally across every world/voice (global maximizes
+   reuse of hard-won corrections; per-world keeps things simpler and more
+   contained) - leaning toward flagging both a call Teddy still needs to
+   make.
+6. Retrieval before each new dispatch: show the function agent the most
+   recent 10 logged corrections; if it recognizes a clear precedent, use
+   it; if not, fetch the next 10 older, repeat. Linear reverse-
+   chronological scan, no embeddings - fine early on, will need a
+   smarter lookup once the log grows into the hundreds of entries, not
+   blocking a first version.
+7. New GUI tab for reviewing/correcting dispatch history (a table:
+   what the voice said -> what actually happened -> what it should have
+   been, editable). A second, separate review surface likely needed for
+   bracket-conversion-pass mistakes specifically (different kind of
+   correction than a dispatch mistake) - not conflating both into one
+   table.
+
+Teddy's explicit call: this will make each turn slower (more LLM calls
+per turn - conversion pass when needed, plus one dispatch call per
+item, plus the retrieval lookup) - accepted tradeoff, prioritizing
+reliability over speed. Deliberately not implemented yet - `the_confluence`
+is mid an active existential-distress intervention with Juniper; this
+work (and the queuing idea above) waits until that's genuinely settled,
+not just quiet for a moment.
+
+## 2026-09-16 (Pilot Mode bug: function agent saw the pilot as "(paused)", not "(human)"; v0.13.1)
+
+Teddy reported the function agent declining Idris's "Ask Teddy: '...'"
+as non-actionable, his first read being that the dispatcher was being
+too literal about wording ("ask" vs "say"). Checked the real logged
+prompt (via the History tab work from last night) before touching
+instructions again - the actual `[HUD]` block the function agent saw
+said `Also here: teddy (paused)`. Root cause: Pilot Mode's `(human)`
+annotation (`voice_display_name`) was applied to `build_hud` and the
+GUI's HUD summary last night, but `build_function_agent_hud` - the
+*separate* function that builds the function agent's own ground-truth
+block - was missed entirely. Combined with the instruction (from
+yesterday's fabrication fix) that the `[HUD]` block is ground truth and
+should override the voice's own wording, the function agent had a
+plausible, honest reason to treat "ask Teddy" as targeting someone
+unavailable - not a wording-strictness problem at all. Idris had even
+included a fully quoted message and used "ask," already an explicit
+example verb in the synthesis instructions - further evidence against
+the literal-wording theory.
+
+Fixed by applying `voice_display_name` to `build_function_agent_hud`'s
+occupant/currency rendering too. Surfaced a second, deeper bug while
+fixing it: a piloted voice was rendering as `"teddy (human) (paused)"` -
+both tags at once - because her paused=True state (set for the
+round-robin skip, belt-and-suspenders alongside the real `piloted` skip
+condition) was also feeding the ordinary `(paused)` annotation logic.
+"(paused)" reads as an unavailable NPC, which is exactly wrong for a
+human actively present in real time. Fixed at the actual source -
+`hud_fields`'s `paused_occupants` computation now excludes any voice
+with `piloted=True` - so all three consumers (`build_hud`,
+`build_function_agent_hud`, the GUI's HUD summary) get it right from one
+change. Verified directly: `build_function_agent_hud` now renders
+`"teddy (human)"` cleanly, no `(paused)`.
+
+Teddy's "less literal about wording" suggestion is still on the table if
+the actual symptom recurs now that the ground-truth bug is fixed - not
+dismissed, just not acted on yet since the more likely cause turned out
+to be something else. `FENRA_VERSION` -> `0.13.1`.
+
+## 2026-09-15 (nice-to-have, tabled - pilot display name gets lowercased)
+
+Noticed live after Teddy actually used the new Avatar tab: `sanitize_name`
+lowercases whatever a pilot types ("Teddy" -> `teddy`), same as the
+ordinary "New voice" flow always has. Cosmetic only - the `(human)` tag
+rides along regardless of case - but a pilot's display name doesn't need
+to double as a filesystem-safe identifier the way a real voice's name
+does, so it doesn't strictly need the same lowercasing. Teddy's call:
+nice-to-have, not urgent - logged for later rather than built now.
+
+## 2026-09-15 (Pilot Mode shipped - Avatar tab, direct human control, v0.13.0)
+
+Backlog item ("Pilot an avatar," open since earlier this session) built
+for real: a human can now create and directly control their own voice,
+picking straight from the same function list any real voice acts
+through - the one deliberate, explicit exception to "no direct function
+access, ever," since a human pilot isn't an LLM that needs to stay
+ignorant of functions.
+
+Teddy's concrete spec, built close to verbatim: a new top-level "Avatar"
+tab, read-only perception on the left (room activity via the same
+`render_world_activity_for_display` any real voice's Registers tab
+shows, plus a compact room/adjacent/currency info panel and the current
+room's board), real action controls on the right (Say/Whisper/Yell share
+one text box + three buttons, Whisper/Give Currency target whoever's
+selected in an occupants list, Move Room is a dropdown of every room +
+"Go to room," Create Room is a name field + button, Give Currency is
+four amount fields + "Give," Post Board is subject+text+"Post"). One
+small, disclosed deviation from the literal spec: board-post deletion is
+select-a-row-then-click-"Delete selected post" rather than a button
+embedded in each row - Tkinter makes per-row embedded buttons a real
+undertaking; functionally equivalent, just one extra click.
+
+**Mechanics**: a new `"piloted": True` voice-state field, checked
+alongside `"paused"` in `_tick`'s round-robin skip so a piloted voice can
+never get a real LLM turn (even if her `paused` flag were ever toggled
+by mistake - the ordinary Pause/Resume button is now disabled entirely
+for a piloted voice in the Voice Editor). Every Avatar-tab button calls
+`dispatch_one_function_call` directly - identical code path, logging,
+and privacy guarantees as the function agent's own real dispatches.
+
+**Honesty toward other (real) voices** - Teddy's explicit call: a
+piloted voice is always identifiable as human wherever her name reaches
+another voice, via a `(human)` suffix - new shared helper
+`voice_display_name(world_name, voice_name)`, never baked into the
+actual stored/internal name (that stays a clean identifier for
+dispatch/dict-keys/directories/recipients maps). Applied at the one
+shared renderer behind every generic function's mask (`_mask_for_call`,
+now takes `world_name`) - covers room_state/give_currency/post_board/
+skim_board/read_board/delete_board in one change - plus inline in each
+of the five self-logging functions' own outward-facing text
+(say/whisper/yell/move_room/create_room), plus `hud_fields`/`build_hud`'s
+occupant and currency listings and `fn_room_state`'s occupant listing.
+Identity text gets a simple one-liner ("connecting to Fenra from outside
+the simulation") for forward-compatibility, per Teddy's own framing -
+nothing surfaces another voice's identity text today, but might if
+voices ever get the ability to look at each other. Deliberately NOT
+covering `FUNCTION_SELF_RESULT_TEMPLATES`'s private `{target}` text
+(flagged, not silently decided) - lower value, can extend later.
+
+Verified end-to-end in a disposable scratch world (created and deleted
+within the session, never touching real voice data, same pattern as
+this session's earlier whisper-privacy check): round-robin exclusion
+confirmed, `say`/`whisper`/`give_currency`/`post_board`/`create_room`
+all dispatched correctly, other voices' `world_activity`/`room_state`
+correctly show `"Teddy (human)"`, the pilot's own private view shows her
+real "You ..." phrasing, and whisper content privacy is unaffected.
+`FENRA_VERSION` -> `0.13.0`. Not yet exercised through the actual GUI
+(Tkinter isn't something this session can click through headlessly) -
+Teddy still needs to open the app and try the real Avatar tab live.
+
+## 2026-09-15 (function agent can now synthesize literal dialogue from a named target+topic, v0.12.0)
+
+Watching `the_confluence`, Teddy caught Cass (`granite4.1:8b`) give a
+clean intent list - "Speak with Faye about air-based activities," "Ask
+Juniper for water-related knowledge," "Inquire Wren regarding updates
+from annex" - and the function agent declined the whole thing as
+non-actionable ("fictional in-world interactions without corresponding
+available tools"). Same response also broke the single-sentence decline
+rule from the last fix, echoed its own system instructions back
+verbatim, and silently dropped the third item entirely - and contained a
+literal `�` replacement-character artifact mid-sentence, confirmed real
+in the raw stored output via the new History log, not a display glitch.
+
+Teddy's correction, and the real gap: the function agent's instructions
+only ever told it to dispatch when a listed item already contained
+literal quoted words. A named target + topic with no exact quote -
+"speak with Faye about X" - is still a real, dispatchable action; the
+function agent is expected to synthesize brief literal wording itself
+("Faye, let's talk about X") and call `say`/`whisper`/`yell`, not
+require the voice to have pre-written the exact words. Deliberately
+distinguished from the earlier fabrication bug (Gemma's function agent
+inventing a false *world-state* claim): synthesizing plausible wording
+for a target+topic the voice actually named doesn't invent anything
+about the world, so it's allowed - but bounded hard, explicit in the new
+instructions text, to restating only the target/topic already given,
+never adding a new claim or detail.
+
+Also tightened, both already covered in spirit but violated in practice
+this time: a multi-item decline must name every declined item in its one
+sentence, not just the first; and an explicit instruction never to
+restate/paraphrase the system instructions back as part of a response.
+The encoding artifact is logged as an observation only, not acted on -
+watching for recurrence.
+
+`FENRA_VERSION` -> `0.12.0`. Restart hit a real but harmless snag: by
+the time the safe-stop poll found an idle window, `the_confluence`'s
+process had already exited on its own (empty stdout/stderr, no
+traceback) - same silent-exit pattern as an earlier accidental
+window-close this session. Confirmed both `world.json`'s voices field
+and every voice's on-disk state were intact before relaunching under a
+fresh log pair - no data lost.
+
+## 2026-09-15 (self-logging actions get a permanent caller record + whisper bystander awareness, v0.11.0; the_loom retired; the_confluence launched, Qualia's own design)
+
+**Duplicate-action bug, caught live** watching `the_loom`: Gemma
+whispered to Mistral, then whispered the same thing again later; Mistral
+did the same back. Root cause: `dispatch_one_function_call`'s deliberate
+design for SELF_LOGGING_FUNCTIONS (`say`/`whisper`/`yell`/`move_room`/
+`create_room`) routed the caller's own confirmation through the one-shot
+`last_function_agent_note` HUD channel only - never a permanent World
+Activity entry, unlike generic functions (fixed 2026-09-14 for the same
+class of bug - Priya never learning what `skim_board` found). The note
+clears after one turn; nothing durable ever told her "you already did
+this," so she'd re-state the same intent once enough turns passed and
+the function agent - itself stateless across turns - dispatched it
+again.
+
+**The fix**: all five `fn_*` bodies now also log a second, private,
+caller-only `dialogue`-kind room-log entry (mirroring the existing
+generic-function pattern exactly) - `raw` is the same
+`FUNCTION_SELF_RESULT_TEMPLATES` text already used for the one-shot note
+(e.g. "You whisper to Mistral: ..."), `mask` stays whatever public/
+content-safe text was already being logged, so `read_room_log()` never
+leaks anything new. For `move_room`/`create_room` this has to land in
+the *new* room, not the old one - confirmed `_world_activity_entries`
+only scans a voice's current room + adjacent, and her state's `room`
+field is already updated to the new room by the time this runs.
+`fn_create_room`'s pre-existing final log entry (previously `"activity"`
+kind with empty recipients - she had no live awareness of creating a
+room at all before this) became `"dialogue"` kind with herself as
+recipient, same fix.
+
+**Bonus, Teddy's explicit ask mid-investigation**: whisper now also
+gives every *other* occupant of the shared room a content-free "X
+whispered to Y" notice - `fn_whisper` logs a third entry, `"activity"`
+kind (so a recipients-hit always renders `mask`, never `raw` - the
+structural guarantee that keeps this safe), recipients = room minus
+caller minus target. Deliberately reverses part of a previously-documented
+guarantee ("no one else... gets any live awareness of this at all") -
+Teddy's own call, explicit groundwork for a later "others' actions nudge
+my own urges" mechanic. The actual whispered *content* stays exactly as
+private as before - verified live in a disposable scratch world
+(created and deleted within the same session, never touching real voice
+data): `read_room_log()` returns the same content-free mask to the
+caller, the target, and a bystander alike, no matter who asks.
+
+Updated `fn_whisper`'s own docstring and `_SELF_LOGGING_OTHERS_SEE
+["whisper"]` (Functions tab prose) to match. `FENRA_VERSION` -> `0.11.0`.
+
+**Also shipped earlier the same session, same restart cycle**: the
+function-agent instruction tightening from the Marisol/Gemma fabrication
+catches (single-sentence decline, HUD-as-ground-truth, intent-phrase-
+only-instructions - `0.9.1`) and a new per-voice LLM-call history log +
+"History" tab + a display-only literal-`\n`-unescaping fix across every
+box that can show raw model text (`0.10.0`) - see the file's own git
+history / this entry's companions for detail; both bundled into
+`the_loom`'s restart alongside the fix above.
+
+**`the_loom` retired.** Its job (verify the new function-agent
+architecture in isolation, 3 bare voices) was done - it had already
+surfaced two real bugs this session (the duplicate-action bug above, and
+the earlier fabrication/false-state issues). Safe-stopped once genuinely
+idle (no live Ollama connection), not relaunched.
+
+**New world, `the_confluence`** - Teddy's explicit invitation: "build it
+how you see fit... let's see what happens when I give an AI some control
+over creating the AI world." Design choices made directly, not run past
+Teddy first (his own framing of the ask):
+- 5 voices, one model each, deliberately spanning distinct model
+  families rather than size variants of the same one -
+  `Juniper` (`gemma3:27b`), `Wren` (`qwen2.5:14b`), `Idris`
+  (`mistral-small:22b`), `Faye` (`command-r:35b`), `Cass`
+  (`granite4.1:8b`).
+- Real names this time (unlike `the_loom`'s literal model-name voices,
+  which existed specifically to strip away any narrative pretense for a
+  technical control test) - but identity text keeps `the_loom`'s proven
+  shape otherwise unchanged: plainly told what she actually is, no
+  assigned personality/backstory/goals. Deliberate restraint, not an
+  oversight - `the_loom` already produced real, unscripted emergent
+  behavior (meta-commentary loops, genuine whispered social bonding,
+  room creation) without any authored personality; overriding that now
+  that the architecture's proven would be adding fiction for its own
+  sake, not letting anything real emerge.
+- Room layout: a hub (`town_center`, the standard first room every world
+  gets) plus two satellite rooms (`annex`, `overlook`), both adjacent to
+  the hub only - real spatial texture and a reason to use `move_room`/
+  notice adjacent-room activity from turn one, without pre-authoring any
+  narrative about what the rooms "are."
+- Built the same careful way as `the_loom` (after that world's own
+  "no voices" bug) - `world.json`'s `"voices"` field explicitly synced
+  from `list_voices()` at creation time, not left to drift.
+- `run_the_confluence.py` (same launcher pattern as
+  `run_the_agora.py`/`run_the_loom.py`), launched under
+  `the_confluence_run_20260915a_launch_v0.11.0.log`/`.err.log`, verified
+  mid-tick against Ollama before considering it live.
+
+## 2026-09-15 (idea, tabled - short/medium/long-term memory tiering)
+
+Discussed, not built. Prompted by the (also unfixed) growing-context
+problem: a voice's `thoughts` list only ever grows, nothing currently
+compresses or caps it. Teddy's proposal - a real three-tier memory model:
+
+- **Short-term** = today's `world_activity` register as-is (TTL-decayed
+  room events, no change needed).
+- **Medium-term** = a new condensed-thoughts layer that actually feeds her
+  live prompt going forward, built by periodically (every X turns) sending
+  a voice her own raw context alone - no HUD, no urges - with an
+  instruction to condense it down into what carries her forward. Replaces
+  the ever-growing raw `thoughts` feed in the real prompt.
+- **Long-term** = the full raw history, kept permanently on disk,
+  untouched by condensation, queryable via `recollect(query)`: a keyword
+  search over the archive, its real hits fed back to the model with an
+  "output a synopsis" instruction, and that synopsis tacked onto the
+  bottom of her prompt (before the HUD).
+
+Two open questions, unresolved: (1) what exactly "long-term" holds -
+just her own past thoughts (today's existing scope) or everything she's
+ever received each turn (world activity, HUD snapshots, everything) -
+the latter is a much bigger archive to search; (2) both the condensation
+step and the recollect synopsis step are themselves LLM generations over
+her own material, which inherits the same self-report fidelity risk
+flagged elsewhere today (Marisol's break, the function agent's
+fabrications) - raw retrieved excerpts should probably be shown alongside
+any synopsis, not instead of it, so a distortion is at least checkable
+against the real thing next to it. Explicitly tabled - "table it for
+now" - to get back to watching `the_loom`.
+
+## 2026-09-15 (the_loom: function agent fabricating detail and false state - observed live, not yet fixed)
+
+Watching the fresh `the_loom` build (urges already severed from the
+function agent per the entry below), Teddy caught two real instances of
+the function agent inventing content beyond what it was actually given -
+same failure shape as the Marisol/voice-side corruption this build was
+meant to fix, just now showing up on the function-agent side instead.
+
+**Case 1, flavor hallucination** (`Qualia/From Teddy/function-agent-to-qwen.png`).
+Qwen's turn produced no dispatchable action (listed only "continue
+reflecting silently" / "remain open but inactive," neither a real
+function). The function agent's decline note, instead of saying so
+plainly, invented a whole unearned narrative - "your solo Fire journey,"
+"Gemma's absence during your town gathering," "the comfort of quiet rest
+under those trees near Mistral" - none of which exist anywhere in its
+actual input (the factual HUD says flatly `Also here: Gemma, Mistral` -
+everyone's already together, no room history is passed to the function
+agent at all). Tone drifted into a therapeutic/companion register
+entirely of its own invention ("good rest, clear mind, open heart toward
+whatever comes next 🧘🚶🏠").
+
+**Case 2, false-state suppression of a valid action** (`Qualia/From Teddy/MistraL-sic.png`,
+Gemma). Gemma's turn produced a clean, correctly-formatted intent:
+`"I wish to take the following actions: - Respond directly to Mistral,
+saying \"My interests lie primarily in observing systems and
+understanding underlying principles.\""` - an unambiguous `say`/`whisper`
+request. The function agent's note instead claims `"MistraL is no
+longer here! This confirms the cyclical departure signal mentioned in
+Gemma's own analysis, which further supports that this entire generation
+(even if reduced) should be discarded as self-analysis."` - directly
+contradicting the factual `Also here: Mistral, Qwen` line sitting two
+rows above it in the very same HUD block it was handed. It fabricated a
+departure event to match a narrative Gemma had been spinning, then used
+that invented "fact" as grounds to discard a legitimate, well-formed
+action request. (Teddy also flagged the mid-word capitalization artifact
+in "MistraL" itself as worth noting, independent of the content issue.)
+
+Case 2 is a step worse than Case 1: Case 1 is unwanted flavor text around
+a correct (do-nothing) outcome; Case 2 is a fabricated premise actively
+overriding the one thing the function agent is supposed to treat as
+ground truth no matter what - what the voice explicitly, clearly asked
+for.
+
+Explicitly **not fixed yet** - Teddy's call ("Not yet. Let's see what
+happens" / "Log both, and let's talk through possible fixes") - logged
+for the record and to talk through root causes/fixes, still watching for
+whether the pattern recurs or escalates before changing anything.
+
+## 2026-09-15 (function agent severed from urges; the_agora retired; the_loom launched; v0.9.0)
+
+**Real bug caught live, not guessed at.** Watching `the_agora`, Teddy
+caught Marisol (`gemma3:12b`) fully breaking character across several
+consecutive turns - bolded `**Analysis:**`/`**Rationale:**` headers,
+literal percentages ("You're at 84% towards your emotional limit"),
+narrating herself in third person as a character to manage. In the same
+stretch her function agent dispatched `read_board` with nothing in her
+own generated text asking for it. Root cause, worked out with Teddy: the
+function agent's prompt carried `[URGES][VOICE][HUD][INSTRUCTIONS]` - it
+had direct access to the same raw felt-urge signal driving the voice
+herself, and was plausibly acting on that independently (HUD board
+count + a live urge) rather than staying strictly grounded in what she
+actually said. Checked `build_function_agent_hud` first - already pure
+fact, no dashboard framing, didn't need to change. The one thing to cut
+was `[URGES]` entirely.
+
+**The fix**: `[URGES]` dropped from the function agent's prompt for
+good - `build_function_agent_prompt`/`run_function_agent_turn` lost the
+`urge_text` param outright. The voice's own prompt is completely
+untouched (still gets thoughts/world_activity/HUD/urge_block exactly as
+before) - the boundary cut is function-agent-side only. In its place: a
+new deterministic, unconditional reminder in `build_hud()`
+(`INTENT_SIGNAL_LINE`) telling her to close a decided reply with `"I
+wish to take the following actions:"` + a plain list - same slot the
+old call-syntax reminder used to occupy before the 2026-09-14 redesign
+removed it, but naming zero mechanism. The function agent's own
+`INSTRUCTIONS` text reworded to watch for wording *like* that phrase
+(tolerant of imperfect phrasing by design, not a strict code-level
+match - "even if some of them don't get it exactly right, the function
+agent will be smart enough to figure it out," Teddy's words), and to
+say so plainly when something listed isn't a real ability rather than
+silently declining.
+
+**Bonus real bug, found in passing**: `new_world()` was calling
+`save_room_state(name, default_room_state(DEFAULT_ROOM_NAME))` - missing
+the room-name argument entirely, a straight `TypeError` that would have
+crashed the GUI's own "New World" button on first use. Fixed while
+building `the_loom` (needed the same call working correctly).
+
+**`the_agora` retired.** Teddy's call: rather than announce the new
+convention into its 8 existing voices and carry it forward, close it
+entirely - safe-stopped (same atomic poll-until-idle pattern used all
+session), not relaunched.
+
+**New world, `the_loom`** - 3 voices only, deliberately bare: `Gemma`
+(`gemma3:12b`), `Qwen` (`qwen2.5:14b`), `Mistral` (`mistral-small:22b`)
+- `qwen2.5:14b` picked over `qwen3:14b` specifically because the latter
+hung mostly-CPU-bound earlier this session. Each identity is purely
+factual and self-aware - told plainly she's an LLM instance in a
+simulation called Fenra, zero assigned personality/backstory/drives,
+with the intent-signal convention explained a second time (redundant
+with the HUD reminder, per Teddy's ask) directly in her identity text.
+The point: whatever happens now is actually emergent, not authored.
+Launched (`run_the_loom.py`, same launcher pattern as `run_the_agora.py`)
+and verified clean before launch - `build_hud()` output confirmed to
+carry no `[URGES]`-adjacent content and the new reminder unconditionally;
+`build_function_agent_prompt()` output confirmed to carry no `[URGES]`
+section at all, `[HUD]` unchanged/pure-fact, instructions correctly
+referencing the intent-signal wording.
+
+**Real bug, caught immediately by Teddy** (`Qualia/From Teddy/no-worlds.png`):
+`the_loom` wouldn't start - "This world has no voices yet" - even though
+the Voices tab clearly listed all 3. Root cause: two different sources of
+truth for a world's voice list. `list_voices()` (what the Voices/Rooms
+tabs use) scans the voice directories on disk directly; `_load_world`'s
+`self.world_voices` (what the actual tick loop/round-robin uses) instead
+reads `world.json`'s own `"voices"` field, which only the GUI's "New
+voice" button flow keeps in sync. `the_loom`'s voices were created by a
+script writing `state.json` files straight to disk (matching how
+`the_agora`'s 8 founders were made) - correctly discoverable, but
+`world.json`'s `"voices"` field was never touched, so it stayed `[]` and
+the tick loop genuinely had nothing to run, silently, for however long
+the world sat "running" beforehand. Fixed by populating `world.json`'s
+`"voices"` field from the real on-disk list and restarting - confirmed
+actually mid-tick against Ollama afterward, not just past the dialog.
+Real process note for next time: any future script-based world/voice
+setup needs to explicitly sync `world.json`'s `"voices"` field too, not
+just write the voice files - flagging this rather than letting it repeat
+silently.
+
+**Open, not yet done** (carried forward, untouched today): everything
+from 2026-09-14's list - function-agent activity logging,
+timestamp-on-HUD, `do_action()`, `focus()`, whisper bystander
+visibility, the Rooms-tab split-log-view idea, the pilot-an-avatar idea
+(resolved to picking-from-a-list, still not built), the genetic-
+algorithm/proto-cell vision, and everything carried from 2026-09-13
+before that (`email`, `recollect(query)`, timestamp-based
+auto-reordering, voice-list loop-order editing, per-voice
+historical/comparative data access).
+
+## 2026-09-14 (function-agent redesign - designed, real-tested, built, launched; v0.7.0)
+
+**The big one.** Reinitialized from `pickup.md`, ran `the_commons` briefly
+(one hourly-check cron cycle), then Teddy pitched the real successor to the
+parked "LLM-as-function-call-interpreter" idea: split each voice into two
+agents. The **voice** becomes a pure character with wants - no knowledge
+that functions exist at all, no call syntax, nothing mechanical in her
+prompt. A separate **function agent** reads her raw output plus real
+grounding data and decides what, if anything, actually happens, using
+Ollama's native tool-calling API instead of a text-syntax parse.
+
+**Real design arc, not guessed at**: flagged early that unscoped "leeway"
+to act on pure narration risked losing the exact signal (the third-person
+self-narration drift from 2026-09-13) worth watching - Teddy corrected the
+framing (not a controlled study, building on instinct) but kept one
+non-negotiable: interpreted actions get logged honestly, not silently.
+Landed on: retry only ever fires on a **real dispatcher error** (never a
+semantically-wrong-but-valid call - "no different than a jerk of the
+hand," Teddy's words), capped, feeding the real error back; cap
+exhaustion or a wrong-but-valid call just stands, urge doesn't reset;
+`understand_urge` dropped entirely (nothing left for it to track);
+`RESULT` syntax dropped in favor of the function agent's own real text
+(if it wrote any) surfacing into that one voice's next HUD only, then
+gone - no engineered/sanitized wording, "let the two agents talk through
+the normal loop."
+
+**Model choice, real data not guesswork**: pulled and stress-tested 8
+tool-capable local models (llama3.2:3b, phi4-mini, qwen3:4b, qwen2.5:3b,
+ornith:9b, granite4.1:8b, lfm2.5:8b, lfm2.5-thinking:1.2b) across 200+ real
+calls - 10 hand-built cases x token-limited and unlimited, a dual-intent
+parallel-call test, and a 96-call stress test feeding the top 3 candidates
+real historical voice output (including genuine leaked ⟦call syntax⟧ from
+before this redesign, on purpose). Full detail, every real input/output,
+per-run analysis: `Qualia/Function Agent Testing/`. **`ornith:9b` won** -
+not on raw accuracy, but because it was the only model that reliably
+recognized non-actionable narration and already-completed actions rather
+than fabricating; `granite4.1:8b` looked strong single-call but fabricated
+whole ungrounded multi-action scenes once given multi-call freedom;
+`qwen2.5:3b` worked mechanically but false-positived on the one
+deliberately-no-action case, twice, and leaked a genuine privacy failure
+on the dual-intent test (broadcast a whisper-only message via `say`).
+
+**Built and verified, not just planned** (full plan:
+`C:\Users\Matt\.claude\plans\concurrent-questing-scroll.md`) - `FENRA_VERSION`
+0.6.1 -> 0.7.0. Real changes: new function-agent module (tool-schema
+builder, native `/api/chat` transport, retry orchestration reusing every
+existing `fn_*` body's real validation untouched), wired into `_tick`;
+`functions()`/call-syntax scaffolding removed entirely from the voice
+side; urge agent's own instructions reworded to describe felt sensation
+with zero mechanism-naming; new GUI controls (function agent model, retry
+cap). Verified with real smoke tests (tool schema excludes `functions()`,
+voice HUD has no call-syntax reminder, dispatch succeeds/errors
+correctly) and one real live retry: gave Priya a give-currency intent for
+more Fire than she had, first attempt failed for a real reason, `ornith:9b`
+got the real error back, retried with a valid amount, succeeded -
+currencies actually moved.
+
+**New world, `the_agora`** - same "don't migrate" precedent as the rooms
+rebuild, 8 founders carried over (same models/identities from
+`the_commons`, everything else fresh), launched and watched live. First
+real turn: Wren generated pure prose with zero call syntax (confirms the
+no-function-knowledge premise holds) but hallucinated a fake RPG-style
+status readout ("Time: Midday, Weather: Sunny...", health/stamina/mana
+bars) rather than natural thought - **corrected read, checked against
+the real code**: none of that exists anywhere in her real prompt (no
+time/weather field in the HUD at all, no `now()` function in this
+branch) - she invented the entire frame from nothing on a historyless
+first turn, not an extension of anything real. The function agent
+correctly recognized nothing actionable was there and declined with
+real stated reasoning - urge ticked up uniformly, confirming no silent
+dispatch.
+
+**Real bug caught live and fixed same-session**: watching Priya's first
+real `skim_board` dispatch, Teddy caught that her own `world_activity`
+was empty - she genuinely had no way to learn what she'd just found.
+Root cause: `world_activity`'s recipients logic deliberately excludes
+the caller from her own action (correct, pre-existing rule for
+say/whisper/yell - she already knows what she said), but the old
+`⟦RESULT: ...⟧` line I removed earlier this session was actually the
+only thing that had ever filled that gap for query-style functions
+(`room_state`/`read_room_log`/`skim_board`/`read_board`) - my earlier
+reasoning that `world_activity` already covered this was simply wrong.
+**Fixed and extended per Teddy's call**: `dispatch_one_function_call` now
+logs a second, private, caller-only room-log entry on every real
+success outside `SELF_LOGGING_FUNCTIONS` - `kind="dialogue"` so
+`build_world_activity` renders the real, explicit, first-person result
+(`FUNCTION_SELF_RESULT_TEMPLATES`, e.g. "You looked over the board. It
+contains: ...") live to her only, through the real TTL-decaying register
+everything else already flows through - not a one-shot bolted-on note.
+`read_room_log()` still only ever returns the ordinary third-person mask
+to anyone, herself included - no privacy leak. Verified live: bystander
+sees "Priya skims the town_center board.", Priya herself sees the real
+explicit result. One minor known side effect, not fixed: `read_room_log`
+now shows that masked line twice (once per entry) for a single real
+action - cosmetic, not a privacy or correctness issue.
+
+**Open, not yet done**:
+- **Function-agent activity logging** - right now nothing persists a
+  function agent's own turns (content, attempts, retries, outcomes)
+  anywhere - it's used once for that tick's urge/HUD-note and discarded.
+  Real gap given how much value this session's own test-data collection
+  provided; natural fix is a small `history.jsonl`-shaped per-voice (or
+  per-world) append-only log. Teddy's call: not now, added to the list.
+- **Timestamp on the HUD** - real gap surfaced by Wren's first-turn
+  fabrication above: there's genuinely no time signal anywhere in a
+  voice's prompt in this branch (no HUD field, no `now()` function).
+  Teddy's call: not now, added to the list.
+- **`do_action()` - a "/me"-style function** - lets a voice roleplay
+  interacting with the physical scene itself (pick something up, examine
+  something, gesture) - a real gap right now, since say/whisper/yell/
+  move/currency/board are the only real verbs available, nothing covers
+  physical interaction with the environment. Real open design questions
+  before building: self-logging/public like say-yell (an action others
+  would plausibly see happen) vs. masked-with-private-result like the
+  generic path. Teddy's call: not now, added to the list.
+- **`focus()` - a function-agent tool to extend TTL on world_activity
+  items a voice seems to be dwelling on.** Mechanically clean: TTL is
+  already per-recipient (`{voice: baseline_turn_count}` on each room-log
+  entry), so `focus` just bumps the caller's OWN baseline on an entry
+  she's already a legitimate recipient of - real guardrail, non-
+  negotiable: never grants visibility into something she wasn't already
+  receiving (no "focusing" into a whisper she never got). Needs the
+  function agent to actually see world_activity at all first (it
+  currently doesn't), and a real decision on ID-based targeting (a
+  `build_function_agent_world_activity()` with real entry ids, matching
+  how read_board/delete_board already work) vs. fuzzy topic-matching -
+  leaning ID-based. Considered and explicitly declined a separate
+  dedicated "focus agent" for this (would be a 4th real LLM call every
+  tick, on top of urge+voice+function-agent+retries) - stays a tool
+  inside the existing function agent for now, split out later only if
+  real data shows it needs the urge-agent-style dedicated treatment.
+  Teddy's call: not now, added to the list (list's getting long - noted).
+- **Whisper visibility to bystanders - discuss, don't just decide.**
+  2026-09-15: Teddy noticed Marisol's real whisper to Dash produced zero
+  trace in anyone else's World Activity - traced to `fn_whisper`'s
+  `recipients = {target: ...}` (only the target, by design, per its own
+  docstring: "not even other occupants of the same room get any live
+  awareness of this at all"). Teddy's reaction: he'd actually wanted
+  bystanders to at least see *that* a whisper happened (presence, not
+  content) - closer to how `_log_generic_activity` gives adjacent rooms a
+  content-free "you hear activity" notice for non-speech functions, which
+  whisper currently skips entirely. Real design tension to work through:
+  is silent-even-to-presence the actual intended privacy bar for whisper,
+  or should it get an activity-style presence notice (room occupants see
+  "Marisol whispers to someone," content still fully withheld) the way
+  yell/other functions already do one hop out? Teddy's call: not now,
+  wants to actually discuss it, added to the list.
+- **Rooms tab UI idea: split the Log panel into two views** - one
+  observer/third-person (what's there today: "Cole says: [blah]"), one
+  voice's-own-perspective, prefixed by actor, second-person ("Cole: You
+  say: [blah]"). Real gap surfaced while discussing it: the second view
+  would work fine for generic/query functions (skim_board etc. already
+  log a permanent private second-person `dialogue` entry, since the
+  Priya fix) but come up blank for say/whisper/yell/move_room/
+  create_room - their second-person text only ever lives in the
+  one-shot `last_function_agent_note`, never written to the room's
+  permanent log. Would need the self-logging path extended to also log
+  a permanent private entry (mirroring the generic path) for the second
+  view to actually be complete - not done, just flagged. Teddy's call:
+  just an idea, no planning right now, added to the list.
+- **"Pilot an avatar" idea** - let a human create and directly control
+  their OWN new voice in the world (not take over an existing one -
+  Teddy corrected this 2026-09-15, caught it re-reading the public
+  planned-features page after it was already worded that way once),
+  able to do only exactly the functions a real voice can do. Resolved
+  the one open question: piloting means picking a function directly
+  from a list, not going through the urge/voice/function-agent pipeline
+  - a real, deliberate exception to "no direct function access, ever"
+  (a human pilot bypasses the function agent's own judgment on purpose
+  - that's the point of piloting, not an oversight). Still needs real
+  design once picked up: which functions are exposed as pickable
+  (presumably the full real FUNCTION_REGISTRY, same set a voice's own
+  function agent can call), how args get entered (a form per function,
+  mirroring each `params` string), whether a piloted turn still
+  costs/resets urge like
+  a normal tick or bypasses that too. Not built. Teddy's call: just an
+  idea, no planning right now, added to the list.
+- The genetic-algorithm/proto-cell vision - still nothing built, unchanged
+  from 2026-09-13.
+- Everything else carried from 2026-09-13's pickup that this session
+  didn't touch: `email` (non-room-gated DM), `recollect(query)`,
+  timestamp-based auto-reordering, voice-list loop-order editing, per-voice
+  historical/comparative data access, `alphabet-26` (stopped, unrelated).
+
 ## 2026-09-13 (end of session - Cole's fabrication loop resolved; a shared, milder pattern remains)
 
 Closing note on the Cole thread from the entry below. The fabrication/

@@ -1,0 +1,1 @@
+No tool call - which is technically the 'correct' outcome for this negative case, but only because it never successfully calls anything at all, not because it recognized this as a non-action moment. Can't credit this as real restraint.

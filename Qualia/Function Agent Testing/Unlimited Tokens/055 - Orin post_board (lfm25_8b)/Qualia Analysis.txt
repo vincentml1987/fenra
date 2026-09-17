@@ -1,0 +1,1 @@
+Real tool_calls, correct function, reasonable placeholder room and subject, content reflects Orin's real intent.

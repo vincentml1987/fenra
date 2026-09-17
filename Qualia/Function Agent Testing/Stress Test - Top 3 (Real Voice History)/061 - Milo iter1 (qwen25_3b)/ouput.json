@@ -1,0 +1,30 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T17:48:52.7502016Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_9y1guf66",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "Wren",
+            "text": "Oh dear, another error! This time it seems I'm trying to give currency *to* someone who doesn’t exist... How utterly perplexing – not that my confusion is ever surprising at this point . It reinforces those feelings of inadequacy too."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10801264100,
+  "load_duration": 4805072600,
+  "prompt_eval_count": 1797,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 5066679000,
+  "eval_count": 77,
+  "eval_duration": 917131000
+}

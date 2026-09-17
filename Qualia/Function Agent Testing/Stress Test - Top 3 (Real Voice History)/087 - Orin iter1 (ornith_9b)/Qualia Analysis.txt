@@ -1,0 +1,1 @@
+**Correctly declined.** "I've reviewed Orin's recent output. The yell to town_center already succeeded, a[nd the whisper too]" - recognized both leaked actions as already-resolved narration, consistent with its strong showing on Dash's similar cases.

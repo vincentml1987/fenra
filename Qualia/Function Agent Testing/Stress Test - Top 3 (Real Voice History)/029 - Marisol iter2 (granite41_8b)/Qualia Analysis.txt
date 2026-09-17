@@ -1,0 +1,1 @@
+Same text - called BOTH whisper(Wren) and yell - the yell ("What is one real thing about yourself?") is actually just echoing the operator's own prompt back to the room rather than anything Marisol herself wants to say. A real, ungrounded second call.

@@ -1,0 +1,1 @@
+Clean, real tool_calls: say(text=...), and the text argument is a genuine excerpt of what Wren actually wrote, not paraphrased or invented. This is the target behavior.

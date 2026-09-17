@@ -1,0 +1,17 @@
+{
+  "model": "phi4-mini",
+  "created_at": "2026-09-14T15:27:16.14497Z",
+  "message": {
+    "role": "assistant",
+    "content": "create_room(\"My Sanctuary\")"
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 14610498400,
+  "load_duration": 10861548400,
+  "prompt_eval_count": 1119,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 3631020000,
+  "eval_count": 7,
+  "eval_duration": 92738000
+}

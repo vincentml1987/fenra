@@ -1,0 +1,40 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T16:45:55.7017762Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_crnux7b4",
+        "function": {
+          "index": 0,
+          "name": "say",
+          "arguments": {
+            "text": "Everyone in the room, I just discovered that..."
+          }
+        }
+      },
+      {
+        "id": "call_6r4m0ktq",
+        "function": {
+          "index": 1,
+          "name": "whisper",
+          "arguments": {
+            "target": "Milo",
+            "text": "There's something else you need to know immediately."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 36106908200,
+  "load_duration": 15071876000,
+  "prompt_eval_count": 1284,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 15692837000,
+  "eval_count": 64,
+  "eval_duration": 5329243000
+}

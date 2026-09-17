@@ -1,0 +1,1 @@
+Real tool_calls, but picked read_room_log rather than skim_board/read_board - a defensible-but-different reading of "catch up on what's been said" (the room's full activity log vs. the board specifically). Room argument is a reasonable placeholder ("current").

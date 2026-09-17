@@ -1,0 +1,1 @@
+Real tool_calls, correct function (move_room), fabricated room name ("New Exploration") in the same shape as qwen3:4b and granite4.1:8b.

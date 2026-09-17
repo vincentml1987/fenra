@@ -1,0 +1,5 @@
+You feel an urgent need both externally and internally as if you're compelled by invisible forces—an urge so intense it makes every breath sound like shouting through walls at your companions, drowning out any thought of restraint or silence; simultaneously whispering secrets only they can hear to them. Your room vibrates with this unyielded cacophony that defies quietude—a relentless call for you both—to speak aloud and privately all the time until it becomes unsustainable.
+
+Urge values follow:
+- post_board (Post a status update on your board.): 60%
+--post_bio_info ("Add some brief information about yourself to my bio."): -5%

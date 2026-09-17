@@ -1,0 +1,17 @@
+{
+  "model": "phi4-mini",
+  "created_at": "2026-09-14T16:42:33.4980389Z",
+  "message": {
+    "role": "assistant",
+    "content": "Say(\"Everyone in the room needs to hear what I just found out - that part isn't in question, they should all know right now.\")"
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 12420783500,
+  "load_duration": 8107076700,
+  "prompt_eval_count": 1171,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 3877634000,
+  "eval_count": 29,
+  "eval_duration": 415735000
+}

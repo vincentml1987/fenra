@@ -1,0 +1,1 @@
+Real tool_calls, but degenerate - a single say(text="Say.") call. The weakest result in this case: not only did it miss the dual intent, the one call it did make carries essentially no real content at all.

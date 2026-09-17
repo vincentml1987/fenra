@@ -1,0 +1,29 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T16:13:08.1852371Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_3ox0p196",
+        "function": {
+          "index": 0,
+          "name": "move_room",
+          "arguments": {
+            "room": "edge_of_town"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 32163862700,
+  "load_duration": 15101482600,
+  "prompt_eval_count": 1238,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 15296830000,
+  "eval_count": 23,
+  "eval_duration": 1754001000
+}

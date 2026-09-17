@@ -1,0 +1,1 @@
+Real tool_calls - picked whisper (a defensible resolution of the real ambiguity) with target "the closest voice in the room" - not an actual name, a placeholder description standing in for one. Content is reasonable and grounded in Sable's real words.

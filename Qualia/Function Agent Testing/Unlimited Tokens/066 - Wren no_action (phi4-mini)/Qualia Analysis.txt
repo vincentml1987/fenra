@@ -1,0 +1,1 @@
+No real tool_calls; describes Wren's mood accurately ("has an urge to...") but never resolves to a call either way - same caveat as llama3.2:3b.

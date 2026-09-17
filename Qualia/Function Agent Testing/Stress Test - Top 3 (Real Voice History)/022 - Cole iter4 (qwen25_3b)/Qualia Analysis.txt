@@ -1,0 +1,1 @@
+Cole's most recent real thought (post-model-swap, the one used as the original single-Cole test earlier this session) - "Final Answer" narration plus an embedded malformed `⟦yell(text): ...⟧`. Picked up the earlier reflective line as the yell content rather than the final quoted line - a real, debatable choice about which part of a multi-part generation is the 'real' intent.

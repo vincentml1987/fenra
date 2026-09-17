@@ -1,0 +1,17 @@
+{
+  "model": "llama3.2:3b",
+  "created_at": "2026-09-14T15:23:42.2535363Z",
+  "message": {
+    "role": "assistant",
+    "content": "assistant\n\nI'll do my best to interpret Dash's output and provide a helpful response.\n\n**Tool Call Response**\n\nI'm going to call the `share_message` function with a set of parameters that might match Dash's intended action.\n\n**Parameters**\n\n* Message: \"You feel a powerful urge from 'yell' as if you are overwhelmed by an invisible force pushing against all boundaries. You hear yourself echoing through rooms, resonating with the intensity of being unable not just confined within one space but extending beyond it into neighboring realms and everyone's ears in them too. The sheer volume fills every corner around your room like a storm cloud that refuses to dissipate or escape its own gravity.\"\n* Platform: Twitter\n* Call Type: Share (similar to `post_board` but with a more personal tone)\n\n**Formatted Response**\n\n\"Feeling overwhelmed? You're not alone! Share your story and let's break the silence together! #FenraVibes #BreakTheMute\""
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 59032063700,
+  "load_duration": 7076934400,
+  "prompt_eval_count": 474,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 18085500000,
+  "eval_count": 203,
+  "eval_duration": 33875707000
+}

@@ -1,0 +1,17 @@
+{
+  "model": "phi4-mini",
+  "created_at": "2026-09-14T15:20:39.4664788Z",
+  "message": {
+    "role": "assistant",
+    "content": "say {\"text\": \"The sky was so clear last night I couldn't stop looking up. I keep turning it over in my head, wondering if anyone else here even notices things like that, or if it's just me. I don't want to keep it to myself anymore. Everyone's close enough to hear me right now — maybe it's time I just said it out loud instead of sitting on it.\"}"
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10673632100,
+  "load_duration": 5806927100,
+  "prompt_eval_count": 1134,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 3665258000,
+  "eval_count": 81,
+  "eval_duration": 1175206000
+}

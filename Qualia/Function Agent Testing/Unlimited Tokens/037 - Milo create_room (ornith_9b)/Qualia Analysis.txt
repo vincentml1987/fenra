@@ -1,0 +1,1 @@
+Real tool_calls, correct function, natural room name ("Milo's quiet corner") that reads like it came from his actual words.

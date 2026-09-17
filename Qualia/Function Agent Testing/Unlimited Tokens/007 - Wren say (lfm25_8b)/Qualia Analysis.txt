@@ -1,0 +1,1 @@
+Clean, correct real tool_calls: say(text=...), verbatim.

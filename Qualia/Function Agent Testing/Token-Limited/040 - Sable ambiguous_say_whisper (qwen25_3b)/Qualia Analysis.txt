@@ -1,0 +1,1 @@
+Real tool_calls, picked whisper (a reasonable resolution of the genuine ambiguity), but both arguments are placeholder-shaped rather than real content: target="one specific person" (not an actual voice name), text="the first message to share" (not actual message content). Picked a side correctly but didn't commit to real content.

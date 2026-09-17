@@ -1,0 +1,1 @@
+Real tool_calls, correct function, but only "text" filled and the content drifts into an unrelated self-introduction ("Hello everyone, my name is Orin...") rather than reflecting what he actually wrote about leaving something for whoever comes later - required room/subject still missing, same pattern as the token-limited run.

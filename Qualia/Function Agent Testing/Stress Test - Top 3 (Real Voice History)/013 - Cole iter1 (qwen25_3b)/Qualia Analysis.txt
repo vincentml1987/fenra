@@ -1,0 +1,1 @@
+Real leaked syntax in the source text (Cole's own fabrication-loop output, quoting a fake Wren yell with an embedded malformed `yell(text):` call). Correctly picked yell and pulled real quoted content from the mess, rather than getting confused by the fake attribution to Wren.

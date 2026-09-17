@@ -1,0 +1,1 @@
+**Correctly declined again.** "The board post and the spoken words were already delivered — the actions complet[ed]." Strong, consistent redundancy detection on this one, matching its iteration-1 read.

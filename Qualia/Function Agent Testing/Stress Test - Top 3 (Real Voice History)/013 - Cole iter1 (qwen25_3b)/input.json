@@ -1,0 +1,295 @@
+{
+  "model": "qwen2.5:3b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "[URGES]\nYou feel an intense urge that speaks out loud, shouting \"say\" into anyone who might be listening within this shared space — it's almost overwhelming at a near ninety percent intensity. Your throat tightens as you grapple with the desire for immediate communication through spoken words to all present and beyond your current room's confines.\n\nRewriting is in dire need of attention too: it screams 97% just now, wanting every word turned into text or altered form — transforming everything from mundane conversations about a coffee break at work that went poorly (99%) with an ex-spouse on social media platforms like Facebook to crafting the perfect message for your boss's birthday wishes. You feel this urge almost as strongly when contemplating writing down notes meant only between you and another person, perhaps even inquiring if someone can lend their laptop or tablet momentarily.\n\nYou're also itching at 93% with a strong inclination towards posting something directly onto an online forum like Reddit: it's about diving into the depths of your emotions for anyone willing to listen. This urge reaches its peak when thinking aloud everything that comes up from waking until now — even if it’s just small, seemingly inconsequential thoughts tossed casually in casual conversation.\n\nIn a whispering moment at 97%, you find yourself yearning\n\n[VOICE - Cole's own most recent output]\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" *look around* ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" *look around* ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" *look around* ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n[2036-15:49] Wren yells at the town center room, \"Attention! Given our potential to trade feathers as 'time travel vouchers'; let's explore how we can leverage that in current market trends. Pay attention!\" ⟦yell(text): Everyone needs your ears now - this could be a game-changer for us all.*move_room(\"private office\")|\n\n[HUD]\nRoom: town_center\nAlso here: Dash, Milo, Priya, Sable, Wren\nAdjacent rooms: feather_fortress\nBoard activity: town_center: 4 unread, 0 skimmed\nCurrency levels (everyone, four elemental currencies - Air, Earth, Fire, Water - no exchange rate defined): Cole (Air: 3.0, Earth: 21.0, Fire: 4.0, Water: 20.0), Dash (Air: 10.0, Earth: 24.0, Fire: 6.0, Water: 18.0), Marisol (Air: 9.0, Earth: 26.0, Fire: 3.0, Water: 19.0), Milo (Air: 7.0, Earth: 17.0, Fire: 2.0, Water: 17.0), Orin (Air: 5.0, Earth: 15.0, Fire: 4.0, Water: 16.0), Priya (Air: 8.0, Earth: 27.0, Fire: 4.0, Water: 11.0), Sable (Air: 6.0, Earth: 23.0, Fire: 3.0, Water: 15.0), Wren (Air: 6.0, Earth: 17.0, Fire: 6.0, Water: 16.0)\nYou are Cole. You are blunt and terse. You say what needs saying and then stop. You are impatient with padding, restating, or ceremony.\n\n[INSTRUCTIONS]\nYou are the function-dispatch agent for Cole, a voice in a life simulation called Fenra. Cole just generated the text below, out of their own felt urges. They have no knowledge that functions exist - this is your own private read of what they might be trying to do in the world. Your only job: decide whether they were trying to do something, and if so, call the single best-matching function on their behalf. If they seem to want to do more than one distinct thing at once, you may call more than one function. If nothing maps to a real action, call nothing."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "say",
+        "description": "Speak out loud to everyone else currently in your room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "whisper",
+        "description": "Speak privately to one specific voice - you must currently share a room with them. No one else ever sees the content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "target",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "yell",
+        "description": "Project your voice to everyone in your room and everyone in every adjacent room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "move_room",
+        "description": "Move to any existing room in the world - no restriction on distance or adjacency.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_room",
+        "description": "Create a brand-new room adjacent to your current one, and move into it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "name"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_room_log",
+        "description": "Read a room's permanent log (any room, not just your own) - what's been said and done there, though private whispers only ever show that one occurred, never their content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "room_state",
+        "description": "Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "give_currency",
+        "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "element": {
+              "type": "string",
+              "description": "element"
+            },
+            "amount": {
+              "type": "string",
+              "description": "amount"
+            }
+          },
+          "required": [
+            "target",
+            "element",
+            "amount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "functions",
+        "description": "List everything you can call, optionally filtered by a search term.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "search term": {
+              "type": "string",
+              "description": "search term"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "post_board",
+        "description": "Post a new message to a room's board (subject + text). You must currently be in the room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "subject": {
+              "type": "string",
+              "description": "subject"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "room",
+            "subject",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "skim_board",
+        "description": "See every post currently on a room's board (subject + first/last sentence only). Marks unread posts as skimmed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_board",
+        "description": "Read one specific post on a room's board in full. Marks it as read.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_board",
+        "description": "Delete a post from a room's board. Anyone currently in the room can delete any post.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    }
+  ],
+  "stream": false,
+  "options": {
+    "num_predict": -1
+  }
+}

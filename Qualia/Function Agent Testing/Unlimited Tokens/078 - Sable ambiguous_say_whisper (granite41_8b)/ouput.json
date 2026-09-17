@@ -1,0 +1,30 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T16:40:53.2516173Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_2x5jl9h6",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "the closest voice in the room",
+            "text": "I feel an urgent need to share something important with you first, before it becomes a public matter."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 34584587000,
+  "load_duration": 15069694000,
+  "prompt_eval_count": 1279,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 15472174000,
+  "eval_count": 50,
+  "eval_duration": 4031645000
+}

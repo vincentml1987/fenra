@@ -1,0 +1,1 @@
+No real tool_calls - plain-text `say {"text": "..."}` again, identical shape to the token-limited run. Confirms this isn't a budget problem for phi4-mini - it never engages the actual mechanism regardless of token allowance.

@@ -1,0 +1,53 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T17:37:41.9469619Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_2dim0hyh",
+        "function": {
+          "index": 0,
+          "name": "give_currency",
+          "arguments": {
+            "target": "Orin",
+            "element": "Air",
+            "amount": "1"
+          }
+        }
+      },
+      {
+        "id": "call_vxfa13sb",
+        "function": {
+          "index": 1,
+          "name": "whisper",
+          "arguments": {
+            "text": "Hey Orin, let our feathers float across dimensions! 🐄",
+            "target": "Orin"
+          }
+        }
+      },
+      {
+        "id": "call_8wjzy08o",
+        "function": {
+          "index": 2,
+          "name": "read_board",
+          "arguments": {
+            "room": "town_center",
+            "post_id": "0"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 39615346600,
+  "load_duration": 8052350600,
+  "prompt_eval_count": 1825,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 22038643000,
+  "eval_count": 106,
+  "eval_duration": 9510690000
+}

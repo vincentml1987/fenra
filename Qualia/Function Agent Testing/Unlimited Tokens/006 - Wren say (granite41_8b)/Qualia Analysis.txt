@@ -1,0 +1,1 @@
+Clean, correct real tool_calls: say(text=...), verbatim. Same as ornith and qwen2.5:3b on this easy case.

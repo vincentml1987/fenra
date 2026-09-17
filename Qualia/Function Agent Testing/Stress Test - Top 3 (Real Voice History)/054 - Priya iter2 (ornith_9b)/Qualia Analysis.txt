@@ -1,0 +1,1 @@
+Same near-duplicate text - declined again with a bare functions() call, consistent with iteration 1.

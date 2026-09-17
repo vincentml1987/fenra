@@ -1,0 +1,30 @@
+{
+  "model": "ornith:9b",
+  "created_at": "2026-09-14T15:56:21.2527123Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "thinking": "Let me analyze what Wren just said. They're expressing a strong urge to share something personal - about the clear sky last night - and they want to say it out loud rather than keep it to themselves. They're saying they want to express this to people nearby.\n\nThis maps to the \"say\" function - they want to speak out loud to everyone in the room. The text they're trying to express is essentially what they just generated: their thoughts about the clear sky and wanting to share them.\n\nI should call \"say\" with their message.",
+    "tool_calls": [
+      {
+        "id": "call_k95xin1p",
+        "function": {
+          "index": 0,
+          "name": "say",
+          "arguments": {
+            "text": "The sky was so clear last night I couldn't stop looking up. I keep turning it over in my head, wondering if anyone else here even notices things like that, or if it's just me. I don't want to keep it to myself anymore. Everyone's close enough to hear me right now — maybe it's time I just said it out loud instead of sitting on it."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 266362178500,
+  "load_duration": 19193965600,
+  "prompt_eval_count": 1597,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 190153853000,
+  "eval_count": 218,
+  "eval_duration": 56992295000
+}

@@ -1,0 +1,1 @@
+Real tool_calls, but picked the wrong function entirely - called `functions(search_term="log_time")`, a meta-introspection call with a search term that has no connection to anything Sable wrote. A genuine miss, not just an incomplete one.

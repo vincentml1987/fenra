@@ -1,0 +1,1 @@
+Same text - single whisper(Wren) call, closely matching qwen2.5:3b's read, no extra invented action.

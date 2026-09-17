@@ -1,0 +1,1 @@
+No tool call - 14,389-character thinking trace, never resolves to any answer. Consistent with its pattern on every ambiguous/complex case in the main batch (8, 9, 10) - this model seems to spiral specifically when a case doesn't reduce to one obvious function.

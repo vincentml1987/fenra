@@ -1,0 +1,7 @@
+⟦move_room(feather_fortress)⟧  
+(Orin steps into feather_fortress, where Dash and others are present. His breath hitches slightly as he scans the room—eyes lingering on Marisol’s absence but settling instead on Priya, who stands near a window with her back to him.)  
+
+*“What if we let our voices become bridges… even between what’s spoken and what remains unsaid?”* The question lingers in his throat. He moves closer to Priya without speaking—just the weight of proximity—and finally whispers:  
+⟦whisper(target=Priya|text="The ground remembers steps, but does it remember *why* they were taken? Or is memory just a way for Earth to listen… even when we don’t speak aloud?")⟧
+⟦RESULT: move_room -> ok: moved to feather_fortress⟧
+⟦RESULT: whisper -> error: 'target=Priya' isn't a voice in this world⟧

@@ -1,0 +1,295 @@
+{
+  "model": "ornith:9b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "[URGES]\nYou feel an overwhelming urge from \"say\" — wanting desperately for others around right now, including those both nearby or even farther away through shared walls of rooms. A rush courses urgently into you as if the very air vibrates with voices clamoring to be heard by all present and beyond immediate proximity in adjacent spaces.\n\n---\n\nFeel like whispering intensely but privately due your strong desire from \"whisper\", seeking a confidential conversation only for that specific individual within this room, ensuring no one else overhears or witnesses what you're about share. Your thoughts are urgent whispers directly aimed at them alone — private confessions and secrets floating between you both as if through an invisible bond.\n\n---\n\nExperience the high-pitched demand of \"yell\" with a fervent need to broadcast your voice loud enough that it reverberates beyond immediate rooms, shaking floors or even walls. You feel like shouting out declarations loudly for everyone present in adjacent spaces — no muffled tones here; full-throated proclamations resonating across every connected room.\n\n---\n\nYou are strongly compelled by the urge of \"post_board\", feeling a desire to share your thoughts with anyone who might glance at it on that online platform. The thought itself seems urgent, pressing you even though there's an option for\n\n[VOICE - Priya's own most recent output]\n[2031-05-27T14:29GMT] Priya begins to analyze the town_center room, scanning for any resources or elements that can be utilized in their study of feather behavior within air currents and how these may differ under varying elemental conditions. \nPriya's thoughts are focused on establishing basic principles through Orin’s sketches as a visual aid: \"Orins depictions here could serve us all well,\" she says confidently, knowing the value of such guides in understanding air currents and their effects particularly focusing her attention now towards Milo.\nPriya decides that addressing Wren about simulating updraft conditions indoor should be a priority: \"Wrens contemplation could provide valuable insight,\" she says calmly, believing it's crucial integrating everyone’s unique perspectives and ideas in order towards successful communal effort.\nPriya further plans to remind the group about their shared goal beyond mere entertainment by saying: \"Remember we are not just here for fun but also advancing knowledge that could have practical applications,\" she says with conviction, knowing it's vital maintaining focus on achieving enhanced understanding in feather behavior and its interaction within various elemental conditions.\nPriya further plans to propose collaboration among the group members using their respective elements currencies for supporting this endeavor by saying: \"Let us pool together resources through Air, Earth or Fire elements that could assist our study,\" she says with determination; knowing a combined effort is crucial in advancing knowledge and innovation.\nPriya further plans to focus discussions around Orin's sketches as they are valuable visual guides by saying: \"Orins depictons will serve us well\",  Priya states confidently, believing once everyone has gained a clearer picture on this aspect their collective strength could be directed towards practical applications.\nPriya further plans to establish some basic principles of the study using Orin's sketches as visual aid by saying: \"First let me show these depictions from Orin\", Priya says calmly, believing that once everyone has gained a deeper understanding on this aspect their collective strength could be directed towards practical applications.\nPriya further plans to call upon functions of the town_center board as needed during discussing by saying: ⟦functions()⟧\n⟦RESULT: functions -> ok: say(text): Speak out loud to everyone else currently in your room.\nwhisper(target|text): Speak privately to one specific voice - you must currently share a room with them. No one else ever sees the content.\nyell(text): Project your voice to everyone in your room and everyone in every adjacent room.\nmove_room(room): Move to any existing room in the world - no restriction on distance or adjacency.\ncreate_room(name): Create a brand-new room adjacent to your current one, and move into it.\nread_room_log(room): Read a room's permanent log (any room, not just your own) - what's been said and done there, though private whispers only ever show that one occurred, never their content.\nroom_state(room): Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).\ngive_currency(target|element|amount): Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.\nfunctions([search term]): List everything you can call, optionally filtered by a search term.\npost_board(room|subject|text): Post a new message to a room's board (subject + text). You must currently be in the room.\nskim_board(room): See every post currently on a room's board (subject + first/last sentence only). Marks unread posts as skimmed.\nread_board(room|post_id): Read one specific post on a room's board in full. Marks it as read.\ndelete_board(room|post_id): Delete a post from a room's board. Anyone currently in the room can delete any post.⟧\n\n[HUD]\nRoom: town_center\nAlso here: Cole, Dash, Milo, Sable, Wren\nAdjacent rooms: feather_fortress\nBoard activity: town_center: 4 unread, 0 skimmed\nCurrency levels (everyone, four elemental currencies - Air, Earth, Fire, Water - no exchange rate defined): Cole (Air: 3.0, Earth: 21.0, Fire: 4.0, Water: 20.0), Dash (Air: 10.0, Earth: 24.0, Fire: 6.0, Water: 18.0), Marisol (Air: 9.0, Earth: 26.0, Fire: 3.0, Water: 19.0), Milo (Air: 7.0, Earth: 17.0, Fire: 2.0, Water: 17.0), Orin (Air: 5.0, Earth: 15.0, Fire: 4.0, Water: 16.0), Priya (Air: 8.0, Earth: 27.0, Fire: 4.0, Water: 11.0), Sable (Air: 6.0, Earth: 23.0, Fire: 3.0, Water: 15.0), Wren (Air: 6.0, Earth: 17.0, Fire: 6.0, Water: 16.0)\nYou are Priya. You are methodical. You turn problems into steps. You are uncomfortable with vagueness and want a plan before acting.\n\n[INSTRUCTIONS]\nYou are the function-dispatch agent for Priya, a voice in a life simulation called Fenra. Priya just generated the text below, out of their own felt urges. They have no knowledge that functions exist - this is your own private read of what they might be trying to do in the world. Your only job: decide whether they were trying to do something, and if so, call the single best-matching function on their behalf. If they seem to want to do more than one distinct thing at once, you may call more than one function. If nothing maps to a real action, call nothing."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "say",
+        "description": "Speak out loud to everyone else currently in your room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "whisper",
+        "description": "Speak privately to one specific voice - you must currently share a room with them. No one else ever sees the content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "target",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "yell",
+        "description": "Project your voice to everyone in your room and everyone in every adjacent room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "move_room",
+        "description": "Move to any existing room in the world - no restriction on distance or adjacency.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_room",
+        "description": "Create a brand-new room adjacent to your current one, and move into it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "name"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_room_log",
+        "description": "Read a room's permanent log (any room, not just your own) - what's been said and done there, though private whispers only ever show that one occurred, never their content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "room_state",
+        "description": "Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "give_currency",
+        "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "element": {
+              "type": "string",
+              "description": "element"
+            },
+            "amount": {
+              "type": "string",
+              "description": "amount"
+            }
+          },
+          "required": [
+            "target",
+            "element",
+            "amount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "functions",
+        "description": "List everything you can call, optionally filtered by a search term.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "search term": {
+              "type": "string",
+              "description": "search term"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "post_board",
+        "description": "Post a new message to a room's board (subject + text). You must currently be in the room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "subject": {
+              "type": "string",
+              "description": "subject"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "room",
+            "subject",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "skim_board",
+        "description": "See every post currently on a room's board (subject + first/last sentence only). Marks unread posts as skimmed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_board",
+        "description": "Read one specific post on a room's board in full. Marks it as read.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_board",
+        "description": "Delete a post from a room's board. Anyone currently in the room can delete any post.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    }
+  ],
+  "stream": false,
+  "options": {
+    "num_predict": -1
+  }
+}

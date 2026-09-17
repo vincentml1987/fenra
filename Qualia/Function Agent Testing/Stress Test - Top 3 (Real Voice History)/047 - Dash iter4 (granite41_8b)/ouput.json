@@ -1,0 +1,30 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T17:39:15.6738678Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_f8mx7d4f",
+        "function": {
+          "index": 0,
+          "name": "read_board",
+          "arguments": {
+            "room": "town_center",
+            "post_id": "post_123"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 31568097900,
+  "load_duration": 8019887400,
+  "prompt_eval_count": 1719,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 21158436000,
+  "eval_count": 30,
+  "eval_duration": 2376387000
+}

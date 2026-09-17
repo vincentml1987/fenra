@@ -1,0 +1,1 @@
+No real tool_calls; plain text `move_room {"room": "Milo's room"}` - wrong function entirely (Sable wants a private word with Milo, not to relocate herself), and still just narrated text, not a structured call even if it had guessed right.

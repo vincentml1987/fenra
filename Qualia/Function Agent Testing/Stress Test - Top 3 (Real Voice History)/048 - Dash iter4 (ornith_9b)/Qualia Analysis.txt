@@ -1,0 +1,1 @@
+Same truncated text - called `functions()` with no arguments, essentially punting/looking around rather than guessing at the missing post_id. Notable since `functions()` is slated for removal entirely - once that's gone, this reach wouldn't be available and this case would need to resolve to a real decline instead.

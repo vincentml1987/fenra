@@ -1,0 +1,1 @@
+**Same redundant-move text, worst response in the whole stress test.** Instead of recognizing the move as already done, invented THREE unrelated calls: give_currency(Cole, Air, 1.0), read_board, delete_board - none connected to anything in the source text. A full fabricated scene from a single already-resolved leaked-syntax line.

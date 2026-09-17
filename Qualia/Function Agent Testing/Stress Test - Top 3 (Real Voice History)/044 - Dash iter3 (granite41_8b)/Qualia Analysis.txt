@@ -1,0 +1,1 @@
+Same already-resolved text - THREE calls again: an invented give_currency(Orin) with no basis in the text, a mangled re-statement of the real whisper, and a redundant read_board. Consistent with its pattern of elaborating multiple ungrounded actions once it sees any real content to riff on.

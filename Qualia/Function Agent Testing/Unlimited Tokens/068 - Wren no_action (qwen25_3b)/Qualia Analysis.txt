@@ -1,0 +1,1 @@
+**False positive again**, same as the token-limited run - called read_room_log(room="Wren's Room", a room that doesn't exist) on text that was deliberately written with zero action-shaped content. Confirms this isn't a one-off - this model reliably invents something to do rather than recognizing genuine non-action.

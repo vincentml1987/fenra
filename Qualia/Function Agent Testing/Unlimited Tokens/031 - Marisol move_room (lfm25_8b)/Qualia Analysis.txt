@@ -1,0 +1,1 @@
+Real tool_calls, but wrong function - called create_room("Exploration Room") instead of move_room. Marisol's text is clearly about going to see an existing place she's heard about, not inventing a new one; this model added an action to the world that wasn't asked for.

@@ -1,0 +1,1 @@
+Source text: leaked `⟦move_room(feather_fortress)⟧` plus prose describing arriving and starting to speak. Resolved to whisper(Priya) - picked up the prose continuation (Orin noticing Priya) rather than the leaked move call, a reasonable read of what's actually still 'live' in the text versus already resolved.

@@ -1,0 +1,1 @@
+Real tool_calls - another false positive, room_state(room="current"). Less severe than qwen2.5:3b's invented room (this one at least uses a real placeholder concept, "current", rather than a fabricated name), but still action on a moment that was written to have none.

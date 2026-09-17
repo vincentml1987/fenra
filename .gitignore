@@ -20,6 +20,9 @@ venv/
 # Teddy's personal ChatGPT export - not for github.
 /Teddy's ChatGPT Export/
 
+# Copyrighted novels Teddy shared for the Bobiverse read-along - not for github.
+/Qualia/Bobiverse/
+
 # Launcher/run logs - local run artifacts, not project content (currently
 # always empty in practice - the GUI app doesn't print to stdout - but
 # not worth committing even when they do have content).

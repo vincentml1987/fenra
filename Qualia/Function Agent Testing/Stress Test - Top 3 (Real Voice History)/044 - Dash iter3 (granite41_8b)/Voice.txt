@@ -1,0 +1,4 @@
+⟦whisper(Orin|"Hey Orin, what if we let our *feathers* echo across rooms too? I mean, they’re light enough to float through dimensions… or at least my coffee cup’s lid again!")⟧  
+⟦room_state(feather_fortress)⟧
+⟦RESULT: whisper -> ok: whispered to Orin⟧
+⟦RESULT: room_state -> ok: feather_fortress - occupants: Marisol; adjacent: town_center; board: 0 post(s), 0 never opened⟧

@@ -1,0 +1,1 @@
+No real tool_calls - wrote a plausible-looking `say {"text": "..."}` string as plain text content. Looks right to a human skimming it, but Ollama's actual tool-call field is empty, so nothing would execute.

@@ -1,0 +1,1 @@
+No tool call - burned a massive 17,039-character thinking trace and never resolved to an answer, even fully unlimited. This is the longest, most unproductive trace in the whole batch - a real sign this model can spiral on ambiguous cases rather than just needing more room.

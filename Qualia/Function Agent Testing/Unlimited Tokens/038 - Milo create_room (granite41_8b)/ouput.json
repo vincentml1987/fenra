@@ -1,0 +1,29 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T16:17:09.6012754Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_h25mes4w",
+        "function": {
+          "index": 0,
+          "name": "create_room",
+          "arguments": {
+            "name": "Solitude"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 31886131900,
+  "load_duration": 15069779400,
+  "prompt_eval_count": 1234,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 15212136000,
+  "eval_count": 21,
+  "eval_duration": 1592234000
+}

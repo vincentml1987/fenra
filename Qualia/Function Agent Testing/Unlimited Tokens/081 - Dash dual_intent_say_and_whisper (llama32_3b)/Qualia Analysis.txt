@@ -1,0 +1,1 @@
+No tool call - but unusually, its narration explicitly names the right function ("I am calling the 'Say' function, as it appears to be the primary action Dash wants to convey") before trailing off. Still never engages the real mechanism, and even in prose it only ever notices the room-wide half of the dual intent - the private Milo whisper isn't mentioned at all.

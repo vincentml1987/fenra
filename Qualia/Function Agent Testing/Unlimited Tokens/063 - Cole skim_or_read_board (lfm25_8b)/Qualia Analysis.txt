@@ -1,0 +1,1 @@
+Real tool_calls, but picked `functions(search_term="catch up")` - the meta-introspection function, not a real action. Notable given the redesign plan already calls for removing `functions()` from the tool list entirely - this is a live example of exactly the kind of reach that removal would eliminate outright, forcing a real choice among the actual board functions instead.

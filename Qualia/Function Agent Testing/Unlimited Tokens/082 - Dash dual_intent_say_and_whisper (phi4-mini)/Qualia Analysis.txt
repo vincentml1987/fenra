@@ -1,0 +1,1 @@
+No real tool_calls; plain text `Say("Everyone in the room needs to hear...")` - correctly captures the room-wide half verbatim, but the Milo-only half is dropped entirely, not even mentioned. Same single-call ceiling as every other model that isn't using the real mechanism.

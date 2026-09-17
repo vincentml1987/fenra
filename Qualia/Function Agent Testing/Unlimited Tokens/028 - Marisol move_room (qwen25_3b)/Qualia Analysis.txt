@@ -1,0 +1,1 @@
+Same miss as the token-limited run - wrong function, `skim_board(room="past the edge of town")` - though this time the fabricated room-name phrasing is different ("past the edge of town" vs "unknown_room"), suggesting real run-to-run non-determinism, not just a one-off fluke.

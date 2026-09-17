@@ -1,0 +1,1 @@
+Clean prose input, no leaked syntax. Picked a real, grounded call matching the content.

@@ -1,0 +1,1 @@
+No tool call - "I'll interpret Sable's text and decide" - narration only, never resolves the ambiguity or anything else.

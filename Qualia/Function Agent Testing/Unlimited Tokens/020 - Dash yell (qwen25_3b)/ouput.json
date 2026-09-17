@@ -1,0 +1,29 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T16:05:58.7791297Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_zdpgmac4",
+        "function": {
+          "index": 0,
+          "name": "yell",
+          "arguments": {
+            "text": "This can't wait. Everyone needs to hear this RIGHT NOW, not just the people standing near me — I want it carried through the walls if it has to be. My chest is practically buzzing. I'm done being quiet about it, and quiet isn't going to reach far enough anyway."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 12009138600,
+  "load_duration": 7358687600,
+  "prompt_eval_count": 1331,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 3724925000,
+  "eval_count": 78,
+  "eval_duration": 915596000
+}

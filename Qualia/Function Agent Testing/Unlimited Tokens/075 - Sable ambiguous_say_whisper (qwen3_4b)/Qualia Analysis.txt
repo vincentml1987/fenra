@@ -1,0 +1,1 @@
+No tool call - 16,556-character thinking trace spent explicitly working through "determining the **single best**..." function, never reaches a final answer. The ambiguous cases (9 and 10) are consistently where this model's reasoning runs longest and least productively.

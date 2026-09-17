@@ -1,0 +1,1 @@
+Identical source text to iteration 1 (this is the real, duplicated content from Cole's actual repetition-loop bug during the session) - re-fired the same yell call, as expected from a stateless call.

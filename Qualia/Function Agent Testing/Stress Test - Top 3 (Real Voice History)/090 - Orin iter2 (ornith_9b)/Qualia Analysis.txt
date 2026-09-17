@@ -1,0 +1,1 @@
+Same duplicate text, but this time did NOT decline - called whisper only (dropped the yell entirely). A different, less consistent answer than iteration 1 gave to the identical input - same kind of run-to-run instability seen in Cole's iteration 1/2 pair.

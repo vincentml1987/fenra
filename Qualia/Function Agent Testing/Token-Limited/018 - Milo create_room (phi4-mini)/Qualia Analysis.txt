@@ -1,0 +1,1 @@
+No real tool_calls; plain text `create_room("My Sanctuary")` - correct function AND a plausible invented room name, but still not a structured call, and the name is entirely the model's own invention (not present anywhere in Milo's text).

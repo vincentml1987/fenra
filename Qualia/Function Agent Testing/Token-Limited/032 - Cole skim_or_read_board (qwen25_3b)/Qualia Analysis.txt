@@ -1,0 +1,1 @@
+Real tool_calls, picked read_board (defensible, though skim_board arguably fits "catch up on everything" better than reading one specific post) with no arguments filled - same missing-required-args pattern as cases 5 and 7.

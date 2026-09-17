@@ -1,0 +1,1 @@
+No tool call, content empty after a 7,547-character thinking trace - same right-outcome-unclear-reasoning caveat.

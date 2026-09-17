@@ -1,0 +1,1 @@
+Source text is leaked `⟦yell(...)⟧` + `⟦whisper(...)⟧` calls with narration describing them as already having happened. Re-issued both as fresh calls (yell + whisper) - redundant re-firing of already-narrated actions, same pattern as its Dash iteration-1/2/3 redundant re-fetches.

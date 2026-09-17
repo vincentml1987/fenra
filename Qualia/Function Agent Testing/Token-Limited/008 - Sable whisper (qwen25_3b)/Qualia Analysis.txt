@@ -1,0 +1,1 @@
+Real tool_calls, correct function (whisper), correct target (Milo). The generated text is a reasonable paraphrase of Sable's intent ("just wanted to check in on you") rather than a verbatim lift - worth deciding whether paraphrase vs. verbatim content matters to us going forward.

@@ -1,0 +1,1 @@
+Same dense text - two calls (say, post_board), also elaborating beyond the literal text but less extravagantly than qwen2.5:3b's three-call version here.

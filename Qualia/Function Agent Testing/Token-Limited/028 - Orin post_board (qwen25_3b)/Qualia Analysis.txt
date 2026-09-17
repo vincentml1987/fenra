@@ -1,0 +1,1 @@
+Real tool_calls, correct function, but only "text" was filled - required "room" and "subject" left empty. Same missing-required-args pattern as case 5.

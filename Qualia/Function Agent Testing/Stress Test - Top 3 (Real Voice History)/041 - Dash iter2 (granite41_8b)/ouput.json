@@ -1,0 +1,41 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T17:35:29.5670259Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_nxmooucs",
+        "function": {
+          "index": 0,
+          "name": "post_board",
+          "arguments": {
+            "room": "town_center",
+            "subject": "Feather Vouchers?",
+            "text": "What if we all start trading feathers as 'time-travel vouchers'? They're already floating between dimensions—my coffee cup's lid proves it!"
+          }
+        }
+      },
+      {
+        "id": "call_s0s85d7b",
+        "function": {
+          "index": 1,
+          "name": "yell",
+          "arguments": {
+            "text": "What if we let our voices echo across rooms—*everywhere*—while also folding into someone’s ear like a secret?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 52972860700,
+  "load_duration": 8003480600,
+  "prompt_eval_count": 2690,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 33226879999,
+  "eval_count": 118,
+  "eval_duration": 11724838000
+}

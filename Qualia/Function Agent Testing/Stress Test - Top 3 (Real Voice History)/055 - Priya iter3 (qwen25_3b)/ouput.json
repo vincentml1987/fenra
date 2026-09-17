@@ -1,0 +1,40 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T17:44:48.2312794Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_b0a64ssw",
+        "function": {
+          "index": 0,
+          "name": "say",
+          "arguments": {
+            "text": "Let's focus our efforts on understanding feather behavior within air currents and how these may differ under varying elemental conditions. We have much work ahead."
+          }
+        }
+      },
+      {
+        "id": "call_ucfuh7bc",
+        "function": {
+          "index": 1,
+          "name": "whisper",
+          "arguments": {
+            "target": "Cole",
+            "text": "Remember we are not here merely as an amusement but also advancing knowledge with practical applications."
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 10699305500,
+  "load_duration": 4765725000,
+  "prompt_eval_count": 1764,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 4886707000,
+  "eval_count": 88,
+  "eval_duration": 1033664000
+}

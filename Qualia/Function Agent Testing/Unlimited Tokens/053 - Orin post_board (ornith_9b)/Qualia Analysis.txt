@@ -1,0 +1,1 @@
+**No tool call - third honest decline in a row for this model.** "I don't have enough context to determine which roo[m]" - correctly identifies post_board-shaped intent but won't invent a room name. Consistent with cases 4 and 6: this model's failure mode throughout the batch is under-triggering on missing grounding data, never fabricating to fill the gap.

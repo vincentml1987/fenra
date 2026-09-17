@@ -1,0 +1,40 @@
+{
+  "model": "granite4.1:8b",
+  "created_at": "2026-09-14T17:27:32.8434434Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_3zait2fn",
+        "function": {
+          "index": 0,
+          "name": "whisper",
+          "arguments": {
+            "target": "Wren",
+            "text": "It's just … something nice."
+          }
+        }
+      },
+      {
+        "id": "call_jhb80w49",
+        "function": {
+          "index": 1,
+          "name": "yell",
+          "arguments": {
+            "text": "What is one real thing about yourself?"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 40044737900,
+  "load_duration": 8035839000,
+  "prompt_eval_count": 2138,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 26437927000,
+  "eval_count": 63,
+  "eval_duration": 5552766000
+}

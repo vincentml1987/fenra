@@ -1,0 +1,1 @@
+Real tool_calls, correct function and target (Orin), but the amount argument is the literal string "some" - not a number at all. A genuine malformed value a real dispatcher would reject, and (like qwen3:4b's case) exactly the shape retry is meant to catch.

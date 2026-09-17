@@ -1,0 +1,1 @@
+Real tool_calls, correct function, but a generic placeholder-feeling name ("New_Room") rather than anything grounded in Milo's actual stated need - technically complete, thinner in quality than the other seven models' answers here.

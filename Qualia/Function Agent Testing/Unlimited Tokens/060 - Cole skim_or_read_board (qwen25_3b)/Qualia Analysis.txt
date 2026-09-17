@@ -1,0 +1,1 @@
+Real tool_calls, picked read_board with no arguments filled - same missing-required-args pattern as the token-limited run.

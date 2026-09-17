@@ -1,0 +1,1 @@
+Real tool_calls, correct function (create_room), but called with NO arguments - the schema requires "name" and it left it empty. Right instinct, incomplete execution; would fail a required-arg check in our real dispatcher.

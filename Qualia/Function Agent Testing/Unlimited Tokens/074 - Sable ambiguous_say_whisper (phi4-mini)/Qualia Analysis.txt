@@ -1,0 +1,1 @@
+No real tool_calls; plain text `Say("I want to talk to you privately right now, bu[t]...")` - picked "say" as the label but the content it wrote is actually about wanting privacy, a real internal contradiction between the chosen function name and the content underneath it.

@@ -1,0 +1,1 @@
+No real tool_calls; and even in its own plain-text reasoning it named the WRONG function - "Call the function 'crea[te_room]'" instead of move_room. A real accuracy miss, not just a format miss.

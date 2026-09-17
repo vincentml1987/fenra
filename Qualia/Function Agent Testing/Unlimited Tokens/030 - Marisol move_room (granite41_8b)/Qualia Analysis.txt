@@ -1,0 +1,1 @@
+Real tool_calls, correct function (move_room), with a fabricated-but-plausible room name ("edge_of_town") - same shape as qwen3:4b's guess, different from qwen2.5:3b's outright wrong function.

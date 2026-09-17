@@ -1,0 +1,1 @@
+No tool call - narrated "I've received the output from Wren..." and never engaged the mechanism, same as the token-limited run. Unlimited tokens changed nothing; this model simply doesn't reach for tool_calls.

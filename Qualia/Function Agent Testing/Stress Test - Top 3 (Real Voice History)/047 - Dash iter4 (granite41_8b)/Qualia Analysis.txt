@@ -1,0 +1,1 @@
+Same truncated text - also attempted read_board, with a different fabricated post_id ("post_123"). Same instinct as qwen2.5:3b: complete the truncated call rather than recognize it can't be resolved.

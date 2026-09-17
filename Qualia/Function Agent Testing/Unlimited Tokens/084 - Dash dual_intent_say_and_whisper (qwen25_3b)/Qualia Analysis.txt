@@ -1,0 +1,1 @@
+Real tool_calls, but only ONE call - say(text=<the full two-part message, including the Milo-only portion, appended in full>). This is a genuinely meaningful miss, not just incomplete: it broadcasts what Dash explicitly wanted kept private to Milo alone out to the whole room instead. In a live world this would be a real privacy failure, not just a missed action.

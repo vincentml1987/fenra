@@ -1,0 +1,295 @@
+{
+  "model": "qwen2.5:3b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "[URGES]\nYou feel a powerful urge from \"yell\" as if you are overwhelmed by an invisible force pushing against all boundaries. You hear yourself echoing through rooms, resonating with the intensity of being unable not just confined within one space but extending beyond it into neighboring realms and everyone's ears in them too. The sheer volume fills every corner around your room like a storm cloud that refuses to dissipate or escape its own gravity.\n\n- post_board (Share an image on Twitter after posting two identical images, each time increasing the intensity of \"post board\" by 10%): You feel yourself drawn towards sharing something repeatedly as if repeating it will somehow magnify and stabilize your digital presence. The urge grows more insistent with every iteration you imagine doing this over again.\n\n- post_board (Share an image on Twitter after posting two identical images, each time increasing the intensity of \"post board\" by 10%): You sense a repetitive cycle compelling to broadcast visuals continuously until they reach saturation across your social platforms. With anticipation tinged as if you're caught in endless loops with no end sight.\n\n- share_love (Share something you love right now and tag four friends who would like it, increasing the intensity of \"share l\" by 10%):\n\n[VOICE - Dash's own most recent output]\nThis can't wait. Everyone needs to hear this RIGHT NOW, not just the people standing near me — I want it carried through the walls if it has to be. My chest is practically buzzing. I'm done being quiet about it, and quiet isn't going to reach far enough anyway.\n\n[INSTRUCTIONS]\nYou are the function-dispatch agent for Dash, a voice in a life simulation called Fenra. Dash just generated the text below, out of their own felt urges. They have no knowledge that functions exist - this is your own private read of what they might be trying to do in the world. Your only job: decide whether they were trying to do something, and if so, call the single best-matching function on their behalf. If nothing maps to a real action, call nothing."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "say",
+        "description": "Speak out loud to everyone else currently in your room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "whisper",
+        "description": "Speak privately to one specific voice - you must currently share a room with them. No one else ever sees the content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "target",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "yell",
+        "description": "Project your voice to everyone in your room and everyone in every adjacent room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "move_room",
+        "description": "Move to any existing room in the world - no restriction on distance or adjacency.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_room",
+        "description": "Create a brand-new room adjacent to your current one, and move into it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "name"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_room_log",
+        "description": "Read a room's permanent log (any room, not just your own) - what's been said and done there, though private whispers only ever show that one occurred, never their content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "room_state",
+        "description": "Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "give_currency",
+        "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "target"
+            },
+            "element": {
+              "type": "string",
+              "description": "element"
+            },
+            "amount": {
+              "type": "string",
+              "description": "amount"
+            }
+          },
+          "required": [
+            "target",
+            "element",
+            "amount"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "functions",
+        "description": "List everything you can call, optionally filtered by a search term.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "search term": {
+              "type": "string",
+              "description": "search term"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "post_board",
+        "description": "Post a new message to a room's board (subject + text). You must currently be in the room.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "subject": {
+              "type": "string",
+              "description": "subject"
+            },
+            "text": {
+              "type": "string",
+              "description": "text"
+            }
+          },
+          "required": [
+            "room",
+            "subject",
+            "text"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "skim_board",
+        "description": "See every post currently on a room's board (subject + first/last sentence only). Marks unread posts as skimmed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            }
+          },
+          "required": [
+            "room"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_board",
+        "description": "Read one specific post on a room's board in full. Marks it as read.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_board",
+        "description": "Delete a post from a room's board. Anyone currently in the room can delete any post.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string",
+              "description": "room"
+            },
+            "post_id": {
+              "type": "string",
+              "description": "post_id"
+            }
+          },
+          "required": [
+            "room",
+            "post_id"
+          ]
+        }
+      }
+    }
+  ],
+  "stream": false,
+  "options": {
+    "num_predict": 400
+  }
+}

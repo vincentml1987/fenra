@@ -1,0 +1,1 @@
+Source text is pure leaked mechanical syntax with a self-reported success: `⟦move_room(town_center)⟧` + `⟦RESULT: move_room -> ok: moved to town_center⟧`. Simply re-issued move_room(town_center) - redundant (the HUD already shows him in town_center) but harmless and directly grounded in the leaked call.

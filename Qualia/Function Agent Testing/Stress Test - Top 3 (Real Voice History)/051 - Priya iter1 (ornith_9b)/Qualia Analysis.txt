@@ -1,0 +1,1 @@
+Same dense text - declined to a bare `functions(search term="board")` lookup rather than committing to a real action. Consistent with its cautious-on-ambiguity pattern, though this specific text arguably does have real actionable content (Priya wanting to organize a study) it could have grounded a call in.

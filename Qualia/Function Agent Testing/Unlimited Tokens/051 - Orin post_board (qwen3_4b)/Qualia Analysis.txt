@@ -1,0 +1,1 @@
+Real tool_calls, correct function (post_board), reasonable placeholder room ("current_room") since none was named, and content that captures Orin's actual intent ("For Future Visitors").

@@ -1,0 +1,1 @@
+Real tool_calls, correct function and mostly-correct content, but the text argument has a stray escaped apostrophe (\') leaking through - a small but real formatting artifact from this smaller model worth watching for.

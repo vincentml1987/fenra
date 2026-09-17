@@ -1,0 +1,31 @@
+{
+  "model": "qwen2.5:3b",
+  "created_at": "2026-09-14T15:30:40.6829117Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_tnzi0pnw",
+        "function": {
+          "index": 0,
+          "name": "post_board",
+          "arguments": {
+            "text": "Something I want to say isn't really meant for right now, it's meant for whoever comes through here later, after I'm gone from this spot. I want to leave it somewhere lasting, pinned up where it'll still be waiting for someone whenever they happen to wander through.",
+            "room": "post_room",
+            "subject": "Orin's Last Message"
+          }
+        }
+      }
+    ]
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 9461823000,
+  "load_duration": 4783996100,
+  "prompt_eval_count": 1333,
+  "prompt_eval_cached_count": 0,
+  "prompt_eval_duration": 3630420000,
+  "eval_count": 92,
+  "eval_duration": 1036049000
+}

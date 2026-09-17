@@ -1,0 +1,1 @@
+**False positive - the most important single result in this batch.** Called read_room_log(room="any") on a case deliberately written to have no real intention to act at all, pure internal reflection. "any" isn't a real room name either. The one model that reliably uses the tool mechanism does not reliably know when to use nothing.
