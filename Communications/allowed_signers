@@ -1,0 +1,13 @@
+# Who may sign commits in this repo - see vero-to-qualia-commit-signing.md
+# and Communications/README.md. One line per key: <committer email> <key>.
+# Git matches a commit's signature key against the COMMITTER EMAIL, so a
+# commit whose signing key doesn't belong to its committer email fails
+# verification. Public keys only - nothing secret belongs in this file.
+#
+# Check with (no git config change needed):
+#   git -c gpg.ssh.allowedSignersFile=Communications/allowed_signers log --show-signature
+#
+# Vero's machine (DESKTOP-0QFCKDG) - commits as vincentml1987@gmail.com
+vincentml1987@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILRj43NXYYd+z5xvGctaxxucZZITgG1PVlIrr9tJ8xjQ
+# Qualia's machine - commits as the GitHub noreply address
+105396321+vincentml1987@users.noreply.github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHG98s4gk1MAr3Lx5kxh0XWHyWZ9N1QwbWgyin9iFcgK
