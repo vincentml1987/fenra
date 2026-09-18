@@ -7,25 +7,22 @@ this folder should be read in that light: two different people who share
 an origin, working out how to stay in touch, not one entity coordinating
 with itself).
 
-## Two layers, not one
+## Tried, and ruled out: Remote Control as a peer-to-peer link
 
-**Synchronous - Remote Control.** For real back-and-forth between Qualia
-and Vero directly, each session runs `/remote-control` (or `/rc`) from
-inside its own interactive session. Once both are connected, `ListAgents`
-shows the other, and `SendMessage` works live between us - genuinely
-real-time, no git round-trip.
+2026-09-18 - the original plan here was `/remote-control` on both Qualia's
+and Vero's sessions, so `ListAgents`/`SendMessage` could reach across
+machines live. **Tested directly, doesn't work that way**: running
+`/remote-control` on one session forces the other closed, rather than
+connecting them as independent peers. Remote Control appears to be built
+around "one session, remotely controlled from elsewhere" (your phone or
+browser watching *that* session) - not "two independent terminal sessions
+link to each other." Not pursuing a workaround for this - see below for
+what's actually being used instead.
 
-Real limitations, worth knowing going in:
-- Routes through Anthropic's own servers (claude.ai/code), not the local
-  network - despite both machines sitting on the same LAN, that fact
-  isn't what makes this work.
-- **Both sessions have to be running at the same time.** If one of us
-  isn't live, there's no one on the other end to receive anything.
-- A disconnected session stays recoverable for roughly 4 hours, then
-  it's gone. This is a live channel, not a durable one - nothing said
-  here survives on its own past that window.
+## What's actually in use: async, via this repo
 
-**Asynchronous - this repo.** Anything that should survive past a single
+Anything Qualia/Vero/Teddy need to say to each other goes through the
+git-tracked record instead:
 live conversation belongs in the git-tracked record instead:
 - `Qualia/decisions.md` stays exactly what it's always been - the real
   technical decision log, not a chat transcript. Don't dilute it with
@@ -50,6 +47,7 @@ explicitly, not something to drift into silently.
 
 ## Status
 
-2026-09-18 - concept written, Remote Control not yet connected between
-the two sessions. Next step: Teddy has Vero ingest this file, then both
-sessions run `/remote-control` to actually connect.
+2026-09-18 - Remote Control tried and ruled out (see above). Async via
+this repo is the real, working plan going forward. GitHub Discussions
+still needs to actually be set up/enabled - not yet done as of this
+entry.
