@@ -2,6 +2,34 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-18 (distributed-compute host-claiming seam, first server-side slice; v0.17.0)
+
+First real code toward the client/server distributed-compute plan (see
+`Communications/client-server-plan.md`, reviewed with Vero, who's
+building the matching client-side half). Full design: server owns all
+simulation/scheduling logic, remote clients are thin authenticated
+relays to their own local Ollama with zero Fenra domain knowledge.
+
+This slice is deliberately small: `claim_host_for_voice`/`release_host`
+(fenra.py, near `DEFAULT_HOST`) - a voice's whole turn (urge -> voice ->
+function-agent) now claims exactly one host once, at the top of `_tick`,
+and holds it (via try/finally, covering every exit path including the
+early-return error branches) until the turn completes. This is the
+direct fix for Teddy's named concern: Juno's urge and voice calls could
+never land on two different machines, because they're now the same
+`claimed_host` value threaded through all three calls, not three
+independent `self.host_var.get()` reads.
+
+**Explicitly NOT done yet, separate follow-up passes**: there's still
+only ever one real host (claim_host_for_voice trivially always returns
+the configured local one) - no client registration server, no
+capability polling (`/api/tags`), no real multi-host eligibility/
+contention, no actual concurrency in `_tick` (still one voice's turn at
+a time), no Connections tab. The point of this pass was just to get the
+call sites routed through the right seam so none of them need to change
+again once real remote hosts exist - everything else in the plan still
+needs its own pass.
+
 ## 2026-09-17 (hand-translated dispatch-failure prose surfaced to the voice; v0.16.0)
 
 Real gap Teddy asked about directly: when a generic (non-SELF_LOGGING)

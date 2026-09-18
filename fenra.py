@@ -202,7 +202,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.16.0"
+FENRA_VERSION = "0.17.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -212,6 +212,47 @@ DEFAULT_MODEL = "llama3"
 DEFAULT_INTERVAL_SEC = 3
 DEFAULT_WORLD_NAME = "default"
 DEFAULT_VOICE_NAME = "voice1"
+
+# Distributed-compute host claiming (2026-09-18 - see
+# Communications/client-server-plan.md for the full design, Vero has the
+# matching client-side half). A voice's whole turn - urge agent, voice,
+# function agent - must run on exactly one host, claimed once at the
+# start of the turn and never re-selected mid-turn; otherwise a voice's
+# own urge and voice calls could land on two different machines, which
+# was Teddy's explicit, named concern designing this. `_host_claims` is
+# process-local, in-memory only (not persisted - a claim only matters
+# for the lifetime of one in-flight turn). `_host_registry_lock` guards
+# it; cheap, held only for the instant of claiming/releasing, never
+# across an actual network call.
+#
+# This first pass only wires the *seam* every _tick call site goes
+# through - claim_host_for_voice always trivially succeeds and returns
+# the single configured host, since there's no real second host (no
+# client registration server, no capability polling, no eligibility
+# matching) yet. The point is that _tick's three generation call sites
+# never talk to host_var directly again - once real remote hosts exist,
+# only claim_host_for_voice's own body needs to change, not its callers.
+_host_registry_lock = threading.Lock()
+_host_claims = {}  # host_url -> the voice name currently holding it
+
+
+def claim_host_for_voice(local_host, voice_model):
+    """Claims one host for a voice's entire turn. Always returns
+    `local_host` for now - real eligibility (exact model-tag match
+    against a polled inventory) and real contention between multiple
+    idle hosts only matter once remote hosts actually exist, which is a
+    separate follow-up pass (see the module comment above)."""
+    with _host_registry_lock:
+        _host_claims[local_host] = voice_model
+    return local_host
+
+
+def release_host(host_url):
+    """Releases a claim taken by claim_host_for_voice. Safe to call even
+    if nothing was claimed (e.g. an early-exit path) - a bare pop with a
+    default, not an assertion that something was there."""
+    with _host_registry_lock:
+        _host_claims.pop(host_url, None)
 
 # Four independent elemental currencies (2026-09-12, replacing the old
 # single dollar-denominated `currency` field - see the module docstring's
@@ -4082,150 +4123,159 @@ class FenraApp:
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
 
+        # Claimed once, for this voice's ENTIRE turn (urge -> voice ->
+        # function-agent) - see claim_host_for_voice's own docstring/the
+        # module comment above it. Released in the finally below on every
+        # exit path, including the early returns further down, so a
+        # dropped/errored turn never leaves a stale claim behind.
+        claimed_host = claim_host_for_voice(self.host_var.get(), model)
         try:
-            repeat_penalty = float(self.repeat_penalty_var.get())
-        except ValueError:
-            repeat_penalty = 1.3
-
-        # Urge system (2026-09-11; simplified 2026-09-14, function-agent
-        # redesign - no more understand_wins/canned-nudge branch, that
-        # whole mechanic doesn't exist anymore). Entirely prompt-only,
-        # same as build_hud() - urge_block never gets written to
-        # state["thoughts"] or anywhere on disk, computed fresh every tick.
-        urge_snapshot = compute_urge_snapshot(state)
-        urge_block = ""
-        if urge_snapshot["top_perform"]:
-            top_perform = urge_snapshot["top_perform"]
-            urge_prompt = build_urge_agent_prompt(top_perform)
             try:
-                urge_num_predict = int(self.urge_num_predict_var.get())
+                repeat_penalty = float(self.repeat_penalty_var.get())
             except ValueError:
-                urge_num_predict = 250
-            try:
-                urge_raw = call_ollama(
-                    self.host_var.get(), self.urge_model_var.get(), urge_prompt,
-                    options={"num_predict": urge_num_predict, "repeat_penalty": repeat_penalty},
-                )
-                log_llm_call(
-                    self.world_name, active_voice, "urge_agent",
-                    self.urge_model_var.get(), urge_prompt, urge_raw,
-                )
-                urge_block = urge_raw.strip()
-            except requests.RequestException:
-                # Fail open (confirmed with Teddy, 2026-09-11) - the urge
-                # block is supplementary flavor text, not essential; a
-                # hiccup in the (separate, smaller) urge-agent model
-                # shouldn't cost the voice its whole turn the way the main
-                # model failing does below.
-                urge_block = ""
+                repeat_penalty = 1.3
 
-        # HUD - includes this voice's last function-agent note, if any
-        # (2026-09-14; see build_hud/hud_fields). Shows exactly once: read
-        # into this turn's real prompt below, then cleared immediately so
-        # it never persists past this one turn.
-        hud = build_hud(self.world_name, active_voice)
-        if state.get("last_function_agent_note"):
-            state["last_function_agent_note"] = ""
+            # Urge system (2026-09-11; simplified 2026-09-14, function-agent
+            # redesign - no more understand_wins/canned-nudge branch, that
+            # whole mechanic doesn't exist anymore). Entirely prompt-only,
+            # same as build_hud() - urge_block never gets written to
+            # state["thoughts"] or anywhere on disk, computed fresh every tick.
+            urge_snapshot = compute_urge_snapshot(state)
+            urge_block = ""
+            if urge_snapshot["top_perform"]:
+                top_perform = urge_snapshot["top_perform"]
+                urge_prompt = build_urge_agent_prompt(top_perform)
+                try:
+                    urge_num_predict = int(self.urge_num_predict_var.get())
+                except ValueError:
+                    urge_num_predict = 250
+                try:
+                    urge_raw = call_ollama(
+                        claimed_host, self.urge_model_var.get(), urge_prompt,
+                        options={"num_predict": urge_num_predict, "repeat_penalty": repeat_penalty},
+                    )
+                    log_llm_call(
+                        self.world_name, active_voice, "urge_agent",
+                        self.urge_model_var.get(), urge_prompt, urge_raw,
+                    )
+                    urge_block = urge_raw.strip()
+                except requests.RequestException:
+                    # Fail open (confirmed with Teddy, 2026-09-11) - the urge
+                    # block is supplementary flavor text, not essential; a
+                    # hiccup in the (separate, smaller) urge-agent model
+                    # shouldn't cost the voice its whole turn the way the main
+                    # model failing does below.
+                    urge_block = ""
+
+            # HUD - includes this voice's last function-agent note, if any
+            # (2026-09-14; see build_hud/hud_fields). Shows exactly once: read
+            # into this turn's real prompt below, then cleared immediately so
+            # it never persists past this one turn.
+            hud = build_hud(self.world_name, active_voice)
+            if state.get("last_function_agent_note"):
+                state["last_function_agent_note"] = ""
+                save_voice_state(self.world_name, active_voice, state)
+
+            world_activity = build_world_activity(self.world_name, active_voice)
+            # Bounded history window (2026-09-17) - a voice's own thoughts
+            # list is otherwise unbounded and grows forever; feeding it in
+            # full every tick got expensive and plausibly contributed to the
+            # long-context character-break/repetition episodes seen live
+            # from mistral-small:22b. <=0 means "no limit" (same escape-hatch
+            # convention as num_predict: -1 elsewhere).
+            try:
+                history_window = int(self.history_window_var.get())
+            except ValueError:
+                history_window = 20
+            thoughts = state.get("thoughts", [])
+            if history_window > 0:
+                thoughts = thoughts[-history_window:]
+            prompt = f"{render_thoughts(thoughts)}"
+            if world_activity:
+                prompt = f"{prompt}\n\n{world_activity}"
+            prompt = f"{prompt}\n\n{hud}"
+            if urge_block:
+                prompt = f"{prompt}\n\n{urge_block}"
+
+            try:
+                num_predict = int(self.num_predict_var.get())
+            except ValueError:
+                num_predict = 1500
+            try:
+                response = call_ollama(
+                    claimed_host, model, prompt,
+                    options={"num_predict": num_predict, "repeat_penalty": repeat_penalty},
+                )
+            except requests.RequestException as exc:
+                self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
+                return
+            log_llm_call(self.world_name, active_voice, "voice", model, prompt, response)
+            response = response.strip()
+            if not response:
+                return
+
+            # Function agent (2026-09-14 redesign) - a separate model reads
+            # this voice's own raw output (pure prose, no call syntax - she
+            # has no idea functions exist) plus real grounding data, and
+            # decides what, if anything, actually happens. Retries internally
+            # on a real dispatcher error only, up to the configured cap; see
+            # run_function_agent_turn's own docstring.
+            hud_for_agent = build_function_agent_hud(self.world_name, active_voice)
+            try:
+                retry_cap = int(self.function_agent_retry_cap_var.get())
+            except ValueError:
+                retry_cap = FUNCTION_AGENT_RETRY_CAP
+            agent_content, outcomes = run_function_agent_turn(
+                claimed_host, self.world_name, active_voice,
+                response, hud_for_agent,
+                self.function_agent_model_var.get(),
+                urge_text=render_urge_lines(urge_snapshot["top_perform"]),
+                options={"num_predict": -1, "repeat_penalty": repeat_penalty},
+                retry_cap=retry_cap,
+            )
+            apply_urge_tick(self.world_name, active_voice, outcomes)
+
+            # Whatever the function agent actually said (if anything) becomes
+            # this one voice's next-turn HUD note only - never persisted
+            # further (see the read-and-clear above, next time this voice
+            # runs). Reloaded fresh since apply_urge_tick already wrote urge
+            # changes to disk.
+            state = load_voice_state(self.world_name, active_voice)
+            state["last_function_agent_note"] = agent_content or ""
             save_voice_state(self.world_name, active_voice, state)
 
-        world_activity = build_world_activity(self.world_name, active_voice)
-        # Bounded history window (2026-09-17) - a voice's own thoughts
-        # list is otherwise unbounded and grows forever; feeding it in
-        # full every tick got expensive and plausibly contributed to the
-        # long-context character-break/repetition episodes seen live
-        # from mistral-small:22b. <=0 means "no limit" (same escape-hatch
-        # convention as num_predict: -1 elsewhere).
-        try:
-            history_window = int(self.history_window_var.get())
-        except ValueError:
-            history_window = 20
-        thoughts = state.get("thoughts", [])
-        if history_window > 0:
-            thoughts = thoughts[-history_window:]
-        prompt = f"{render_thoughts(thoughts)}"
-        if world_activity:
-            prompt = f"{prompt}\n\n{world_activity}"
-        prompt = f"{prompt}\n\n{hud}"
-        if urge_block:
-            prompt = f"{prompt}\n\n{urge_block}"
+            # The speaker's own private thought - pure prose now, no more
+            # ⟦RESULT: ...⟧ lines appended (2026-09-14) - she never made a
+            # call herself, so there's no call-result of her own to show her.
+            full_response = response
 
-        try:
-            num_predict = int(self.num_predict_var.get())
-        except ValueError:
-            num_predict = 1500
-        try:
-            response = call_ollama(
-                self.host_var.get(), model, prompt,
-                options={"num_predict": num_predict, "repeat_penalty": repeat_penalty},
-            )
-        except requests.RequestException as exc:
-            self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
-            return
-        log_llm_call(self.world_name, active_voice, "voice", model, prompt, response)
-        response = response.strip()
-        if not response:
-            return
+            timestamp = datetime.now().isoformat(timespec="seconds")
 
-        # Function agent (2026-09-14 redesign) - a separate model reads
-        # this voice's own raw output (pure prose, no call syntax - she
-        # has no idea functions exist) plus real grounding data, and
-        # decides what, if anything, actually happens. Retries internally
-        # on a real dispatcher error only, up to the configured cap; see
-        # run_function_agent_turn's own docstring.
-        hud_for_agent = build_function_agent_hud(self.world_name, active_voice)
-        try:
-            retry_cap = int(self.function_agent_retry_cap_var.get())
-        except ValueError:
-            retry_cap = FUNCTION_AGENT_RETRY_CAP
-        agent_content, outcomes = run_function_agent_turn(
-            self.host_var.get(), self.world_name, active_voice,
-            response, hud_for_agent,
-            self.function_agent_model_var.get(),
-            urge_text=render_urge_lines(urge_snapshot["top_perform"]),
-            options={"num_predict": -1, "repeat_penalty": repeat_penalty},
-            retry_cap=retry_cap,
-        )
-        apply_urge_tick(self.world_name, active_voice, outcomes)
+            own_message_id = append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
+            # Numeric-state history (2026-09-12) - tied to this exact turn's
+            # message id, capturing the real urge/currency state right after
+            # apply_urge_tick and any real function calls have already
+            # landed. See append_voice_history's own docstring.
+            append_voice_history(self.world_name, active_voice, own_message_id, timestamp)
 
-        # Whatever the function agent actually said (if anything) becomes
-        # this one voice's next-turn HUD note only - never persisted
-        # further (see the read-and-clear above, next time this voice
-        # runs). Reloaded fresh since apply_urge_tick already wrote urge
-        # changes to disk.
-        state = load_voice_state(self.world_name, active_voice)
-        state["last_function_agent_note"] = agent_content or ""
-        save_voice_state(self.world_name, active_voice, state)
-
-        # The speaker's own private thought - pure prose now, no more
-        # ⟦RESULT: ...⟧ lines appended (2026-09-14) - she never made a
-        # call herself, so there's no call-result of her own to show her.
-        full_response = response
-
-        timestamp = datetime.now().isoformat(timespec="seconds")
-
-        own_message_id = append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
-        # Numeric-state history (2026-09-12) - tied to this exact turn's
-        # message id, capturing the real urge/currency state right after
-        # apply_urge_tick and any real function calls have already
-        # landed. See append_voice_history's own docstring.
-        append_voice_history(self.world_name, active_voice, own_message_id, timestamp)
-
-        if active_voice == self.displayed_voice:
-            self.root.after(0, self._load_voice, active_voice)
-        # If the currently-displayed room is the one this voice was (or
-        # is now) in, its Log/Board/Occupants panels may be stale -
-        # cheap enough to just refresh unconditionally on the room's own
-        # cadence rather than trying to detect exactly which rooms this
-        # turn touched.
-        if self.displayed_room:
-            self.root.after(0, self._load_room, self.displayed_room)
-        # Avatar tab (2026-09-15, Pilot Mode) - a piloted voice never
-        # runs this turn herself, but other voices' actions around her
-        # should still show up live, same unconditional per-tick cadence
-        # as the Rooms tab above rather than trying to detect exactly
-        # which turns actually touched her room.
-        self.root.after(0, self._refresh_avatar_tab)
-        self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
+            if active_voice == self.displayed_voice:
+                self.root.after(0, self._load_voice, active_voice)
+            # If the currently-displayed room is the one this voice was (or
+            # is now) in, its Log/Board/Occupants panels may be stale -
+            # cheap enough to just refresh unconditionally on the room's own
+            # cadence rather than trying to detect exactly which rooms this
+            # turn touched.
+            if self.displayed_room:
+                self.root.after(0, self._load_room, self.displayed_room)
+            # Avatar tab (2026-09-15, Pilot Mode) - a piloted voice never
+            # runs this turn herself, but other voices' actions around her
+            # should still show up live, same unconditional per-tick cadence
+            # as the Rooms tab above rather than trying to detect exactly
+            # which turns actually touched her room.
+            self.root.after(0, self._refresh_avatar_tab)
+            self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
+        finally:
+            release_host(claimed_host)
 
 
 def main():
