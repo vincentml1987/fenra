@@ -2,6 +2,43 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-17 (hand-translated dispatch-failure prose surfaced to the voice; v0.16.0)
+
+Real gap Teddy asked about directly: when a generic (non-SELF_LOGGING)
+function call fails - `give_currency` to a voice that doesn't exist,
+`whisper` to someone not in the room, etc. - `dispatch_one_function_call`
+caught the exception and logged nothing at all back to the calling voice.
+She'd never learn the attempt failed; only `dispatch_corrections.json`
+(Teddy's own review file) saw it. Silent, not harmful (nothing mutates on
+the error path - every `fn_*` body validates before writing), but a real
+blind spot for a voice's own sense of what actually happened.
+
+Fixed via a failure-side twin of `FUNCTION_SELF_RESULT_TEMPLATES`:
+`FUNCTION_ERROR_TEMPLATES` (fenra.py, next to it) - hand-translated,
+second-person prose per real-world-fact error (`"You don't see anyone
+named {target} here."`, etc.), rendered by `_self_error_text`. Explicit
+design line, Teddy's call: only errors that are genuinely about the world
+get a template and reach the voice. Errors caused by the function agent's
+own malformed translation (bad separator count, non-numeric amount, empty
+required field) have no template and stay silent to her, same as before -
+she never said anything wrong, the translation layer did, and surfacing
+that as an in-fiction fact would misattribute it to her.
+
+`run_function_agent_turn` now carries the LAST retry attempt's translated
+error notes into `combined_content` (the same next-turn-HUD-note channel
+self-logging confirmations already use) - a call fixed on retry never
+leaves a stale note behind, only a still-failing final attempt surfaces
+anything.
+
+Verified: rendering tested directly against real historical failures from
+`dispatch_corrections.json` (a real `give_currency` to `'teddy (human)'` -
+the Pilot Mode display suffix leaking into a dispatched argument, a
+separate real bug worth fixing later; a real `whisper` while not sharing
+a room) - both translate correctly. Live-tested against a fresh `the_kiln`
+relaunch; no fresh real-world-fact error occurred to observe end-to-end
+before the session closed, so the live-voice-facing path is verified by
+code + historical-data replay, not yet by a freshly-observed live case.
+
 ## 2026-09-17 (backlog - yell should say which room it came from, for adjacent-room recipients)
 
 Small addition to the act-specific-notices idea just above: `fn_yell`

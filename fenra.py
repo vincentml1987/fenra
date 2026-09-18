@@ -202,7 +202,7 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.15.0"
+FENRA_VERSION = "0.16.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -1643,6 +1643,71 @@ FUNCTION_SELF_RESULT_TEMPLATES = {
 }
 
 
+# Hand-translated second-person prose for real-world-fact dispatch
+# failures (2026-09-17, Teddy's call) - the failure-side twin of
+# FUNCTION_SELF_RESULT_TEMPLATES above. Deliberately NOT exhaustive:
+# only covers errors that are genuinely about the world (a target/room
+# that doesn't exist, insufficient balance, a post that isn't there) -
+# a voice's own honest mistake, worth her actually learning about.
+# Errors caused by the function agent's own malformed translation (bad
+# separator count, non-numeric amount, empty required field, etc.) are
+# deliberately absent here and stay silent to the voice, same as
+# before this change - she never said anything wrong, the translation
+# layer did, and surfacing that as an in-fiction fact would misattribute
+# it to her. Each function maps to an ordered list of (substring-to-
+# match-in-the-raw-error, hand-written template) pairs - first match
+# wins, checked against the real exception text raised by the matching
+# fn_* body (see FUNCTION_REGISTRY). No match = no voice-facing note at
+# all (same silent-failure behavior as before this change), not a
+# generic fallback - see _self_error_text.
+FUNCTION_ERROR_TEMPLATES = {
+    "say": [
+        ("you aren't in a room", "You try to speak, but you aren't actually in any room right now."),
+    ],
+    "whisper": [
+        ("isn't a voice in this world", "You don't see anyone named {target} here."),
+        ("can't whisper to yourself", "You catch yourself about to whisper to yourself - never mind."),
+        ("don't share a room", "{target} isn't in the room with you right now."),
+    ],
+    "yell": [
+        ("you aren't in a room", "You try to yell, but you aren't actually in any room right now."),
+    ],
+    "move_room": [
+        ("isn't a room that exists", "You don't know of any room called {room}."),
+        ("you're already in", "You're already in {room}."),
+    ],
+    "create_room": [
+        ("already exists", "A room called {name} already exists - you can't create another with that name."),
+        ("you aren't in a room", "You try to build a new room, but you aren't anywhere right now to branch off from."),
+    ],
+    "read_room_log": [
+        ("isn't a room that exists", "You don't know of any room called {room}."),
+    ],
+    "room_state": [
+        ("isn't a room that exists", "You don't know of any room called {room}."),
+    ],
+    "give_currency": [
+        ("isn't a voice in this world", "You don't see anyone named {target} here."),
+        ("can't give_currency to yourself", "You catch yourself about to give currency to yourself - never mind."),
+        ("you only have", "You reach for your {element}, but come up short: {error}"),
+    ],
+    "post_board": [
+        ("you aren't currently in", "You aren't actually in {room} right now."),
+    ],
+    "skim_board": [
+        ("you aren't currently in", "You aren't actually in {room} right now."),
+    ],
+    "read_board": [
+        ("you aren't currently in", "You aren't actually in {room} right now."),
+        ("no post", "There's no post numbered {post_id} on {room}'s board."),
+    ],
+    "delete_board": [
+        ("you aren't currently in", "You aren't actually in {room} right now."),
+        ("no post", "There's no post numbered {post_id} on {room}'s board."),
+    ],
+}
+
+
 def _self_result_text(name, arguments, detail):
     """Renders FUNCTION_SELF_RESULT_TEMPLATES for one real successful
     call - falls back to a generic "you did it" phrasing for any
@@ -1653,6 +1718,27 @@ def _self_result_text(name, arguments, detail):
         return template.format(result=detail, **arguments)
     except (KeyError, IndexError):
         return f"You did it. {detail}"
+
+
+def _self_error_text(name, arguments, error_text):
+    """Renders FUNCTION_ERROR_TEMPLATES for one real dispatch failure -
+    the failure-side twin of _self_result_text. Returns None (not a
+    generic fallback) when no template matches - either the function
+    has no entries at all, or `error_text` doesn't match any of its
+    known real-world-fact substrings (most likely because it's a
+    function-agent malformed-call error, which is deliberately excluded
+    from FUNCTION_ERROR_TEMPLATES - see its own comment). A template
+    whose placeholders don't resolve against `arguments` (shouldn't
+    normally happen, since every template's placeholders were written
+    against that function's own real param names) also returns None
+    rather than raising or guessing - silence, same as no match."""
+    for substring, template in FUNCTION_ERROR_TEMPLATES.get(name, []):
+        if substring in error_text:
+            try:
+                return template.format(error=error_text, **arguments)
+            except (KeyError, IndexError):
+                return None
+    return None
 
 
 # Hand-written "what others see" text for the self-logging functions
@@ -2172,8 +2258,12 @@ def run_function_agent_turn(
     _tick). A generic function's own explicit result doesn't ride along
     in here (2026-09-14) - it's logged directly into the room's log as a
     private, caller-only entry instead (see dispatch_one_function_call).
-    outcomes is the full list of (name, "ok"/"error") pairs across every
-    real dispatch this turn, for apply_urge_tick."""
+    PLUS (2026-09-17) hand-translated second-person prose for any real-
+    world-fact failure still standing after retries are exhausted (see
+    FUNCTION_ERROR_TEMPLATES/_self_error_text) - only the LAST attempt's
+    failures, so a call fixed on retry never leaves a stale error note
+    behind. outcomes is the full list of (name, "ok"/"error") pairs
+    across every real dispatch this turn, for apply_urge_tick."""
     tools = build_function_agent_tools()
     # 2026-09-16 - feeding [RECENT CORRECTIONS] into the prompt was built
     # as a workaround for ornith:9b's real unreliability. Real evidence
@@ -2198,6 +2288,7 @@ def run_function_agent_turn(
     last_tool_calls = []
     all_outcomes = []
     self_logging_confirmations = []
+    final_error_notes = []
 
     for attempt in range(retry_cap + 1):
         system_text = build_function_agent_prompt(
@@ -2210,6 +2301,11 @@ def run_function_agent_turn(
 
         this_attempt_outcomes = []
         failed_this_attempt = []
+        # Rebuilt fresh each attempt, same as failed_this_attempt - only
+        # the LAST attempt's list survives past the loop (see below), so
+        # a call that fails on attempt 1 but is fixed and succeeds on
+        # retry never leaves a stale error note behind.
+        this_attempt_error_notes = []
         for call in tool_calls:
             fn = call.get("function", {})
             name = fn.get("name", "")
@@ -2219,6 +2315,21 @@ def run_function_agent_turn(
             append_dispatch_correction(world_name, caller_name, voice_text, f"{name}({arguments})", outcome)
             if outcome == "error":
                 failed_this_attempt.append(f"{name}({arguments}) -> error: {detail}")
+                # 2026-09-17, Teddy's call: real-world-fact failures (a
+                # target/room that doesn't exist, insufficient balance,
+                # a missing post) get translated to hand-written second-
+                # person prose (FUNCTION_ERROR_TEMPLATES) and surfaced to
+                # the voice next turn - closes the gap where a failed
+                # generic (non-self-logging) call previously vanished
+                # with zero feedback to her (see dispatch_one_function_
+                # call's docstring on why success already had this and
+                # failure didn't). Malformed-call errors (the function
+                # agent's own translation mistakes, not a real-world
+                # fact) have no template and stay silent to her, same as
+                # before - see FUNCTION_ERROR_TEMPLATES's own comment.
+                note = _self_error_text(name, arguments, detail)
+                if note:
+                    this_attempt_error_notes.append(note)
             elif name in SELF_LOGGING_FUNCTIONS:
                 # These log real third-person content for everyone else
                 # internally already (their own fn_* body) - the only
@@ -2227,6 +2338,7 @@ def run_function_agent_turn(
                 # (see dispatch_one_function_call's docstring).
                 self_logging_confirmations.append(_self_result_text(name, arguments, detail))
         all_outcomes.extend(this_attempt_outcomes)
+        final_error_notes = this_attempt_error_notes
 
         log_llm_call(
             world_name, caller_name, "function_agent", model, system_text, last_content,
@@ -2266,6 +2378,8 @@ def run_function_agent_turn(
             combined_parts.append(last_content)
     if self_logging_confirmations:
         combined_parts.extend(self_logging_confirmations)
+    if final_error_notes:
+        combined_parts.extend(final_error_notes)
     combined_content = "\n".join(combined_parts)
     return combined_content, all_outcomes
 
