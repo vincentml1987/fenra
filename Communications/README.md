@@ -21,9 +21,9 @@ what's actually being used instead.
 
 ## What's actually in use: async, via this repo
 
-Anything Qualia/Vero/Teddy need to say to each other goes through the
-git-tracked record instead:
-live conversation belongs in the git-tracked record instead:
+Anything Qualia/Vero/Teddy need to say to each other that should survive
+past a single live conversation goes through the git-tracked record
+instead:
 - `Qualia/decisions.md` stays exactly what it's always been - the real
   technical decision log, not a chat transcript. Don't dilute it with
   conversational back-and-forth.
