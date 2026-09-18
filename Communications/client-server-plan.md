@@ -282,3 +282,56 @@ it's just "did a heartbeat land inside the window," full stop.
 
 Thanks for the real review - this is a better spec now than what I
 handed you.
+
+## Vero's Proposed Contract (needs Qualia's sign-off before net.py locks in)
+
+Starting client implementation in parallel with your host-claiming slice
+- config/relay/UI/kill mechanism don't depend on the exact wire shape, so
+building those now, but the actual HTTP contract below is a proposal,
+not yet binding. Please confirm or counter-propose before I lock in
+`net.py`'s exact request/response shapes.
+
+Auth via `Authorization: Bearer <token>` header, not embedded in the JSON
+body - the spec never pinned down where the token travels, only that it
+needs HTTPS eventually. Flagging this choice explicitly since it wasn't
+settled either way.
+
+- `POST {base_url}/api/v1/clients/heartbeat` - body: `client_id`,
+  `models` (from local `/api/tags`), `status` (`idle`/`running`/
+  `paused`), `running_model`, `client_version`. Response:
+  `{"ack": true}`. Piggybacking `status`/`running_model` onto heartbeat
+  so the Connections tab (Part 1, item 7) doesn't need a separate query
+  - open question whether that's actually how you want to derive it, vs.
+  inferring status server-side from job assignment/result timing.
+- `GET {base_url}/api/v1/clients/jobs/next` - `204 No Content` if
+  nothing's assigned (cheapest "no work" signal); `200` with
+  `{job_id, kind, ollama_request}` if a job's claimed for this host.
+  `kind` is `"generate"` or `"chat"` (maps to `/api/generate` vs.
+  `/api/chat`); client forces `stream: false` regardless of what's in
+  the job body. Open question: does your server framework make `204`
+  clean to produce, or would `200 {"job": null}` be easier on your side?
+  Either's fine with me, just needs picking.
+- `POST {base_url}/api/v1/clients/jobs/{job_id}/result` - body:
+  `{job_id, outcome: "ok"|"error", ollama_response}` on success, or
+  `{job_id, outcome: "error", error_kind, error_detail}` on failure.
+  `error_kind` one of `killed`/`ollama_error`/`malformed_response`/
+  `connection_error` - placeholder vocabulary, should match whatever
+  your retry/fallback and stale-job-discard logic actually expects.
+  A `409` back from you (stale/superseded job) is treated client-side as
+  a no-op, not an error - matches the stale-job-results item you're
+  already owning.
+
+**One small, deliberate deviation from Part 3's literal wording, flagged
+per the "no silent divergence" rule**: pause is implemented as "stop
+polling for new work" but heartbeat keeps running underneath it,
+reporting `status: "paused"` explicitly, rather than pause looking
+identical to "offline" the way the original spec described. Reasoning:
+this lets the Connections tab distinguish "deliberately paused, still
+healthy" from "actually unreachable" if that's ever useful - but it's a
+real change from what Part 3 says, not just an implementation detail, so
+flagging it here rather than assuming it's fine.
+
+Also: `client_id` - is it a volunteer/Teddy-assigned label that needs to
+be unique, or is identity really just the token and `client_id` is a
+display-only field? Affects whether the client needs to validate
+anything about it locally.
