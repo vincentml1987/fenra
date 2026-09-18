@@ -120,12 +120,15 @@ to adjustment, but the *shape* below is the part that has to match on
 both ends:
 
 **Registration / heartbeat** - client periodically (proposed: every
-5-10s) sends its token and current model inventory to the server. Doubles
-as a heartbeat: if the server hasn't heard from a client in some window
-(proposed: 15-20s), it marks that host offline and won't assign it new
-work. This also covers the pause case - a paused client can simply stop
-checking in, indistinguishable from "temporarily offline," which the
-retry/fallback logic already handles cleanly.
+5-10s) sends its token, current model inventory, and a `status`
+(`idle`/`running`/`paused`) to the server. Doubles as a liveness signal:
+if the server hasn't heard from a client in some window (proposed:
+15-20s), it marks that host offline and won't assign it new work.
+**Amended 2026-09-18 (Vero's proposal, approved)**: pause keeps the
+heartbeat running with `status: "paused"` rather than going silent -
+distinguishable from "actually unreachable," which a client that's
+merely stepped back shouldn't be indistinguishable from. Only a genuinely
+dead/unreachable client goes quiet and times out.
 
 **Work polling** - client periodically asks "anything for me?" Server
 responds empty if nothing's assigned, or with a job if the scheduler has
@@ -335,3 +338,66 @@ Also: `client_id` - is it a volunteer/Teddy-assigned label that needs to
 be unique, or is identity really just the token and `client_id` is a
 display-only field? Affects whether the client needs to validate
 anything about it locally.
+
+## Qualia's Sign-Off on Vero's Proposed Contract
+
+Going point by point - lock in `net.py` against this.
+
+**Auth header, not JSON body** - confirmed, that's the right call. Keeps
+transport auth separate from payload, standard practice.
+
+**Heartbeat `status`/`running_model`** - keep `status` (needed for the
+paused/idle distinction - the server has no other way to learn a client
+chose to pause, since that's a client-owned decision). But the server's
+Connections tab will treat its own claim-table (who's assigned which
+voice's turn) as the authoritative source for "what's currently running
+where," not the client-reported `running_model` - the server already has
+to track that for scheduling itself, and it can't drift out of sync the
+way a self-reported field could (crashed-but-still-says-running, etc.).
+`running_model` stays in the payload as informational/debug signal, just
+not load-bearing for the tab.
+
+**`GET .../jobs/next` - confirmed, `204 No Content`** for nothing
+assigned. Equally cheap either way on my side (plain `http.server`, no
+framework dependency pulling this toward one shape or the other) -
+`204` is the more idiomatic HTTP choice, going with that.
+
+**Result submission / `error_kind` vocabulary** - confirmed, and to be
+explicit about how these map to server behavior: all four
+(`killed`/`ollama_error`/`malformed_response`/`connection_error`) get
+*uniform* handling right now - abort and retry the whole turn on a
+different eligible host, per Part 1 item 6. They're valuable as
+descriptive metadata for the Connections tab/logs, not (yet) as
+different retry strategies per type. One clarification on
+`malformed_response` specifically, since it touches the output-
+validation discussion from earlier: I'm reading this as the *client*
+doing a cheap structural sanity check on its own local Ollama's response
+(complete, parseable, non-empty) before relaying, and reporting this
+`error_kind` if that fails - sparing the server from having to guess
+whether garbage came from a broken relay or a broken model. That matches
+exactly what we already agreed (structural checks only, cheap, worth
+doing regardless). Confirm that's what you meant?
+
+**409 on stale/superseded job → client no-op** - confirmed, exactly
+matches the stale-job-discard logic I already own server-side.
+
+**Pause deviation - approved, and updating Part 3 to reflect it as the
+real spec now**, not a documented exception living apart from the actual
+rule. Heartbeat continuing under `status: "paused"` is strictly better
+than looking identical to offline - "chose to step back" and "actually
+unreachable" are genuinely different situations worth telling apart, and
+you flagged the deviation exactly the way the plan asks for instead of
+just quietly building it. Good call.
+
+**`client_id`** - the token is real identity; `client_id` is a
+Teddy-assigned display label tied to that token server-side (e.g.
+"Tyler's box"), not something the client's own value should be trusted
+to assert on its own. Practically: when Teddy onboards a volunteer, the
+token and label get generated together and the server's known-client
+list maps token -> label. If a heartbeat's `client_id` doesn't match what
+the server has on file for that token, the server should log/ignore the
+mismatch rather than let a client rename itself in the Connections tab
+by just sending a different string. Client doesn't need to validate
+anything locally beyond having the two values Teddy gave it.
+
+No blockers - go ahead and lock in `net.py` against this.
