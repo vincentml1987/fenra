@@ -26,6 +26,30 @@ def test_run_job_malformed_response(fake_ollama):
         ollama_relay.run_job(fake_ollama.host, "generate", {"model": "x"}, state)
 
 
+def test_run_job_accepts_tool_call_with_empty_content(fake_ollama):
+    """A function-agent response is a real, valid chat response even
+    though content is empty - the answer lives in tool_calls instead.
+    Regression test for the bug Qualia found on the first live run: every
+    remote function-agent call was being rejected as malformed."""
+    state = _fresh_state()
+    fake_ollama.response_body = {
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "yell", "arguments": {}}}],
+        }
+    }
+    result = ollama_relay.run_job(fake_ollama.host, "chat", {"model": "x"}, state)
+    assert result["message"]["tool_calls"]
+
+
+def test_run_job_rejects_chat_with_no_content_and_no_tool_calls(fake_ollama):
+    state = _fresh_state()
+    fake_ollama.response_body = {"message": {"role": "assistant", "content": ""}}
+    with pytest.raises(ollama_relay.MalformedResponseError):
+        ollama_relay.run_job(fake_ollama.host, "chat", {"model": "x"}, state)
+
+
 def test_kill_interrupts_in_flight_call(fake_ollama):
     """A slow fake Ollama call (5s) must be interrupted well before it
     would naturally finish once request_kill() is called."""

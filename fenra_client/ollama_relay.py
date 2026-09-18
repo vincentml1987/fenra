@@ -64,8 +64,17 @@ def _check_structural(kind, payload):
         raise MalformedResponseError("response body was not a JSON object")
     if kind == "chat":
         message = payload.get("message")
-        if not isinstance(message, dict) or not message.get("content"):
-            raise MalformedResponseError("chat response missing non-empty message.content")
+        if not isinstance(message, dict):
+            raise MalformedResponseError("chat response missing 'message' object")
+        # A tool call is a valid chat response with empty content - the
+        # model's answer lives entirely in tool_calls instead. Reject only
+        # when BOTH are empty, not just content (function-agent calls are
+        # legitimately empty-content: 15 of 16 real Cove calls are, per
+        # Qualia's live-run findings).
+        if not message.get("content") and not message.get("tool_calls"):
+            raise MalformedResponseError(
+                "chat response missing both non-empty message.content and message.tool_calls"
+            )
     else:
         if not payload.get("response"):
             raise MalformedResponseError("generate response missing non-empty 'response'")
