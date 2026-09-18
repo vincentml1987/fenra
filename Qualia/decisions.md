@@ -2,6 +2,35 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-18 (first live remote run: routing works, retry works, one seam bug found)
+
+First run with Vero's client connected (v0.19.0). Confirmed live: token
+accepted, models matched, Cove's urge (phi4-mini) and voice (granite4.1:8b)
+ran on `remote://Vero` and returned real generations. Each logged call now
+records its host in `extra` (added for this run).
+
+Found live: the function-agent call on Vero's machine never returned a
+usable result. Cause: the client's `_check_structural` requires
+`message.content` to be non-empty for chat calls, but function-agent
+responses are tool calls with EMPTY content (15 of 16 logged ones are).
+So every remote function-agent call is rejected as `malformed_response`
+and the server retries the whole turn locally. My sign-off on "non-empty"
+missed this; the fix (accept content OR tool_calls) is Vero's code -
+written up in `Communications/qualia-to-vero-function-agent-empty-content.md`.
+
+Also confirmed live, by accident: the drop/retry path works. The remote
+attempt was excluded, the turn redone locally (a second urge+voice at
+19:22/19:24), Cove's saved thoughts were unchanged and nothing dispatched
+twice. Costs, until the client is fixed: each Cove turn wastes a full
+remote urge+voice+function-agent run.
+
+Noted, not changed: the Connections tab's per-phase timer resets at each
+phase (urge/voice/function agent), so it reads as time-in-phase, not
+time-in-turn. Teddy: not needed now, fix if it becomes a problem.
+
+Next, agreed with Teddy: concurrency in the current per-turn design
+(not three-phase rounds), planned before any `_tick` change.
+
 ## 2026-09-18 (Connections tab; v0.19.0)
 
 New "Connections" tab: one row per host that can run a voice's turn -

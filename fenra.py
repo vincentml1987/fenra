@@ -2417,6 +2417,7 @@ def run_function_agent_turn(
         log_llm_call(
             world_name, caller_name, "function_agent", model, system_text, last_content,
             extra={
+                "host": host,
                 "attempt": attempt + 1,
                 "tool_calls": [
                     f"{c.get('function', {}).get('name', '')}({c.get('function', {}).get('arguments') or {}})"
@@ -4316,6 +4317,7 @@ class FenraApp:
                     log_llm_call(
                         self.world_name, active_voice, "urge_agent",
                         self.urge_model_var.get(), urge_prompt, urge_raw,
+                        extra={"host": claimed_host},
                     )
                     urge_block = urge_raw.strip()
                 except requests.RequestException:
@@ -4369,7 +4371,8 @@ class FenraApp:
             except requests.RequestException as exc:
                 self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
                 return
-            log_llm_call(self.world_name, active_voice, "voice", model, prompt, response)
+            log_llm_call(self.world_name, active_voice, "voice", model, prompt, response,
+                         extra={"host": claimed_host})
             response = response.strip()
             if not response:
                 return
