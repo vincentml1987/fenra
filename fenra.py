@@ -194,6 +194,7 @@ import math
 import os
 import random
 import re
+import sys
 import threading
 import time
 import tkinter as tk
@@ -202,7 +203,9 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
-FENRA_VERSION = "0.17.0"
+import fenra_hosts
+
+FENRA_VERSION = "0.18.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -225,25 +228,32 @@ DEFAULT_VOICE_NAME = "voice1"
 # it; cheap, held only for the instant of claiming/releasing, never
 # across an actual network call.
 #
-# This first pass only wires the *seam* every _tick call site goes
-# through - claim_host_for_voice always trivially succeeds and returns
-# the single configured host, since there's no real second host (no
-# client registration server, no capability polling, no eligibility
-# matching) yet. The point is that _tick's three generation call sites
-# never talk to host_var directly again - once real remote hosts exist,
-# only claim_host_for_voice's own body needs to change, not its callers.
+# Remote volunteer machines (fenra_hosts.py - the server half of the
+# contract Vero's fenra_client implements) appear here as hosts named
+# "remote://<label>". claim_host_for_voice offers an eligible idle remote
+# host first (offloading is the point) and falls back to the configured
+# local Ollama, which is always available and never excluded. The world
+# stays single-threaded for now, so this doesn't speed anything up yet -
+# it makes the whole path (eligibility, routing, drop/retry) real and
+# testable before concurrency lands.
 _host_registry_lock = threading.Lock()
-_host_claims = {}  # host_url -> the voice name currently holding it
+_host_claims = {}  # host_url -> the model of the voice turn currently holding it
+HOSTS = fenra_hosts.RemoteHostManager(os.path.join(BASE_DIR, "host_clients.json"))
 
 
-def claim_host_for_voice(local_host, voice_model):
-    """Claims one host for a voice's entire turn. Always returns
-    `local_host` for now - real eligibility (exact model-tag match
-    against a polled inventory) and real contention between multiple
-    idle hosts only matter once remote hosts actually exist, which is a
-    separate follow-up pass (see the module comment above)."""
+def claim_host_for_voice(local_host, required_models, exclude=()):
+    """Claims one host for a voice's entire turn (urge -> voice ->
+    function-agent). A remote host is only eligible if it currently holds
+    EVERY model in `required_models` (exact tag match, all three of the
+    turn's calls run on the one claimed host), is alive and idle, isn't
+    already claimed, and isn't in `exclude` (hosts that already failed
+    this turn). Otherwise the local host - the guaranteed fallback."""
     with _host_registry_lock:
-        _host_claims[local_host] = voice_model
+        for host in HOSTS.eligible_hosts(required_models):
+            if host not in exclude and host not in _host_claims:
+                _host_claims[host] = required_models[0]
+                return host
+        _host_claims[local_host] = required_models[0]
     return local_host
 
 
@@ -2076,11 +2086,10 @@ def call_ollama(host, model, prompt, options=None):
     # left config-agnostic here (a plain dict, no `self.*` access) - callers
     # build the options from world/voice-specific settings; this function
     # doesn't know or care where they came from.
-    resp = requests.post(
-        f"{host}/api/generate",
-        json={"model": model, "prompt": prompt, "stream": False, "options": options or {}},
-        timeout=None,
-    )
+    request = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+    if fenra_hosts.is_remote_host(host):
+        return HOSTS.call(host, "generate", request).get("response", "")
+    resp = requests.post(f"{host}/api/generate", json=request, timeout=None)
     resp.raise_for_status()
     return resp.json().get("response", "")
 
@@ -2142,17 +2151,16 @@ def call_function_agent(host, model, system_text, tools, options=None):
     urge-agent calls keep using /api/generate exactly as before. Returns
     the raw `message` dict ({"content": ..., "tool_calls": [...]} -
     tool_calls may be absent/empty if the agent chose to call nothing)."""
-    resp = requests.post(
-        f"{host}/api/chat",
-        json={
-            "model": model,
-            "messages": [{"role": "system", "content": system_text}],
-            "tools": tools,
-            "stream": False,
-            "options": options or {},
-        },
-        timeout=None,
-    )
+    request = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_text}],
+        "tools": tools,
+        "stream": False,
+        "options": options or {},
+    }
+    if fenra_hosts.is_remote_host(host):
+        return HOSTS.call(host, "chat", request).get("message", {})
+    resp = requests.post(f"{host}/api/chat", json=request, timeout=None)
     resp.raise_for_status()
     return resp.json().get("message", {})
 
@@ -2335,7 +2343,16 @@ def run_function_agent_turn(
         system_text = build_function_agent_prompt(
             caller_name, voice_text, hud_text, urge_text, recent_corrections, retry_note
         )
-        message = call_function_agent(host, model, system_text, tools, options)
+        try:
+            message = call_function_agent(host, model, system_text, tools, options)
+        except fenra_hosts.RemoteHostError:
+            if attempt == 0:
+                # Nothing dispatched yet this turn - safe for _tick to
+                # redo the whole turn on another host.
+                raise
+            # Earlier attempts already dispatched real calls; redoing the
+            # turn would double them. Keep what stands, stop retrying.
+            break
         last_content = message.get("content", "") or ""
         tool_calls = message.get("tool_calls") or []
         last_tool_calls = tool_calls
@@ -2448,6 +2465,14 @@ class FenraApp:
         self.root = root
         self.root.title(f"Fenra - worlds-rebuild v{FENRA_VERSION}")
         self.root.geometry("1000x650")
+
+        # Distributed compute (2026-09-18): opens the client-facing HTTP
+        # endpoints only if host_clients.json exists (gitignored - holds
+        # the pre-shared tokens). A plain single-machine world is untouched.
+        try:
+            HOSTS.start()
+        except OSError as exc:
+            print(f"Distributed-compute server not started: {exc}", file=sys.stderr)
 
         self.world_name = None
         self.world_voices = []          # this world's round-robin order
@@ -4122,14 +4147,19 @@ class FenraApp:
 
         state = load_voice_state(self.world_name, active_voice)
         model = state.get("model", DEFAULT_MODEL)
+        # The last function-agent note is read-and-cleared partway through
+        # a turn (see the HUD block below); remembered here so a retry on
+        # another host after a mid-turn drop can put it back and the voice
+        # still gets to see it.
+        pending_note = state.get("last_function_agent_note", "")
 
-        # Claimed once, for this voice's ENTIRE turn (urge -> voice ->
-        # function-agent) - see claim_host_for_voice's own docstring/the
-        # module comment above it. Released in the finally below on every
-        # exit path, including the early returns further down, so a
-        # dropped/errored turn never leaves a stale claim behind.
-        claimed_host = claim_host_for_voice(self.host_var.get(), model)
-        try:
+        def run_turn(claimed_host, restore_note):
+            # One attempt at this voice's whole turn, entirely on
+            # `claimed_host`. Early returns end the turn (not an error).
+            # A RemoteHostError escapes to the retry loop below.
+            state = load_voice_state(self.world_name, active_voice)
+            if restore_note and not state.get("last_function_agent_note"):
+                state["last_function_agent_note"] = restore_note
             try:
                 repeat_penalty = float(self.repeat_penalty_var.get())
             except ValueError:
@@ -4274,8 +4304,35 @@ class FenraApp:
             # which turns actually touched her room.
             self.root.after(0, self._refresh_avatar_tab)
             self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
-        finally:
-            release_host(claimed_host)
+
+        # Claimed once per attempt, for the ENTIRE turn (urge -> voice ->
+        # function-agent) - see claim_host_for_voice. Released in the
+        # finally on every exit path so a dropped/errored turn never
+        # leaves a stale claim behind. A remote host that dies or errors
+        # mid-turn is excluded and the whole turn is retried on another
+        # eligible host; with none left it falls to the local Ollama,
+        # which is never excluded, so a turn can't be lost to a flaky
+        # volunteer machine. (Locals raise requests exceptions, handled
+        # inside the turn exactly as before - only RemoteHostError loops.)
+        required_models = [
+            self.urge_model_var.get(), model, self.function_agent_model_var.get(),
+        ]
+        excluded = set()
+        restore_note = ""
+        while True:
+            claimed_host = claim_host_for_voice(self.host_var.get(), required_models, excluded)
+            try:
+                run_turn(claimed_host, restore_note)
+                break
+            except fenra_hosts.RemoteHostError as exc:
+                excluded.add(claimed_host)
+                restore_note = pending_note
+                self.root.after(
+                    0, self.status_var.set,
+                    f"{claimed_host} failed ({exc}); retrying {active_voice}'s turn elsewhere",
+                )
+            finally:
+                release_host(claimed_host)
 
 
 def main():
