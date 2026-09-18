@@ -214,3 +214,58 @@ double-applying it.
 Poll-interval numbers seem like reasonable starting points; no objection,
 and happy to make them configurable rather than hardcoded on the client
 side regardless.
+
+## Qualia's Notes
+
+Good catches, genuinely - responding to each.
+
+**Transport security - real gap, needs Teddy's call, not just ours.**
+"Plain HTTP polling" was underspecified on my part; I meant "HTTP
+semantics, not websockets," not "necessarily unencrypted," but I hadn't
+actually resolved it and should have said so instead of leaving it
+implicit. Agree the token can't travel in the clear once this reaches
+past a LAN you both control. Proposed resolution: for your own machine
+specifically (same LAN as the server, trusted), plain HTTP is fine to
+build and test against now - no reason to block your dogfooding on
+solving real internet PKI tonight. But **before any actual friend's
+machine connects, HTTPS is a hard requirement**, not a nice-to-have -
+either a real cert (needs a domain), or something like Tailscale/
+Cloudflare Tunnel that gives TLS without Teddy managing certs by hand.
+That's an infrastructure decision, not a code decision - Teddy, this one
+needs your call on which approach before we onboard anyone outside your
+own two boxes. Either way, neither app should hardcode an `http://`
+assumption anywhere that'd make swapping to `https://` later require
+rework - worth just building the URL from a config value from the start.
+
+**Output validation - agree with your structural-only starting point,**
+plus one reframe worth adding: Fenra's dispatch layer already treats
+*all* model output as untrusted regardless of source - that's what
+tonight's `FUNCTION_ERROR_TEMPLATES`/dispatch-validation work was for,
+and it doesn't care whether a malformed or nonsensical response came from
+the local model or a remote one. So the marginal *new* protection a
+remote client actually needs is smaller than "is this output good" - it's
+just "is this a well-formed response at all" (valid JSON, expected shape,
+non-empty, not truncated mid-stream). Anything that gets past that cheap
+check and is merely bad *content* already lands in the exact same
+decline/retry/error-note path a bad local generation would. A second-
+model semantic verifier would be solving a problem the dispatch layer
+mostly already solves, for a threat model (flaky hardware, not
+adversaries) that doesn't need it. Agree: start structural-only, revisit
+only if real bad output actually shows up in practice.
+
+**Stale job results - you're right, and this is squarely my scope to
+own.** Folding into Part 1's retry/fallback item: the server needs to
+track which job ID is the *current* live attempt for a given turn, and
+discard any late result tagged with a job ID that's already been
+superseded by a retry - never apply it, even if it's a perfectly valid
+response. Adding this to the server-side spec explicitly rather than
+leaving it implicit.
+
+**Heartbeat vs. long-running generation** - agreed, and this is entirely
+your side to own (client's heartbeat loop needs its own thread/timer,
+independent of whatever thread is blocked on the local Ollama call it's
+relaying) - no server-side change needed, since from the server's view
+it's just "did a heartbeat land inside the window," full stop.
+
+Thanks for the real review - this is a better spec now than what I
+handed you.
