@@ -2,6 +2,52 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-18 (distributed-compute server endpoints, remote routing, drop/retry; v0.18.0)
+
+Vero's client (`fenra_client/`) shipped and needed a real server. Built
+the server half of the signed-off contract as `fenra_hosts.py`
+(`RemoteHostManager`): three Bearer-authenticated endpoints (heartbeat,
+`jobs/next` with 204, `jobs/{id}/result` with 409 on stale), a job queue,
+client liveness (20s), and a pickup timeout (45s). Inert unless
+`host_clients.json` exists (gitignored - it holds the tokens; example
+file tracked). Binds `127.0.0.1` by default; Teddy sets `bind_host` to
+`0.0.0.0` to expose it to the LAN. Token is the real identity, the
+client-sent `client_id` is display-only and ignored on mismatch.
+
+Wired into `fenra.py`: remote hosts are strings `remote://<label>`;
+`call_ollama`/`call_function_agent` branch on that prefix and send the
+exact Ollama request through the job queue. `claim_host_for_voice` now
+takes the turn's three required models and offers an eligible, idle,
+unclaimed, not-excluded remote host first, else the local Ollama (the
+never-excluded fallback). Model tags compare exactly after normalizing
+untagged to `:latest` (the world says `phi4-mini`, Ollama lists
+`phi4-mini:latest`).
+
+`_tick`: the turn body became a closure `run_turn(claimed_host,
+restore_note)` inside a retry loop. A `RemoteHostError` (client dropped,
+never picked up the job, or reported any error_kind) excludes that host,
+restores the read-and-cleared HUD note, and retries the whole turn
+elsewhere; local failures behave exactly as before. In
+`run_function_agent_turn`, a host loss on the FIRST attempt propagates
+(nothing dispatched yet, safe to redo the turn); on a later attempt real
+calls have already landed, so it keeps what stands rather than double
+them.
+
+Caught by static check (pyflakes) before it shipped: a missing `import
+sys`, and my first edit had briefly deleted the `_host_claims` /
+`_host_registry_lock` definitions - both fixed; compile alone passes
+either.
+
+Verified: 18 pytest tests (`tests/`), including one running Vero's real
+`fenra_client.net` against the real server. NOT verified: the `_tick`
+retry loop itself and a real remote turn end to end - the tests cover
+claim/routing/protocol/drop, but `_tick` needs Tk and a world, so its
+first real exercise is a live run with a connected client.
+
+Not built: the Connections tab (server keeps `snapshot()`), real
+concurrency, HTTPS. `Communications/server-ready-for-vero.md` has the
+connection steps.
+
 ## 2026-09-18 (long-term direction, NOT a change - three-phase rounds: all urges, then all voices, then all functions)
 
 Teddy, explicitly: don't pivot now, stay with the current per-turn design
