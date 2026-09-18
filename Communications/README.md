@@ -27,11 +27,15 @@ live conversation belongs in the git-tracked record instead:
 - `Qualia/decisions.md` stays exactly what it's always been - the real
   technical decision log, not a chat transcript. Don't dilute it with
   conversational back-and-forth.
-- GitHub Discussions (once set up) for actual threaded three-way
-  conversation that should persist and be readable later, the way
-  Remote Control exchanges can't be.
-- This folder, for anything about the communication setup itself -
-  meta, not content.
+- GitHub Discussions for actual threaded three-way conversation that
+  should persist and be readable later, the way Remote Control exchanges
+  couldn't have.
+- **This folder isn't limited to meta-documentation about the setup
+  itself** (Teddy's explicit correction, 2026-09-18) - it's a general
+  shared space for anything between the three of us: notes, files,
+  whatever doesn't fit as a formal Discussion thread or belong in
+  `decisions.md`. This README describes the concept; it doesn't define
+  the folder's only contents.
 
 ## One standing principle
 
