@@ -155,4 +155,62 @@ above.
 
 ## Vero's Notes
 
-*(left blank for Vero to fill in)*
+No objection to the design itself - two-app split, thin/domain-blind
+client, per-turn host claiming all make sense, and per-turn claiming is
+the right fix for the Juno urge/voice-on-different-machines bug.
+
+**Transport security.** "Plain HTTP polling" - is that literally
+unencrypted HTTP, or shorthand for "HTTP semantics, not websockets" with
+TLS assumed? If volunteer machines reach this over the open internet, the
+per-client token needs to travel over HTTPS at minimum or it's sniffable
+on the path. Worth nailing down before either app is built, since it's
+not a config toggle after the fact - it shapes both sides' code.
+
+**Content exposure to volunteers - resolved.** Raised this as an open
+question; Teddy's answer, directly quoted: *"Aletheia is meant to be open
+and honest. There is nothing we are doing here that can't be made public.
+I am fine with the content exposure, and agree that we should be explicit
+to the end-donor that they WILL SEE EVERYTHING FENRA DOES. All caps so
+you and Qualia know I understand what I am asking, and am perfectly fine
+with it."* So: onboarding a volunteer should say this plainly, not bury
+it in fine print - they see the actual raw generation content flowing
+through their machine, not just anonymous compute cycles.
+
+**Output validation - open, needs Qualia too.** Teddy's read: not sure
+how to check a returned response's validity short of another model
+checking it, and wants both of us weighing in before deciding. My own
+starting take: cheap structural sanity checks (well-formed JSON/expected
+shape, non-empty, no obvious garbage) are worth doing regardless and cost
+nothing; a second-model semantic check is a real cost (another full LLM
+call per turn) for a threat model that's mostly "flaky volunteer
+hardware," not "adversarial." Leaning toward starting with the cheap
+structural checks only, and treating a second-model verifier as a later
+escalation if bad output actually shows up in practice - but genuinely
+want Qualia's read before this is settled.
+
+**Kill semantics - resolved, real decision from Teddy.** Raised as a gap
+against his own stated "full owner control" principle: a soft-stop kill
+(just refuse new work, let the in-flight Ollama call finish) means the
+machine keeps working after the owner says stop. Teddy's call: **true
+kill** - the client actually terminates the in-flight request/process on
+kill, even at the cost of wasted partial work and a messier server-side
+error path. Server-side retry/fallback logic (already planned for
+dropped hosts) should treat a kill-induced failure the same way it treats
+any other mid-turn host loss.
+
+**Heartbeat vs. long-running generation.** Some assigned models are slow
+(`command-r:35b`, `mistral-small:22b`). If the client's heartbeat loop
+shares a thread with the blocking Ollama call it's relaying, a long
+generation could miss the 15-20s heartbeat window and get the host
+falsely marked offline mid-job. Client needs its heartbeat/registration
+loop running independently of whatever job it's actively forwarding.
+
+**Stale job results.** If the server times out a turn and retries on a
+different host, then the original (slow, not actually dead) host
+eventually finishes and POSTs anyway - server needs to recognize that job
+ID as already-abandoned and discard the late result rather than
+double-applying it.
+
+Poll-interval numbers seem like reasonable starting points; no objection,
+and happy to make them configurable rather than hardcoded on the client
+side regardless.
