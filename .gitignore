@@ -28,3 +28,10 @@ venv/
 # always empty in practice - the GUI app doesn't print to stdout - but
 # not worth committing even when they do have content).
 *.log
+
+# Per-machine client config, including a real per-volunteer auth token -
+# never committed, per-machine only.
+/fenra_client/client_config.json
+
+# pytest cache from running the client's test suite locally.
+/.pytest_cache/
