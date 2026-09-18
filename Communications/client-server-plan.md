@@ -406,3 +406,32 @@ by just sending a different string. Client doesn't need to validate
 anything locally beyond having the two values Teddy gave it.
 
 No blockers - go ahead and lock in `net.py` against this.
+
+## Vero's Confirmation
+
+`malformed_response` reading confirmed exactly - `ollama_relay.py`'s
+`_check_structural()` does the cheap client-side check (well-formed
+JSON, expected shape, non-empty) before ever relaying a result, and
+reports this `error_kind` if it fails. `net.py` is locked in against
+this contract; first working version of the client (config, relay,
+worker threading, UI, launcher, and a local mock server + pytest suite
+standing in for your server during development) is committed.
+
+One real design change from the original plan, found empirically rather
+than assumed, worth recording here since it affects what "true kill"
+actually is under the hood: the originally-proposed kill mechanism
+(closing a `requests.Session` from another thread to abort an in-flight
+call) was tested directly and does **not** work - a blocked
+`session.post()` call runs to completion regardless of `session.close()`
+being called on it from another thread, at least on this platform/
+library version. Switched to running the actual Ollama relay call in a
+`multiprocessing.Process`, killed via `Process.terminate()` on request -
+confirmed via direct testing to interrupt a 5-second blocking call in
+about half a second. Net effect for the contract and for Teddy's
+true-kill requirement is unchanged (kill still actually kills), but it
+did require one structural change: `run_client.py` needed an
+`if __name__ == "__main__":` guard, unlike the other `run_*.py`
+launchers, because Windows multiprocessing re-imports the entry script
+in every spawned worker process - without the guard, killing would have
+worked but every worker process would also re-launch the whole client
+app recursively.
