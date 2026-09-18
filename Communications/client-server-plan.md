@@ -64,9 +64,14 @@ Changes to `fenra.py`:
    completes (success or failure).
 
 4. **Eligibility**: a host is eligible for a voice's turn only if its
-   polled model inventory contains that voice's assigned model as an
-   *exact* tag match (same family, same parameter size - not "close
-   enough").
+   polled model inventory contains **all three** models that turn needs,
+   each as an *exact* tag match (same family, same parameter size - not
+   "close enough"): the world's urge model, that voice's own model, and
+   the world's function-agent model. **Corrected 2026-09-18** - this
+   originally only mentioned the voice's own model, an underspecification:
+   since a turn's three calls all run on one claimed host (never split),
+   the host needs all three, not just one. See `vero-models-needed.md`
+   for what that means concretely for `the_kiln`.
 
 5. **Shared-state safety**: now that multiple turns can run concurrently,
    anything they might both touch (room occupancy, board posts,
