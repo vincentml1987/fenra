@@ -279,15 +279,33 @@ class RemoteHostManager:
             f"{result.get('error_detail', '')}"
         )
 
+    def status(self):
+        """Server-level summary for the Connections tab."""
+        with self._lock:
+            configured = len(self._tokens)
+        port = self._server.server_address[1] if self._server else self.bind_port
+        return {"listening": self._server is not None, "bind_host": self.bind_host,
+                "bind_port": port, "clients_configured": configured}
+
     def snapshot(self):
-        """One row per known client, for a future Connections tab."""
+        """One row per configured or seen client, for the Connections tab.
+        A configured client that has never heartbeated still gets a row
+        (seconds_since_seen None) so the tab shows who's expected, not
+        just who happens to be connected. Never includes tokens."""
         now = time.time()
         with self._lock:
-            return [
-                {"label": label,
-                 "online": now - c["last_seen"] < LIVENESS_SEC,
-                 "status": c["status"], "models": sorted(c["models"]),
-                 "running_model": c["running_model"], "version": c["version"],
-                 "seconds_since_seen": round(now - c["last_seen"], 1)}
-                for label, c in sorted(self._clients.items())
-            ]
+            labels = set(self._tokens.values()) | set(self._clients)
+            rows = []
+            for label in sorted(labels):
+                c = self._clients.get(label)
+                if c is None:
+                    rows.append({"label": label, "online": False, "status": "never connected",
+                                 "models": [], "running_model": None, "version": None,
+                                 "seconds_since_seen": None})
+                    continue
+                rows.append({"label": label,
+                             "online": now - c["last_seen"] < LIVENESS_SEC,
+                             "status": c["status"], "models": sorted(c["models"]),
+                             "running_model": c["running_model"], "version": c["version"],
+                             "seconds_since_seen": round(now - c["last_seen"], 1)})
+            return rows

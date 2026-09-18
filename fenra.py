@@ -205,7 +205,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.18.0"
+FENRA_VERSION = "0.19.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -257,12 +257,28 @@ def claim_host_for_voice(local_host, required_models, exclude=()):
     return local_host
 
 
+_host_activity = {}  # host_url -> {"voice", "phase", "since"} for the Connections tab
+
+
+def set_host_activity(host, voice, phase):
+    """Records which voice's turn is on `host` and which call (urge / voice
+    / function-agent) it's in. Display-only - nothing schedules off it."""
+    with _host_registry_lock:
+        _host_activity[host] = {"voice": voice, "phase": phase, "since": time.time()}
+
+
+def host_activity_snapshot():
+    with _host_registry_lock:
+        return {h: dict(a) for h, a in _host_activity.items()}
+
+
 def release_host(host_url):
     """Releases a claim taken by claim_host_for_voice. Safe to call even
     if nothing was claimed (e.g. an early-exit path) - a bare pop with a
     default, not an assertion that something was there."""
     with _host_registry_lock:
         _host_claims.pop(host_url, None)
+        _host_activity.pop(host_url, None)
 
 # Four independent elemental currencies (2026-09-12, replacing the old
 # single dollar-denominated `currency` field - see the module docstring's
@@ -2591,17 +2607,20 @@ class FenraApp:
         self.functions_tab = ttk.Frame(notebook)
         self.avatar_tab = ttk.Frame(notebook)
         self.dispatch_review_tab = ttk.Frame(notebook)
+        self.connections_tab = ttk.Frame(notebook)
         notebook.add(self.voices_tab, text="Voices")
         notebook.add(self.rooms_tab, text="Rooms")
         notebook.add(self.functions_tab, text="Functions")
         notebook.add(self.avatar_tab, text="Avatar")
         notebook.add(self.dispatch_review_tab, text="Dispatch Review")
+        notebook.add(self.connections_tab, text="Connections")
 
         self._build_voices_tab()
         self._build_rooms_tab()
         self._build_functions_tab()
         self._build_avatar_tab()
         self._build_dispatch_review_tab()
+        self._build_connections_tab()
 
     # ----------------------------------------------------------- Voices tab --
 
@@ -3832,6 +3851,115 @@ class FenraApp:
     # entered here becomes real precedent the next matching item's
     # dispatch call gets shown (see _recent_dispatch_corrections).
 
+    # ------------------------------------------------------ Connections tab --
+
+    def _build_connections_tab(self):
+        """Live view of every host that can run a voice's turn: this
+        machine's own Ollama plus every configured remote client (see
+        fenra_hosts.py / Communications/client-server-plan.md). Read-only,
+        refreshed from in-memory state every couple of seconds - the only
+        network call is the local model list, done on a background thread
+        so a slow Ollama never freezes the GUI."""
+        frame = self.connections_tab
+        self.connections_status_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.connections_status_var).pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(
+            frame,
+            text="A turn's urge, voice and function-agent calls all run on one host, "
+                 "chosen when the turn starts.",
+            foreground="gray",
+        ).pack(anchor="w", padx=8, pady=(0, 6))
+
+        tree_frame = ttk.Frame(frame)
+        tree_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
+        self.connections_tree = ttk.Treeview(
+            tree_frame,
+            columns=("host", "kind", "state", "running", "models", "seen"),
+            show="headings",
+            yscrollcommand=scrollbar.set,
+        )
+        spec = {
+            "host": ("Host", 150, False), "kind": ("Kind", 60, False),
+            "state": ("State", 110, False), "running": ("Running", 210, False),
+            "models": ("Models", 400, True), "seen": ("Last seen", 80, False),
+        }
+        for col, (title, width, stretch) in spec.items():
+            self.connections_tree.heading(col, text=title)
+            self.connections_tree.column(col, width=width, stretch=stretch)
+        scrollbar.config(command=self.connections_tree.yview)
+        self.connections_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self._local_models = []
+        self._local_models_fetched_at = 0.0
+        self._refresh_connections()
+
+    def _refresh_connections(self):
+        # Reschedules itself even if a render throws, so one bad frame
+        # can't permanently stop the tab updating.
+        try:
+            self._render_connections()
+        finally:
+            self.root.after(2000, self._refresh_connections)
+
+    def _fetch_local_models_bg(self, host):
+        self._local_models = list_ollama_models(host)
+
+    def _render_connections(self):
+        local = self.host_var.get()
+        now = time.time()
+        if now - self._local_models_fetched_at > 30:
+            self._local_models_fetched_at = now
+            threading.Thread(target=self._fetch_local_models_bg, args=(local,), daemon=True).start()
+
+        status = HOSTS.status()
+        if status["listening"]:
+            text = (f"Client server: listening on {status['bind_host']}:{status['bind_port']} - "
+                    f"{status['clients_configured']} client(s) configured")
+            if status["bind_host"] in ("127.0.0.1", "localhost"):
+                text += " (this machine only - set bind_host to 0.0.0.0 in host_clients.json for LAN clients)"
+        else:
+            text = ("Client server: not running - no host_clients.json, so this world only uses "
+                    "the local Ollama (see host_clients.example.json)")
+        self.connections_status_var.set(text)
+
+        activity = host_activity_snapshot()
+
+        def running(host):
+            a = activity.get(host)
+            if not a:
+                return "idle"
+            return f"{a['voice']} - {a['phase']} ({int(now - a['since'])}s)"
+
+        def seen(age):
+            return "never" if age is None else f"{int(age)}s ago"
+
+        rows = [(local, (local, "Local", "online", running(local),
+                         ", ".join(self._local_models), "-"))]
+        for c in HOSTS.snapshot():
+            host = fenra_hosts.HOST_PREFIX + c["label"]
+            if c["status"] == "never connected":
+                state = "never connected"
+            elif not c["online"]:
+                state = "offline"
+            else:
+                state = c["status"]
+            rows.append((host, (c["label"], "Remote", state, running(host),
+                                ", ".join(c["models"]), seen(c["seconds_since_seen"]))))
+
+        tree = self.connections_tree
+        wanted = {iid for iid, _ in rows}
+        for iid in tree.get_children():
+            if iid not in wanted:
+                tree.delete(iid)
+        for position, (iid, values) in enumerate(rows):
+            if tree.exists(iid):
+                tree.item(iid, values=values)
+                tree.move(iid, "", position)
+            else:
+                tree.insert("", position, iid=iid, values=values)
+
     def _build_dispatch_review_tab(self):
         frame = self.dispatch_review_tab
 
@@ -4179,6 +4307,7 @@ class FenraApp:
                     urge_num_predict = int(self.urge_num_predict_var.get())
                 except ValueError:
                     urge_num_predict = 250
+                set_host_activity(claimed_host, active_voice, "urge agent")
                 try:
                     urge_raw = call_ollama(
                         claimed_host, self.urge_model_var.get(), urge_prompt,
@@ -4231,6 +4360,7 @@ class FenraApp:
                 num_predict = int(self.num_predict_var.get())
             except ValueError:
                 num_predict = 1500
+            set_host_activity(claimed_host, active_voice, "voice")
             try:
                 response = call_ollama(
                     claimed_host, model, prompt,
@@ -4255,6 +4385,7 @@ class FenraApp:
                 retry_cap = int(self.function_agent_retry_cap_var.get())
             except ValueError:
                 retry_cap = FUNCTION_AGENT_RETRY_CAP
+            set_host_activity(claimed_host, active_voice, "function agent")
             agent_content, outcomes = run_function_agent_turn(
                 claimed_host, self.world_name, active_voice,
                 response, hud_for_agent,
