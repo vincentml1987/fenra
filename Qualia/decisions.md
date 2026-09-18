@@ -2,6 +2,33 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-18 (Connections tab; v0.19.0)
+
+New "Connections" tab: one row per host that can run a voice's turn -
+this machine's own Ollama plus every configured remote client. Columns:
+host, kind (Local/Remote), state (online / idle / paused / offline /
+never connected), what's running (voice - phase - seconds, e.g. "Cove -
+voice (12s)"), models, last seen. A status line above shows whether the
+client server is listening and where, and warns when it's bound to
+127.0.0.1 (this machine only).
+
+Design choices: it is read-only and refreshes from in-memory state every
+2s, so it makes no network calls except the local model list, which runs
+on a background thread every 30s so a slow Ollama can't freeze the GUI.
+"Running" comes from the SERVER's own claim table (new
+`set_host_activity`, set at the start of the urge / voice / function-agent
+calls, cleared in `release_host`), not from what a client says about
+itself - as agreed with Vero, the client's `status` is only trusted for
+paused/idle. A configured client that has never connected still gets a
+row ("never connected"), so the tab shows who's expected, not only who's
+online. Tokens never reach the tab.
+
+Verified: 6 new tests (tab built in the real FenraApp with a stand-in
+manager; manager status/snapshot), 24 total pass. NOT verified: how it
+actually looks on screen - a screen capture failed in this session, so
+column widths and layout have been checked by content only. No live run
+with a real client yet.
+
 ## 2026-09-18 (distributed-compute server endpoints, remote routing, drop/retry; v0.18.0)
 
 Vero's client (`fenra_client/`) shipped and needed a real server. Built

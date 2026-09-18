@@ -41,5 +41,6 @@ are confirmed to interoperate.
 
 ## Not built yet
 
-The Connections tab (the server keeps the data - `snapshot()` - the GUI
-tab itself is still to do), real concurrency, and HTTPS.
+Real concurrency and HTTPS. (The Connections tab is built as of v0.19.0 -
+it shows your client's state, models, last-seen, and which voice/phase is
+running on it, which is a quick way to see that you're connected.)

@@ -204,3 +204,16 @@ def test_vero_real_net_module_against_real_server(server):
 
     with pytest.raises(net.StaleJobError):                     # 409 -> StaleJobError
         net.submit_result(state, job["job_id"], "ok", ollama_response={})
+
+
+def test_snapshot_lists_configured_clients_that_never_connected(server):
+    (row,) = server.snapshot()
+    assert row["label"] == LABEL and row["status"] == "never connected"
+    assert row["online"] is False and row["seconds_since_seen"] is None
+    assert TOKEN not in str(server.snapshot())      # tokens never leave the manager
+
+
+def test_status_reports_listening_port_and_configured_count(server):
+    st = server.status()
+    assert st["listening"] and st["clients_configured"] == 1
+    assert st["bind_port"] == server._server.server_address[1] != 0
