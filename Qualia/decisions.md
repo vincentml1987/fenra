@@ -2,6 +2,35 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-18 (long-term direction, NOT a change - three-phase rounds: all urges, then all voices, then all functions)
+
+Teddy, explicitly: don't pivot now, stay with the current per-turn design
+(urge -> voice -> function-agent for one voice, on one claimed host).
+Recording where he's looking further out so the current build doesn't
+foreclose it: eventually a round runs in three phases - every voice's
+urge first, then every voice's turn, then every queued function
+dispatch. This is the natural end-state of the earlier "queued/batched
+dispatch for real simultaneity" idea (2026-09-16 entry below).
+
+What it would change, so nobody over-invests in the current shape:
+- Host claiming becomes per-phase rather than per-voice-turn, and
+  eligibility relaxes from "host has all three of urge/voice/function
+  models" (the current rule, see `Communications/client-server-plan.md`
+  Part 1 item 4) to "host has the model for the phase it's running."
+  That would also let modest volunteer hardware participate without
+  `qwen3:30b`.
+- All world mutation concentrates in the function phase, which likely
+  shrinks the shared-state locking work considerably (not yet verified
+  against the code).
+- Costs already noted in the 2026-09-16 entry still apply: the
+  `world_activity` TTL/timestamp mechanics assume immediate dispatch,
+  and voices in a round stop seeing each other's same-round actions -
+  a simulation-behavior change, Teddy's call when the time comes.
+
+Vero's client wire contract is unaffected either way (jobs are just
+Ollama requests). Only server-side scheduling/eligibility would change.
+`claim_host_for_voice` is the single seam where that change would land.
+
 ## 2026-09-18 (distributed-compute host-claiming seam, first server-side slice; v0.17.0)
 
 First real code toward the client/server distributed-compute plan (see
