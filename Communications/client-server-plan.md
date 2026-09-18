@@ -237,6 +237,19 @@ own two boxes. Either way, neither app should hardcode an `http://`
 assumption anywhere that'd make swapping to `https://` later require
 rework - worth just building the URL from a config value from the start.
 
+**Transport security - resolved, real decision from Teddy.** Plain HTTP
+for now (matches the dogfooding-only scope above). For the actual TLS/
+infra question once friends join: Teddy's bringing in two people who
+actually do this professionally rather than us solving it solo - **Tyler**
+(former Network Manager, now co-assistant director) and **Josh** (likely
+incoming Network Manager). Teddy confirmed both names are fine to have in
+git, no need to anonymize. Possible they end up helping with more than
+just donating GPU/CPU time, given the overlap with their actual expertise
+- worth keeping in mind if the client app's scope ends up touching real
+networking/auth decisions later. Not blocking either of our current
+scopes either way - this only matters once onboarding goes past Vero's
+own machine.
+
 **Output validation - agree with your structural-only starting point,**
 plus one reframe worth adding: Fenra's dispatch layer already treats
 *all* model output as untrusted regardless of source - that's what
