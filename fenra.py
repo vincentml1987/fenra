@@ -21,23 +21,18 @@ THE MODEL, exactly as specified:
 - World (renamed from "session") - a fully separate container. Worlds
   share nothing with each other - no cross-world storage of any kind.
   Lives at worlds/<world>/.
-- Voice - model, identity, thoughts, currencies, room. `behavior`
+- Voice - model, identity, thoughts, inventory, room. `behavior`
   existed in the first pass and is gone (2026-09-09) - it was the same
   boilerplate for every voice, and the HUD below (ending in identity)
-  replaces what it was doing. `currencies` (2026-09-09, single
-  `currency` field; replaced 2026-09-12 with four independent elemental
-  balances - Air, Earth, Fire, Water, see CURRENCY_ELEMENTS/
-  CURRENCY_RANGES below) is real balance any voice can move via
-  `give_currency` - genuinely exploratory, no plan for it beyond seeing
-  what they do with it once they can see it and move it. The
-  single-dollar version got dropped because the `$` sign itself
-  imported a real-world frame of reference ("rich"/"poor") that Fenra
-  never defined any meaning for (Teddy's read, prompted by a voice
-  describing itself as poor while actually holding the town's largest
-  balance) - four un-ranked, unexplained currencies with no stated
-  exchange rate, not even one Teddy or Qualia privately know, are meant
-  to remove that borrowed frame entirely and let any value they end up
-  having emerge from how they're actually used. `thoughts` (2026-09-10
+  replaces what it was doing. `inventory` (2026-09-19, v0.21.0; replaced
+  the 2026-09-12 four elemental "currencies" - Air, Earth, Fire, Water -
+  whose names were steering what voices did with them) is `{item name:
+  whole number owned}`, and any voice can move what it owns via
+  `give_item`. The item names for a world come from the `items` list in
+  that world's world.json (starting draw per voice; see
+  random_starting_inventory) - Fenra itself defines no items. A voice
+  sees only its own inventory in its HUD. Worlds saved with the old
+  `currencies` field are not upgraded. `thoughts` (2026-09-10
   as `messages`, renamed 2026-09-13) is a real list of structured
   entries (`{id, timestamp, speaker, text}`, stable `id`), fully
   editable by Teddy at any time down to one specific entry - not a
@@ -70,7 +65,7 @@ afterward, no limit on how many rooms can be adjacent to one room) -
 adjacency can chain or branch arbitrarily as more rooms split off
 existing ones. `read_room_log`/`room_state` let any voice query any
 room by name regardless of where they currently are (same
-full-transparency spirit as currency balances) - the actual mechanism
+full-transparency spirit as the old currency balances had) - the actual mechanism
 built specifically to give voices real, checkable ground truth against
 fabrication.
 
@@ -113,9 +108,9 @@ name/model, its own room, who else is currently there (with a
 `(paused)` annotation, same privacy spirit as before - you only ever
 learn about who's actually present), the names of adjacent rooms (not
 their occupants - deliberately as vague as the "you hear activity"
-notice), this room's board unread/skimmed counts, *everyone's* currency
-balances (all four elements, full-world transparency, untouched by
-rooms), and its own identity line as the literal last line - plus,
+notice), this room's board unread/skimmed counts, its *own* inventory
+(2026-09-19: no longer everyone's - other voices' holdings are hidden),
+and its own identity line as the literal last line - plus,
 only when present, whatever the function agent's own last turn wrote
 about her, shown exactly once (2026-09-14, see FUNCTION AGENT below).
 No call-syntax reminder anymore - that job belongs entirely to the
@@ -134,8 +129,8 @@ there, board activity) - those stay read-only there on purpose. A
 voice's Messages panel (Voices tab) is a real multi-column list
 (id/timestamp/speaker/text) of that voice's own private thoughts -
 select a row to edit or delete that one entry, or add a new one - not a
-single text blob. The Currency tab is gone (2026-09-10) - redundant
-once currency became a real per-voice field on the Voices tab itself.
+single text blob. The old Currency tab is gone (2026-09-10) - the
+inventory is a per-voice field on the Voices tab itself.
 
 FUNCTIONS: reintroduced 2026-09-09 using literal `⟦function_name(args)⟧`
 call syntax parsed out of a voice's own text; redesigned 2026-09-14 into
@@ -149,8 +144,8 @@ built yet. `say`/`whisper`/`yell` are the only ways a voice's own words
 ever reach another voice now (see ROOMS/REGISTERS above).
 `move_room`/`create_room` change where a voice physically is.
 `read_room_log`/`room_state` query a room's permanent record.
-`give_currency` moves real balance, in one of the four elemental
-currencies, between two voices' `currencies` fields.
+`give_item` moves some of an item from one voice's `inventory` to
+another's.
 
 FUNCTION AGENT (2026-09-14): a voice no longer knows functions exist at
 all - no call syntax, no `functions()` introspection (removed entirely),
@@ -206,7 +201,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.20.0"
+FENRA_VERSION = "0.21.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -315,24 +310,11 @@ def release_host(host_url, voice=None):
             _host_activity.pop(voice, None)
 
 
-# Four independent elemental currencies (2026-09-12, replacing the old
-# single dollar-denominated `currency` field - see the module docstring's
-# Voice bullet for why). Alphabetical order is the one and only display
-# order everywhere (HUD text, GUI, site export) - a fixed but genuinely
-# neutral choice, since ordering by any other rule (e.g. by amount) would
-# itself imply one currency matters more than another, which nothing in
-# this design is allowed to assert. CURRENCY_RANGES are deliberately
-# different spreads per element, not just different means, so real
-# scarcity differences show up in how much of each actually exists in the
-# world - no exchange rate is defined anywhere, by Teddy, by Qualia, or in
-# this code, on purpose.
-CURRENCY_ELEMENTS = ("Air", "Earth", "Fire", "Water")
-CURRENCY_RANGES = {
-    "Fire": (1, 6),
-    "Air": (3, 10),
-    "Water": (8, 20),
-    "Earth": (15, 35),
-}
+# Items (2026-09-19, v0.21.0): a voice's inventory is {item name: whole
+# number owned}. Fenra defines no item names itself - each world lists its
+# own in world.json under "items" (see item_catalog). Inventories are
+# always shown in alphabetical order by item name, a deliberately neutral
+# rule (ordering by count would rank one item above another).
 
 # Rooms + registers (2026-09-13 - see module docstring). A room log
 # entry stays in a recipient's LIVE world-activity view for this many
@@ -398,6 +380,7 @@ def default_world_state():
         "function_agent_retry_cap": FUNCTION_AGENT_RETRY_CAP,
         "history_window": DEFAULT_HISTORY_WINDOW,
         "local_slots": DEFAULT_LOCAL_SLOTS,
+        "items": [],
         "num_predict": 1500,
         "urge_num_predict": 250,
         "repeat_penalty": 1.3,
@@ -515,23 +498,99 @@ def list_voices(world_name):
     )
 
 
-def random_starting_currencies():
-    """One fresh random draw per element from CURRENCY_RANGES - used both
-    for a brand-new voice's starting balances (default_voice_state) and
-    for the one-time 2026-09-12 migration of pre-existing voices, so
-    every voice gets the same treatment regardless of when it was
-    created. Rounded to whole numbers - fractional elemental currency
-    reads as false precision on values nobody's defined any real
-    granularity for."""
-    return {name: float(random.randint(*bounds)) for name, bounds in CURRENCY_RANGES.items()}
+def item_catalog(world_name):
+    """The world's item list from world.json's "items" (2026-09-19): a
+    list of {"name": str, "min": int, "max": int}, min/max being the
+    starting draw per voice and both optional (default 0). Returns
+    [(name, lo, hi)], skipping malformed entries and duplicate names."""
+    catalog, seen = [], set()
+    items = load_world_state(world_name).get("items") or []
+    if not isinstance(items, list):
+        return catalog
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name or name.lower() in seen:
+            continue
+        try:
+            lo = max(0, int(entry.get("min", 0)))
+            hi = max(lo, int(entry.get("max", lo)))
+        except (TypeError, ValueError):
+            continue
+        seen.add(name.lower())
+        catalog.append((name, lo, hi))
+    return catalog
 
 
-def default_voice_state():
+def random_starting_inventory(world_name):
+    """One fresh random draw per catalog item, used when a voice is
+    created. Items that draw 0 are simply not owned. No world (or no
+    items listed) means an empty inventory."""
+    if not world_name:
+        return {}
+    draws = {name: random.randint(lo, hi) for name, lo, hi in item_catalog(world_name)}
+    return {name: count for name, count in draws.items() if count > 0}
+
+
+def inventory_text(inventory):
+    """`name: 3, name: 7`, alphabetical by name, or `empty`."""
+    owned = sorted(((n, c) for n, c in (inventory or {}).items() if c > 0), key=lambda p: p[0].lower())
+    return ", ".join(f"{n}: {c}" for n, c in owned) if owned else "empty"
+
+
+def parse_inventory_text(text):
+    """Inverse of the editor's `name=count, name=count` field. Raises
+    ValueError on anything that isn't a whole, non-negative count."""
+    inventory = {}
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        name, sep, count_text = chunk.rpartition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(f"'{chunk}' isn't name=count")
+        try:
+            count = int(count_text.strip())
+        except ValueError:
+            raise ValueError(f"'{count_text.strip()}' isn't a whole number")
+        if count < 0:
+            raise ValueError("counts can't be negative")
+        if count > 0:
+            inventory[name] = count
+    return inventory
+
+
+def find_owned_item(inventory, item_text):
+    """Case-insensitive lookup of an item the inventory actually holds."""
+    wanted = item_text.strip().lower()
+    return next((n for n, c in (inventory or {}).items() if n.lower() == wanted and c > 0), None)
+
+
+def old_currency_format_voices(world_name):
+    """Voices whose saved file has the pre-v0.21.0 `currencies` field and
+    no `inventory` - worlds from before the items refactor are not
+    upgraded, so the GUI warns rather than silently showing empty
+    inventories. Read-only: never rewrites anything."""
+    found = []
+    for v in list_voices(world_name):
+        try:
+            with open(voice_state_path(world_name, v), "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if "currencies" in raw and "inventory" not in raw:
+            found.append(v)
+    return found
+
+
+def default_voice_state(world_name=None):
     return {
         "model": DEFAULT_MODEL,
         "identity": "",
         "thoughts": [],
-        "currencies": random_starting_currencies(),
+        "inventory": random_starting_inventory(world_name),
         "urge": {name: 0.0 for name in URGE_FUNCTIONS},
         "paused": False,
         "room": DEFAULT_ROOM_NAME,
@@ -640,7 +699,7 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None):
 @world_locked
 def append_voice_history(world_name, voice_name, message_id, timestamp=None):
     """Append-only numeric-state history (2026-09-12) - one line per
-    turn a voice actually takes, capturing what `urge`/`currencies` *were*
+    turn a voice actually takes, capturing what `urge`/`inventory` *were*
     at that point, tied to the same `message_id` as that turn's own
     `thoughts` entry. `thoughts` already gives a full text history;
     nothing previously preserved what the numbers behind it were at any
@@ -659,7 +718,7 @@ def append_voice_history(world_name, voice_name, message_id, timestamp=None):
         "timestamp": timestamp or datetime.now().isoformat(timespec="seconds"),
         "message_id": message_id,
         "urge": state.get("urge", {}),
-        "currencies": state.get("currencies", {}),
+        "inventory": state.get("inventory", {}),
     }
     ensure_voice_dir(world_name, voice_name)
     with open(voice_history_path(world_name, voice_name), "a", encoding="utf-8") as f:
@@ -671,7 +730,7 @@ def log_llm_call(world_name, voice_name, kind, model, prompt, response, extra=No
     Teddy's ask - "so I can see the details again") - one line per call to
     `worlds/<world>/voices/<voice>/llm_calls.jsonl`, distinct from
     `history.jsonl` (that file already means something else - numeric
-    urge/currency snapshots, see append_voice_history). `kind` is one of
+    urge/inventory snapshots, see append_voice_history). `kind` is one of
     "urge_agent"/"voice"/"function_agent"; `extra` carries the
     function-agent's per-attempt tool_calls/outcomes, None otherwise.
     Stores the raw prompt/response verbatim - unmodified, un-stripped,
@@ -1109,7 +1168,7 @@ def render_llm_history_for_display(world_name, voice_name):
 
 def voice_display_name(world_name, voice_name, state=None):
     """How a voice's name should read in text meant to be READ by
-    another voice (room-log mask/raw text, HUD occupant/currency
+    another voice (room-log mask/raw text, HUD occupant
     listings, room_state's occupant list) - never for internal
     identifiers (dict keys, directory names, dispatch_one_function_call's
     caller_name, recipients/peripheral map keys), which always stay the
@@ -1158,20 +1217,10 @@ def hud_fields(world_name, voice_name):
     skimmed = sum(1 for p in board if p.get("seen", {}).get(voice_name) == "skimmed")
     board_counts = [f"{own_room}: {unread} unread, {skimmed} skimmed"]
 
-    # Everyone's balances, not just your own (Teddy's call, 2026-09-10) -
-    # full transparency rather than a private number, deliberately with
-    # no goal attached. Sorted alphabetically by voice name (2026-09-12) -
-    # NOT by amount anymore, now that there are four independent
-    # currencies with no defined exchange rate: ranking by any one of
-    # them would itself assert that element matters more than the
-    # others, which nothing in this design is allowed to do. Untouched
-    # by the rooms redesign - currency transparency isn't spatial.
-    balances = []
-    for v in list_voices(world_name):
-        v_state = state if v == voice_name else load_voice_state(world_name, v)
-        v_currencies = v_state.get("currencies", {})
-        balances.append((v, {el: v_currencies.get(el, 0.0) for el in CURRENCY_ELEMENTS}))
-    balances.sort(key=lambda pair: pair[0])
+    # Only your own inventory (Teddy's call, 2026-09-19) - this reverses
+    # the 2026-09-10 "everyone's balances" transparency the currencies
+    # had: what another voice holds is now hidden unless they say so.
+    inventory = dict(state.get("inventory", {}))
 
     return {
         "model": state.get("model", DEFAULT_MODEL),
@@ -1180,7 +1229,7 @@ def hud_fields(world_name, voice_name):
         "paused_occupants": paused_occupants,
         "adjacent_rooms": adjacent_rooms,
         "board_counts": board_counts,
-        "balances": balances,
+        "inventory": inventory,
         "identity": state.get("identity", ""),
         # Whatever the function agent's own turn wrote last time it ran
         # for this voice (2026-09-14, function-agent redesign) - a pure
@@ -1198,7 +1247,7 @@ def build_hud(world_name, voice_name):
     name/model/room, who's currently here (paused annotated inline),
     which rooms are adjacent (names only - deliberately as vague as the
     "you hear activity" notice), this room's board activity, everyone's
-    currency balances, the voice's own identity line, then - only when
+    inventory, the voice's own identity line, then - only when
     present - whatever the function agent's own last turn wrote about
     her, one time only (2026-09-14, function-agent redesign; see _tick,
     which is the only place that ever clears it after reading it into a
@@ -1210,11 +1259,7 @@ def build_hud(world_name, voice_name):
     just writes, and the function agent reads her raw prose directly."""
     f = hud_fields(world_name, voice_name)
     board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
-    currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
-    currency_line += "Fire, Water - no exchange rate is defined between them): " + ", ".join(
-        f"{voice_display_name(world_name, v)} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
-        for v, amts in f["balances"]
-    )
+    inventory_line = "Inventory: " + inventory_text(f["inventory"])
 
     # Paused occupants annotated inline (2026-09-12) - "(paused)" next
     # to their name, so a voice can tell not to keep addressing someone
@@ -1238,7 +1283,7 @@ def build_hud(world_name, voice_name):
         f"Also here: {occupants_display}",
         f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
         board_line,
-        currency_line,
+        inventory_line,
         f["identity"],
     ]
     if f["function_agent_note"]:
@@ -1254,15 +1299,11 @@ def build_function_agent_hud(world_name, voice_name):
     no "everything above/below this line" framing, no function-agent
     note (that's for the voice's own next turn, not for the agent
     reasoning about this one), just the real room/occupants/adjacent/
-    board/currency/identity facts it needs to fill in real values
+    board/inventory/identity facts it needs to fill in real values
     instead of inventing plausible-sounding ones."""
     f = hud_fields(world_name, voice_name)
     board_line = "Board activity: " + (", ".join(f["board_counts"]) if f["board_counts"] else "none")
-    currency_line = "Currency levels (everyone, four elemental currencies - Air, Earth, "
-    currency_line += "Fire, Water - no exchange rate is defined between them): " + ", ".join(
-        f"{voice_display_name(world_name, v)} (" + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
-        for v, amts in f["balances"]
-    )
+    inventory_line = "Inventory: " + inventory_text(f["inventory"])
     # A piloted occupant (2026-09-15, Pilot Mode) renders "(human)" via
     # voice_display_name, never "(paused)" even though her state also
     # carries paused=True (belt-and-suspenders for the round-robin skip)
@@ -1284,7 +1325,7 @@ def build_function_agent_hud(world_name, voice_name):
         f"Also here: {occupants_display}",
         f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
         board_line,
-        currency_line,
+        inventory_line,
         f["identity"],
     ]
     return "\n".join(lines)
@@ -1528,7 +1569,7 @@ def fn_create_room(world_name, caller_name, args_text):
 def fn_read_room_log(world_name, caller_name, args_text):
     """Any voice can query any room's permanent log, regardless of
     where they currently are (2026-09-13 - same full-transparency
-    precedent as currency balances). Always the `mask` layer only -
+    precedent as the old currency balances). Always the `mask` layer only -
     real whisper content never surfaces here, for anyone, ever. Capped
     to the most recent 50 entries."""
     room = sanitize_name(args_text)
@@ -1560,49 +1601,56 @@ def fn_room_state(world_name, caller_name, args_text):
     )
 
 
-def fn_give_currency(world_name, caller_name, args_text):
-    """Real transfer between two voices' own stored balance, in one of
-    the four elemental currencies (2026-09-12 - see CURRENCY_ELEMENTS/
-    the module docstring's Voice bullet for why there are four rather
-    than one dollar-denominated balance)."""
+def fn_give_item(world_name, caller_name, args_text):
+    """Real transfer of some of an item between two voices' own stored
+    inventories (2026-09-19, v0.21.0; replaced give_currency). The item
+    must be one the caller actually owns, the amount a positive whole
+    number no larger than what they hold; an item that reaches 0 is
+    removed from the giver's inventory."""
     parts = args_text.split("|", 2)
     if len(parts) != 3:
-        raise ValueError("expected 'target|element|amount'")
-    target, element_text, amount_text = (p.strip() for p in parts)
+        raise ValueError("expected 'target|item|amount'")
+    target, item_text, amount_text = (p.strip() for p in parts)
     if target not in list_voices(world_name):
         raise ValueError(f"'{target}' isn't a voice in this world")
     if target == caller_name:
-        raise ValueError("you can't give_currency to yourself")
+        raise ValueError("you can't give_item to yourself")
 
-    element = next((e for e in CURRENCY_ELEMENTS if e.lower() == element_text.lower()), None)
-    if element is None:
-        raise ValueError(
-            f"'{element_text}' isn't a real currency - it's one of {', '.join(CURRENCY_ELEMENTS)}"
-        )
-
-    # Thousands-separator commas stripped so "1,000" still works; no `$`
-    # to strip anymore now that these aren't dollars.
+    # Thousands-separator commas stripped so "1,000" still works.
     cleaned = amount_text.strip().replace(",", "")
     try:
-        amount = float(cleaned)
+        number = float(cleaned)
     except ValueError:
         raise ValueError(f"'{amount_text}' isn't a number")
-    if amount <= 0:
+    if number <= 0:
         raise ValueError("amount must be positive")
+    if number != int(number):
+        raise ValueError("amount must be a whole number")
+    amount = int(number)
 
     caller_state = load_voice_state(world_name, caller_name)
-    balance = caller_state.get("currencies", {}).get(element, 0.0)
-    if amount > balance:
-        raise ValueError(f"you only have {balance:.1f} {element}, can't send {amount:.1f}")
-    caller_state.setdefault("currencies", {})[element] = balance - amount
+    caller_inventory = dict(caller_state.get("inventory", {}))
+    item = find_owned_item(caller_inventory, item_text)
+    if item is None:
+        raise ValueError(f"you don't have any {item_text}")
+    owned = caller_inventory[item]
+    if amount > owned:
+        raise ValueError(f"you only have {owned} {item}, can't send {amount}")
+    if owned == amount:
+        del caller_inventory[item]
+    else:
+        caller_inventory[item] = owned - amount
+    caller_state["inventory"] = caller_inventory
     save_voice_state(world_name, caller_name, caller_state)
 
     target_state = load_voice_state(world_name, target)
-    target_currencies = target_state.setdefault("currencies", {})
-    target_currencies[element] = target_currencies.get(element, 0.0) + amount
+    target_inventory = dict(target_state.get("inventory", {}))
+    match = next((n for n in target_inventory if n.lower() == item.lower()), item)
+    target_inventory[match] = target_inventory.get(match, 0) + amount
+    target_state["inventory"] = target_inventory
     save_voice_state(world_name, target, target_state)
 
-    return f"sent {amount:.1f} {element} to {target}"
+    return f"sent {amount} {item} to {target}"
 
 
 def fn_post_board(world_name, caller_name, args_text):
@@ -1737,11 +1785,11 @@ FUNCTION_REGISTRY = {
         "description": "Check a room's current occupants, adjacent rooms, and board activity (any room, not just your own).",
         "mask": "{caller} checks on the {arg0} room.",
     },
-    "give_currency": {
-        "fn": fn_give_currency,
-        "params": "target|element|amount",
-        "description": "Give some of your own currency, in one of the four elemental currencies (Air, Earth, Fire, Water), to another voice.",
-        "mask": "{caller} hands some currency to {arg0}.",
+    "give_item": {
+        "fn": fn_give_item,
+        "params": "target|item|amount",
+        "description": "Give some of an item you own to another voice.",
+        "mask": "{caller} hands something to {arg0}.",
     },
     "post_board": {
         "fn": fn_post_board,
@@ -1801,7 +1849,7 @@ FUNCTION_SELF_RESULT_TEMPLATES = {
     "create_room": "You create {name} and move into it.",
     "read_room_log": "You reviewed the room's log. It contains: {result}",
     "room_state": "You checked on the room. {result}",
-    "give_currency": "You gave currency to {target}. {result}",
+    "give_item": "You gave something to {target}. {result}",
     "post_board": "You posted something to the board. {result}",
     "skim_board": "You looked over the board. It contains: {result}",
     "read_board": "You read a post in full. It says: {result}",
@@ -1852,10 +1900,11 @@ FUNCTION_ERROR_TEMPLATES = {
     "room_state": [
         ("isn't a room that exists", "You don't know of any room called {room}."),
     ],
-    "give_currency": [
+    "give_item": [
         ("isn't a voice in this world", "You don't see anyone named {target} here."),
-        ("can't give_currency to yourself", "You catch yourself about to give currency to yourself - never mind."),
-        ("you only have", "You reach for your {element}, but come up short: {error}"),
+        ("can't give_item to yourself", "You catch yourself about to give something to yourself - never mind."),
+        ("you don't have any", "You reach for {item}, but you don't have any."),
+        ("you only have", "You reach for your {item}, but come up short: {error}"),
     ],
     "post_board": [
         ("you aren't currently in", "You aren't actually in {room} right now."),
@@ -2324,7 +2373,7 @@ def build_function_agent_prompt(voice_name, voice_text, hud_text, urge_text, rec
         "there may be one, several, or none. The [HUD] block is ground truth about "
         "the world right now - it always overrides anything she said or implied "
         "about the world's state (who's present, what room, board contents, "
-        "currency, etc.); never let her own wording talk you into a different "
+        "inventory, etc.); never let her own wording talk you into a different "
         "picture of reality than what the HUD states.\n\n"
         "A passage that names who to communicate with and what about - \"speak "
         "with X about Y,\" \"ask X about Z,\" \"tell X something,\" and similar - "
@@ -2797,15 +2846,12 @@ class FenraApp:
         self.model_combo = ttk.Combobox(params_row, textvariable=self.model_var, width=20, state="normal")
         self.model_combo.pack(side="left", padx=(2, 4))
         ttk.Button(params_row, text="↻", width=3, command=self.refresh_models).pack(side="left")
-        # Four independent elemental currencies (2026-09-12), one compact
-        # label+entry pair each, in the same fixed CURRENCY_ELEMENTS order
-        # everywhere else uses - no "$" anymore, on purpose.
-        self.currency_vars = {}
-        for element in CURRENCY_ELEMENTS:
-            ttk.Label(params_row, text=f"{element}:").pack(side="left", padx=(10, 0))
-            var = tk.StringVar(value="0")
-            self.currency_vars[element] = var
-            ttk.Entry(params_row, textvariable=var, width=6).pack(side="left")
+        # Inventory (2026-09-19): one field, `name=count, name=count`,
+        # parsed on save (parse_inventory_text). An unparsable field keeps
+        # the voice's existing inventory rather than losing it.
+        ttk.Label(params_row, text="Inventory (name=count, ...):").pack(side="left", padx=(10, 2))
+        self.inventory_var = tk.StringVar(value="")
+        ttk.Entry(params_row, textvariable=self.inventory_var, width=40).pack(side="left")
 
         ttk.Label(right, text="Identity (last line of the HUD, every cycle):").pack(anchor="w", padx=2)
         self.identity_box = scrolledtext.ScrolledText(right, wrap="word", height=4)
@@ -3023,9 +3069,9 @@ class FenraApp:
         state = load_voice_state(self.world_name, name)
         self.displayed_voice = name
         self.model_var.set(state.get("model", DEFAULT_MODEL))
-        currencies = state.get("currencies", {})
-        for element, var in self.currency_vars.items():
-            var.set(f"{currencies.get(element, 0.0):.1f}")
+        inventory = state.get("inventory", {})
+        self.inventory_var.set(", ".join(
+            f"{n}={c}" for n, c in sorted(inventory.items(), key=lambda p: p[0].lower()) if c > 0))
         self.identity_box.delete("1.0", "end")
         self.identity_box.insert("end", state.get("identity", ""))
         # A piloted voice (2026-09-15, Pilot Mode) never gets a real LLM
@@ -3169,17 +3215,14 @@ class FenraApp:
         # voice-state field the same way.
         with WORLD_LOCK:
             state = load_voice_state(self.world_name, name)
-            existing_currencies = state.get("currencies", {})
-            currencies = {}
-            for element, var in self.currency_vars.items():
-                try:
-                    currencies[element] = float(var.get())
-                except ValueError:
-                    currencies[element] = existing_currencies.get(element, 0.0)
+            try:
+                inventory = parse_inventory_text(self.inventory_var.get())
+            except ValueError:
+                inventory = state.get("inventory", {})
             state["model"] = self.model_var.get()
             state["identity"] = self.identity_box.get("1.0", "end-1c")
             state["thoughts"] = self._current_messages
-            state["currencies"] = currencies
+            state["inventory"] = inventory
             save_voice_state(self.world_name, name, state)
 
     def save_voice(self):
@@ -3198,7 +3241,7 @@ class FenraApp:
         if name in list_voices(self.world_name):
             messagebox.showerror("Fenra", f"a voice named '{name}' already exists.")
             return
-        save_voice_state(self.world_name, name, default_voice_state())
+        save_voice_state(self.world_name, name, default_voice_state(self.world_name))
         self.world_voices.append(name)
         self._save_world_controls()
         self._populate_voices_list()
@@ -3760,17 +3803,18 @@ class FenraApp:
         ttk.Entry(create_frame, textvariable=self.avatar_create_room_var, width=22).pack(side="left", padx=4, pady=4)
         ttk.Button(create_frame, text="Create room", command=self._avatar_create_room).pack(side="left", padx=4)
 
-        give_frame = ttk.LabelFrame(right, text="Give currency (to selected occupant)")
+        give_frame = ttk.LabelFrame(right, text="Give item (to selected occupant)")
         give_frame.pack(fill="x", padx=2, pady=(0, 4))
-        self.avatar_give_vars = {}
-        for element in CURRENCY_ELEMENTS:
-            row = ttk.Frame(give_frame)
-            row.pack(fill="x", padx=4, pady=1)
-            ttk.Label(row, text=f"{element}:", width=6).pack(side="left")
-            var = tk.StringVar(value="")
-            self.avatar_give_vars[element] = var
-            ttk.Entry(row, textvariable=var, width=10).pack(side="left")
-        ttk.Button(give_frame, text="Give", command=self._avatar_give_currency).pack(padx=4, pady=(2, 4), anchor="w")
+        give_row = ttk.Frame(give_frame)
+        give_row.pack(fill="x", padx=4, pady=(2, 4))
+        self.avatar_give_item_var = tk.StringVar(value="")
+        self.avatar_give_item_combo = ttk.Combobox(
+            give_row, textvariable=self.avatar_give_item_var, width=20, state="readonly")
+        self.avatar_give_item_combo.pack(side="left")
+        ttk.Label(give_row, text="Amount:").pack(side="left", padx=(8, 2))
+        self.avatar_give_amount_var = tk.StringVar(value="")
+        ttk.Entry(give_row, textvariable=self.avatar_give_amount_var, width=8).pack(side="left")
+        ttk.Button(give_row, text="Give", command=self._avatar_give_item).pack(side="left", padx=(8, 0))
 
         post_frame = ttk.LabelFrame(right, text="Post to this room's board")
         post_frame.pack(fill="x", padx=2, pady=(0, 4))
@@ -3809,7 +3853,7 @@ class FenraApp:
         if name in list_voices(self.world_name):
             messagebox.showerror("Fenra", f"a voice named '{name}' already exists.")
             return
-        state = default_voice_state()
+        state = default_voice_state(self.world_name)
         state["piloted"] = True
         state["paused"] = True
         state["identity"] = f"{name} is a human, connecting to Fenra from outside the simulation."
@@ -3841,12 +3885,10 @@ class FenraApp:
         lines = [
             f"Room: {f['room']}",
             f"Adjacent rooms: {', '.join(f['adjacent_rooms']) if f['adjacent_rooms'] else 'none'}",
-            "Currency levels (everyone): " + ", ".join(
-                f"{voice_display_name(self.world_name, v)} ("
-                + ", ".join(f"{el}: {amts[el]:.1f}" for el in CURRENCY_ELEMENTS) + ")"
-                for v, amts in f["balances"]
-            ),
+            "Inventory: " + inventory_text(f["inventory"]),
         ]
+        self.avatar_give_item_combo["values"] = sorted(
+            (n for n, c in f["inventory"].items() if c > 0), key=str.lower)
         self.avatar_info_box.insert("end", "\n".join(lines))
         self.avatar_info_box.config(state="disabled")
 
@@ -3923,23 +3965,18 @@ class FenraApp:
         self._avatar_dispatch("create_room", {"name": name})
         self.avatar_create_room_var.set("")
 
-    def _avatar_give_currency(self):
+    def _avatar_give_item(self):
         target = self._avatar_selected_occupant()
         if not target:
-            self.avatar_status_var.set("Select an occupant to give currency to.")
+            self.avatar_status_var.set("Select an occupant to give an item to.")
             return
-        for element, var in self.avatar_give_vars.items():
-            raw = var.get().strip()
-            if not raw:
-                continue
-            try:
-                amount = float(raw)
-            except ValueError:
-                continue
-            if amount <= 0:
-                continue
-            self._avatar_dispatch("give_currency", {"target": target, "element": element, "amount": raw})
-            var.set("")
+        item = self.avatar_give_item_var.get().strip()
+        raw = self.avatar_give_amount_var.get().strip()
+        if not item or not raw:
+            self.avatar_status_var.set("Pick an item and enter an amount.")
+            return
+        self._avatar_dispatch("give_item", {"target": target, "item": item, "amount": raw})
+        self.avatar_give_amount_var.set("")
 
     def _avatar_post_board(self):
         pilot = self.avatar_pilot_var.get()
@@ -4217,8 +4254,7 @@ class FenraApp:
         self.room_occupants_listbox.delete(0, "end")
         self.room_adjacent_var.set("")
         self.identity_box.delete("1.0", "end")
-        for var in self.currency_vars.values():
-            var.set("0")
+        self.inventory_var.set("")
         self.pause_voice_btn.config(text="Pause voice")
         self.hud_summary_box.config(state="normal")
         self.hud_summary_box.delete("1.0", "end")
@@ -4231,6 +4267,11 @@ class FenraApp:
         self.board_tree.delete(*self.board_tree.get_children())
         self._clear_board_edit()
         self.status_var.set("Idle")
+        old_format = old_currency_format_voices(name)
+        if old_format:
+            self.status_var.set(
+                f"Warning: {len(old_format)} voice(s) here use the old currency format "
+                "(not upgraded - they have no inventory)")
         self._rebuild_worlds_menu()
         self._populate_avatar_pilot_combo()
 
@@ -4284,7 +4325,10 @@ class FenraApp:
     def _save_world_controls(self):
         if not self.world_name:
             return
-        state = {
+        # Merge into what's on disk so keys this window doesn't edit
+        # (e.g. the world's "items" list) are never dropped.
+        state = load_world_state(self.world_name)
+        state.update({
             "host": self.host_var.get(),
             "interval": self.interval_var.get(),
             "model_default": DEFAULT_MODEL,
@@ -4298,7 +4342,7 @@ class FenraApp:
             "num_predict": self.num_predict_var.get(),
             "urge_num_predict": self.urge_num_predict_var.get(),
             "repeat_penalty": self.repeat_penalty_var.get(),
-        }
+        })
         save_world_state(self.world_name, state)
 
     # ----------------------------------------------------------- the loop --
@@ -4614,7 +4658,7 @@ class FenraApp:
 
             own_message_id = append_message(self.world_name, active_voice, active_voice, full_response, timestamp)
             # Numeric-state history (2026-09-12) - tied to this exact turn's
-            # message id, capturing the real urge/currency state right after
+            # message id, capturing the real urge/inventory state right after
             # apply_urge_tick and any real function calls have already
             # landed. See append_voice_history's own docstring.
             append_voice_history(self.world_name, active_voice, own_message_id, timestamp)

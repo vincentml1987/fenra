@@ -2,6 +2,56 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-19 (currencies replaced by a per-voice inventory of items; give_currency -> give_item; v0.21.0)
+
+Teddy's call: drop the four elemental currencies (Air/Earth/Fire/Water)
+for something with no built-in meaning; the replacement is generic
+"items" in a per-voice inventory (item name, number owned). Why it mattered, from the overnight logs: the urge agent sees the
+`give_currency` description with the element names in it and writes prose
+from them ("hot air swirling", "a nurturing, life-sustaining force"), and
+45 of Cove's 46 voice outputs mention Water or Air. The names were steering
+behaviour, against the design line that currencies "only mean what you make
+them mean".
+
+What changed (`fenra.py`, tests in `tests/test_inventory.py`):
+- Voice state `inventory` = `{item name: whole number}` replaces
+  `currencies`. Item names come from the world's `world.json` `items` list
+  (`[{"name", "min", "max"}]`, min/max = each voice's starting draw). Fenra
+  defines no items itself; no list = empty inventories. Alphabetical display
+  order (the same neutral rule as before). Whole numbers only.
+- `give_currency` -> `give_item(target|item|amount)`: the item must be one
+  the giver owns (case-insensitive), the amount a positive whole number no
+  larger than what they hold; an item that reaches 0 is removed. Observers
+  still see only "X hands something to Y" (item not disclosed, as before).
+  Self-error feedback templates reworded for items.
+- HUD shows ONLY the voice's own inventory. This deliberately reverses the
+  2026-09-10 "everyone sees everyone's balances" transparency; a voice now
+  learns what others hold only if they say so. Teddy's choice.
+- GUI: the Voices editor's four fixed fields became one `name=count, ...`
+  inventory field (unparsable text keeps the existing inventory); the pilot
+  avatar's four give fields became an item dropdown (from the pilot's own
+  inventory) plus amount.
+- Found and fixed on the way: the GUI's `_save_world_controls` rebuilt
+  `world.json` from scratch on every scheduling pass, so it would have
+  erased the `items` list within seconds. It now merges into what is on disk.
+
+Not done, on purpose: **old worlds are not upgraded** (Teddy's call). A
+world whose voices still carry `currencies` loads without crashing, shows a
+status-line warning, and its voices simply have empty inventories; the old
+`currencies` key is left untouched in their files. `history.jsonl` rows
+written before this keep their old `currencies` field; new rows use
+`inventory`. `dispatch_corrections.json` untouched (2 of 330 entries
+mention give_currency). No item creation/destruction/trade-offer
+mechanics. Tests: 67 pass (44 old + 23 new); GUI exercised in a scratch
+world (field round-trip, bad-text fallback, items survive a controls save,
+pilot dropdown), layout not eyeballed and no live LLM run of `give_item`
+yet.
+
+Role note, same day: Teddy split the work - Qualia architects the code that
+runs the worlds and watches the voices during runs for distress; Vero
+designs starting conditions (this is where the `items` list gets written)
+and writes the reviews/arc reports. See Communications/world-items-format.md.
+
 ## 2026-09-19 (concurrency phase B: several voices' turns at once; v0.20.0)
 
 Second half of the approved concurrency plan (on top of phase A's atomic
