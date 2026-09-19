@@ -46,6 +46,22 @@ live: nothing here has run against a real world or Vero's machine yet, and
 races are inherently hard to prove absent - the stress tests and unit tests
 raise confidence, only a live run raises it further.
 
+LIVE RESULT (2026-09-18 21:11-21:26, the_kiln, Cove on Vero + Root local,
+everyone else paused): worked. Both turns started in the same scheduling
+pass on different hosts (Root's urge on localhost, Cove's on remote://Vero)
+and ran at the same time. Cove completed two full turns entirely on Vero's
+machine (urge, voice, function agent all `remote://Vero`, never split)
+while Root completed one on this machine - about twice the turns in the
+same time. Root's first function-agent attempt made a post_board call with
+an empty subject and was rejected by the existing validation; the retry
+loop fixed it and the second attempt's post_board landed, i.e. a real
+world-changing dispatch ran through the locked path while Cove's turn was in
+flight. Afterwards: all 14 world JSON files parse, thought ids unique, the
+corrections file (256 entries) has unique ids, no temp files, empty error
+log, one saved thought per finished turn. Still not exercised live: two
+turns dispatching in the SAME instant, local_slots above 1, and a client
+dying mid-turn under concurrency.
+
 Not done: the "Local slots" default of 1 is untested above 1 on real
 hardware; the GUI setup actions (new/rename/delete room, new voice/world)
 are still unlocked (see phase A entry).
