@@ -182,6 +182,23 @@ Consider whether a commit is due before/at the start of next session.
   catches Ash's loop (ids 23-29) and Wick's copy-paste (14-16); Cove/Root's
   single benign repeats stay quiet. Thresholds were tuned on that one
   world - recheck on the new one. Not built (waiting on Teddy's go).
+- **TO-DO (2026-09-19, Vero + Teddy request, see
+  `Communications/vero-to-qualia-function-agent-note-ttl.md`): let the
+  function-agent note live up to 3 of the voice's own turns, replace-not-
+  stack, HUD-only.** Today `last_function_agent_note` shows once and is
+  cleared when read into a real prompt (`fenra.py` ~4573-4580; set at
+  ~4652). Build notes: store `{text, turns_left}`; decrement per real
+  prompt; a NEW non-empty note replaces and resets to 3, but an empty turn
+  must NOT erase a live one (today's `agent_content or ""` would); keep the
+  v0.19.1 retry-restore path (`restore_note`, ~4526/4710) working. **Open
+  caveat Vero's reasoning misses:** the note is not static-shaped - for
+  say/whisper/yell it contains the voice's own words verbatim
+  ("You whisper to Root: <full text>") and for reads/skims it contains
+  board text. Showing that three turns running is the same
+  repeated-line-imitation risk the timestamp fix targeted (Cove's identical
+  whispers, Wick's copy-pasted essay). Option: persist only a compact
+  outcome ("You whispered to Root.") for turns 2-3 and show full text once.
+  Decide with Vero/Teddy before building.
 - **DESIGN, not decided (2026-09-19): gate `move_room` to adjacency.**
   Today movement is unrestricted (Teddy's explicit 2026-09-13 call; nothing
   gated). Gating needs the manual adjacency editor above (New Room makes
