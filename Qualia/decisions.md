@@ -2,6 +2,27 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-19 (timestamps dropped from the model-facing history; v0.21.1)
+
+Vero's analysis of the_kiln flagged two bugs (Root narrating board posts with
+future-dated stamps like `2026-10-05T23:47:39`; Fen's garbled numbers and
+impossible `[2036-19T5:47]` dates). Re-checked against the snapshot: real but
+smaller than reported (Root: 5 of 27 thoughts; her only real posts were 3
+`post_board` calls, all landed - the fiction never touched the world since the
+function agent treats the HUD as ground truth). Shared cause: each voice's
+history was rendered `[2026-09-18T22:21:59] Root: ...` per line, and the
+models imitate that line format, inventing stamps and events to hang on them.
+Fix: `render_thoughts` now renders `Root: ...`; the stored `timestamp` field,
+the GUI render and all analysis are untouched. Cost, Teddy's call: those
+stamps were the only time signal a voice had, so there is now none; if voices
+need one, do it as one honest HUD field (see the older "timestamp on the HUD"
+backlog item), not a per-line stamp. Fen's HUD-echo garble (the six-voice
+currency table) should also be gone with v0.21.0's own-inventory HUD; not
+proven without a live run. Also found while checking: Ash's currencies had
+exactly one distinct value across all 29 turns, so her "my Air continues
+depleting" was false against ground truth. Corrections to Vero's report are in
+Communications/qualia-to-vero-voice-analysis-followup.md.
+
 ## 2026-09-19 (currencies replaced by a per-voice inventory of items; give_currency -> give_item; v0.21.0)
 
 Teddy's call: drop the four elemental currencies (Air/Earth/Fire/Water)
