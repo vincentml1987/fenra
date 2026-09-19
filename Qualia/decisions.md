@@ -2,6 +2,54 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-19 (concurrency phase B: several voices' turns at once; v0.20.0)
+
+Second half of the approved concurrency plan (on top of phase A's atomic
+writes and world lock, v0.19.1). Turns now run concurrently, one per free
+host, in the current per-turn design - not three-phase rounds.
+
+`_run_loop` is now a scheduler: every `interval` seconds `_schedule_turns`
+offers each idle voice a host, fairest-first, and `_start_turn` runs each
+turn in its own thread (`_run_voice_turn` -> `_run_turn_body`, which is the
+old `_tick` body). Order: `order_candidates` = rotation order from
+`voice_rotation_index`, then stably sorted least-recently-started first; with
+one slot that is exactly the old round-robin. A voice with no free host is
+skipped that pass without blocking the others, and (having waited longest)
+goes first when a host frees. Paused/piloted voices are skipped as before.
+
+`claim_host_for_voice` is now a real capacity claim and returns None when
+nothing is free: a remote client holds one turn at a time; the local Ollama
+holds `local_slots` (new toolbar field and `world.json` key, default 1 -
+one GPU, more mostly thrashes). The host is still claimed once per turn and
+never re-selected mid-turn (never-split rule unchanged). After a remote
+failure the turn re-claims (excluding failed hosts) and waits for a free
+host via `_claim_blocking`; if the loop is stopped meanwhile it puts the HUD
+note back and gives up. A holder dict + `finally` in `_run_voice_turn`
+releases whatever is held on every exit path, including unexpected errors.
+Stop lets running turns finish and shows "Stopping..." until they do; a
+generation counter means Stop-then-Start can't leave two schedulers.
+
+Connections tab: activity is now per voice, so a host carrying several turns
+lists them all.
+
+Behavior changes to expect (not bugs): overlapping turns don't see each
+other's actions that land mid-turn; world events no longer follow strict
+rotation order. Message expiry is unaffected (it counts a voice's own turns).
+
+Verified: 44 tests pass, including a real FenraApp scheduling voices onto a
+local slot and a remote host at once (skipped voice goes first next pass, no
+double-starts), and the turn body run end to end with faked Ollama: local
+success, remote failure retried locally exactly once with the HUD note
+intact (this test fails if the note restore is removed - it caught my
+v0.18.0 bug), and claim release after an unexpected error. NOT verified
+live: nothing here has run against a real world or Vero's machine yet, and
+races are inherently hard to prove absent - the stress tests and unit tests
+raise confidence, only a live run raises it further.
+
+Not done: the "Local slots" default of 1 is untested above 1 on real
+hardware; the GUI setup actions (new/rename/delete room, new voice/world)
+are still unlocked (see phase A entry).
+
 ## 2026-09-19 (concurrency phase A: shared state made safe for overlapping turns; v0.19.1)
 
 First half of the approved concurrency plan (plan: run several voices'

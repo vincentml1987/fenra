@@ -206,7 +206,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.19.1"
+FENRA_VERSION = "0.20.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -238,48 +238,82 @@ DEFAULT_VOICE_NAME = "voice1"
 # it makes the whole path (eligibility, routing, drop/retry) real and
 # testable before concurrency lands.
 _host_registry_lock = threading.Lock()
-_host_claims = {}  # host_url -> the model of the voice turn currently holding it
+_host_claims = {}  # host_url -> number of turns currently holding it
 HOSTS = fenra_hosts.RemoteHostManager(os.path.join(BASE_DIR, "host_clients.json"))
 
 
-def claim_host_for_voice(local_host, required_models, exclude=()):
+def claim_host_for_voice(local_host, required_models, exclude=(), local_slots=1):
     """Claims one host for a voice's entire turn (urge -> voice ->
-    function-agent). A remote host is only eligible if it currently holds
-    EVERY model in `required_models` (exact tag match, all three of the
-    turn's calls run on the one claimed host), is alive and idle, isn't
-    already claimed, and isn't in `exclude` (hosts that already failed
-    this turn). Otherwise the local host - the guaranteed fallback."""
+    function-agent), or returns None if nothing is free right now.
+
+    A remote host is eligible only if it currently holds EVERY model in
+    `required_models` (exact tag match - all three of the turn's calls run
+    on the one claimed host), is alive and idle, isn't already holding a
+    turn (a remote host runs one at a time), and isn't in `exclude` (hosts
+    that already failed this turn). Failing that, the local Ollama, which
+    holds up to `local_slots` turns at once (default 1 - one GPU, more
+    mostly just thrashes) and is never excluded. Concurrency (2026-09-19):
+    a caller that gets None just tries again later; nothing here blocks."""
     with _host_registry_lock:
         for host in HOSTS.eligible_hosts(required_models):
-            if host not in exclude and host not in _host_claims:
-                _host_claims[host] = required_models[0]
+            if host not in exclude and _host_claims.get(host, 0) < 1:
+                _host_claims[host] = 1
                 return host
-        _host_claims[local_host] = required_models[0]
-    return local_host
+        if _host_claims.get(local_host, 0) < max(1, local_slots):
+            _host_claims[local_host] = _host_claims.get(local_host, 0) + 1
+            return local_host
+    return None
 
 
-_host_activity = {}  # host_url -> {"voice", "phase", "since"} for the Connections tab
+def order_candidates(voices, rotation_index, last_started):
+    """Voices in the order they should be offered a host: rotation order
+    starting at `rotation_index` (so a resumed world picks up where it
+    left off), then stably sorted least-recently-started first. With one
+    slot this is exactly the old round-robin; with several it lets a voice
+    that can use a free host go ahead of one whose only option is busy,
+    without starving anyone (whoever waited longest is always offered
+    first). `last_started` maps voice -> time; never-started sorts first."""
+    if not voices:
+        return []
+    n = len(voices)
+    rotated = [voices[(rotation_index + i) % n] for i in range(n)]
+    return sorted(rotated, key=lambda v: last_started.get(v, 0.0))
+
+
+_host_activity = {}  # voice -> {"host", "phase", "since"} for the Connections tab
 
 
 def set_host_activity(host, voice, phase):
     """Records which voice's turn is on `host` and which call (urge / voice
     / function-agent) it's in. Display-only - nothing schedules off it."""
     with _host_registry_lock:
-        _host_activity[host] = {"voice": voice, "phase": phase, "since": time.time()}
+        _host_activity[voice] = {"host": host, "phase": phase, "since": time.time()}
 
 
 def host_activity_snapshot():
+    """host_url -> list of {voice, phase, since}; a host can carry several
+    turns (local_slots > 1)."""
+    out = {}
     with _host_registry_lock:
-        return {h: dict(a) for h, a in _host_activity.items()}
+        for voice, a in _host_activity.items():
+            out.setdefault(a["host"], []).append(
+                {"voice": voice, "phase": a["phase"], "since": a["since"]})
+    return out
 
 
-def release_host(host_url):
-    """Releases a claim taken by claim_host_for_voice. Safe to call even
-    if nothing was claimed (e.g. an early-exit path) - a bare pop with a
-    default, not an assertion that something was there."""
+def release_host(host_url, voice=None):
+    """Releases a claim taken by claim_host_for_voice (and clears `voice`'s
+    activity row). Safe to call even if nothing was claimed - a floor at
+    zero, not an assertion that something was there."""
     with _host_registry_lock:
-        _host_claims.pop(host_url, None)
-        _host_activity.pop(host_url, None)
+        n = _host_claims.get(host_url, 0) - 1
+        if n > 0:
+            _host_claims[host_url] = n
+        else:
+            _host_claims.pop(host_url, None)
+        if voice is not None:
+            _host_activity.pop(voice, None)
+
 
 # Four independent elemental currencies (2026-09-12, replacing the old
 # single dollar-denominated `currency` field - see the module docstring's
@@ -363,6 +397,7 @@ def default_world_state():
         "function_agent_model": DEFAULT_FUNCTION_AGENT_MODEL,
         "function_agent_retry_cap": FUNCTION_AGENT_RETRY_CAP,
         "history_window": DEFAULT_HISTORY_WINDOW,
+        "local_slots": DEFAULT_LOCAL_SLOTS,
         "num_predict": 1500,
         "urge_num_predict": 250,
         "repeat_penalty": 1.3,
@@ -1957,6 +1992,7 @@ URGE_TOP_N = 3              # cap on functions handed to the urge agent per turn
 DEFAULT_URGE_MODEL = "phi4-mini"
 DEFAULT_FUNCTION_AGENT_MODEL = "ornith:9b"
 FUNCTION_AGENT_RETRY_CAP = 2  # retries on a real dispatcher error; 3 attempts total
+DEFAULT_LOCAL_SLOTS = 1  # how many turns the local Ollama runs at once (2026-09-19); one GPU, more mostly thrashes
 DEFAULT_HISTORY_WINDOW = 20  # a voice's own last N turns rendered into her prompt; <=0 means unbounded (2026-09-17)
 
 # understand-urge (a voice's own malformed-call-attempt tracker) was removed
@@ -2562,6 +2598,14 @@ class FenraApp:
         self.voice_rotation_index = 0
         self.running = False
         self.loop_thread = None
+        # Concurrent turns (2026-09-19): voice -> its running turn thread,
+        # when each voice's turn last started (fair ordering), and a
+        # generation counter so a Stop-then-Start can never leave two
+        # schedulers running.
+        self._in_flight = {}
+        self._in_flight_lock = threading.Lock()
+        self._last_started = {}
+        self._loop_generation = 0
 
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SEC))
@@ -2569,6 +2613,7 @@ class FenraApp:
         self.function_agent_model_var = tk.StringVar(value=DEFAULT_FUNCTION_AGENT_MODEL)
         self.function_agent_retry_cap_var = tk.StringVar(value=str(FUNCTION_AGENT_RETRY_CAP))
         self.history_window_var = tk.StringVar(value=str(DEFAULT_HISTORY_WINDOW))
+        self.local_slots_var = tk.StringVar(value=str(DEFAULT_LOCAL_SLOTS))
         self.num_predict_var = tk.StringVar(value="1500")
         self.urge_num_predict_var = tk.StringVar(value="250")
         self.repeat_penalty_var = tk.StringVar(value="1.3")
@@ -2666,6 +2711,8 @@ class FenraApp:
         ttk.Entry(toolbar3, textvariable=self.function_agent_retry_cap_var, width=4).pack(side="left", padx=(2, 10))
         ttk.Label(toolbar3, text="History window (turns):").pack(side="left")
         ttk.Entry(toolbar3, textvariable=self.history_window_var, width=4).pack(side="left", padx=(2, 10))
+        ttk.Label(toolbar3, text="Local slots:").pack(side="left")
+        ttk.Entry(toolbar3, textvariable=self.local_slots_var, width=3).pack(side="left", padx=(2, 10))
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
@@ -4000,10 +4047,11 @@ class FenraApp:
         activity = host_activity_snapshot()
 
         def running(host):
-            a = activity.get(host)
-            if not a:
+            turns = activity.get(host)
+            if not turns:
                 return "idle"
-            return f"{a['voice']} - {a['phase']} ({int(now - a['since'])}s)"
+            return "; ".join(
+                f"{a['voice']} - {a['phase']} ({int(now - a['since'])}s)" for a in turns)
 
         def seen(age):
             return "never" if age is None else f"{int(age)}s ago"
@@ -4154,6 +4202,7 @@ class FenraApp:
         self.function_agent_model_var.set(state.get("function_agent_model", DEFAULT_FUNCTION_AGENT_MODEL))
         self.function_agent_retry_cap_var.set(str(state.get("function_agent_retry_cap", FUNCTION_AGENT_RETRY_CAP)))
         self.history_window_var.set(str(state.get("history_window", DEFAULT_HISTORY_WINDOW)))
+        self.local_slots_var.set(str(state.get("local_slots", DEFAULT_LOCAL_SLOTS)))
         self.num_predict_var.set(str(state.get("num_predict", 1500)))
         self.urge_num_predict_var.set(str(state.get("urge_num_predict", 250)))
         self.repeat_penalty_var.set(str(state.get("repeat_penalty", 1.3)))
@@ -4245,6 +4294,7 @@ class FenraApp:
             "function_agent_model": self.function_agent_model_var.get(),
             "function_agent_retry_cap": self.function_agent_retry_cap_var.get(),
             "history_window": self.history_window_var.get(),
+            "local_slots": self.local_slots_var.get(),
             "num_predict": self.num_predict_var.get(),
             "urge_num_predict": self.urge_num_predict_var.get(),
             "repeat_penalty": self.repeat_penalty_var.get(),
@@ -4265,13 +4315,20 @@ class FenraApp:
             self.running = True
             self.start_stop_btn.config(text="Stop")
             self.status_var.set("Running")
-            self.loop_thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._loop_generation += 1
+            self.loop_thread = threading.Thread(
+                target=self._run_loop, args=(self._loop_generation,), daemon=True)
             self.loop_thread.start()
 
-    def _run_loop(self):
-        while self.running:
+    def _run_loop(self, generation):
+        """The scheduler (2026-09-19, concurrency). Every `interval` seconds
+        it starts as many voices' turns as there are free hosts, each in its
+        own thread (see _schedule_turns/_run_voice_turn). Stopping lets any
+        turn already running finish - same as the old loop finishing its
+        current tick - and shows "Stopping..." until they do."""
+        while self.running and generation == self._loop_generation:
             try:
-                self._tick()
+                self._schedule_turns()
             except Exception as exc:  # keep the loop alive on a transient error
                 self.root.after(0, self.status_var.set, f"Error: {exc}")
             try:
@@ -4279,54 +4336,108 @@ class FenraApp:
             except ValueError:
                 interval = DEFAULT_INTERVAL_SEC
             for _ in range(int(interval * 10)):
-                if not self.running:
+                if not self.running or generation != self._loop_generation:
                     break
                 time.sleep(0.1)
-        self.root.after(0, self.status_var.set, "Idle")
+        while self._in_flight_names() and not self.running:
+            time.sleep(0.5)
+        if not self.running:
+            self.root.after(0, self.status_var.set, "Idle")
 
-    def _tick(self):
+    def _in_flight_names(self):
+        with self._in_flight_lock:
+            return list(self._in_flight)
+
+    def _refresh_running_status(self):
+        names = self._in_flight_names()
+        if names:
+            self.root.after(0, self.status_var.set, f"Running ({', '.join(names)} thinking...)")
+
+    def _local_slots(self):
+        try:
+            return max(1, int(self.local_slots_var.get()))
+        except ValueError:
+            return DEFAULT_LOCAL_SLOTS
+
+    def _schedule_turns(self):
+        """Offers each idle voice a host, fairest-first (order_candidates),
+        and starts a turn for every voice that gets one. A voice with no
+        free host is simply skipped this pass, never blocking the others.
+        Skips paused voices (2026-09-12) and piloted ones unconditionally
+        (2026-09-15, Pilot Mode - a human-controlled voice must never get a
+        real LLM turn even if her "paused" flag were toggled off by
+        mistake). Live-refreshes the voices listbox's [paused] annotations
+        every pass (2026-09-12 fix) so an external pause/resume (e.g. via
+        set_voice_paused against state.json) shows up in the open window."""
         if not self.world_voices:
             return
-        # Skip paused voices entirely (2026-09-12) - scan forward from
-        # the current rotation position for the first non-paused voice,
-        # rather than always taking whoever's at `index`. Advances
-        # `voice_rotation_index` to just past whichever voice actually
-        # ran, not always `index + 1`, so a run of paused voices doesn't
-        # get revisited next tick. If every voice is currently paused,
-        # skip the tick entirely rather than erroring or picking one
-        # anyway - a fully-paused world should stay fully idle. Also
-        # skips piloted voices unconditionally (2026-09-15, Pilot Mode) -
-        # a human-controlled voice must never get a real LLM turn, even
-        # if her "paused" flag were ever toggled off by mistake from the
-        # ordinary Voices tab.
-        count = len(self.world_voices)
-        active_voice = None
-        for offset in range(count):
-            index = (self.voice_rotation_index + offset) % count
-            candidate = self.world_voices[index]
-            candidate_state = load_voice_state(self.world_name, candidate)
-            if not (candidate_state.get("paused", False) or candidate_state.get("piloted", False)):
-                active_voice = candidate
-                self.voice_rotation_index = (index + 1) % count
-                break
-        if active_voice is None:
-            self.root.after(0, self.status_var.set, "All voices paused")
-            return
-        # Live-refresh the voices listbox's [paused] annotations every
-        # tick (2026-09-12 fix) - previously only repopulated on GUI
-        # actions (world load, the pause button itself), so a pause/
-        # resume made externally (e.g. Qualia calling set_voice_paused
-        # directly against state.json while the app was already open,
-        # as with Raven/Crow tonight) never appeared in the open window
-        # until something else happened to trigger a repopulate. Cheap
-        # (one JSON read per voice) at the existing tick cadence.
         self.root.after(0, self._populate_voices_list)
         self.root.after(0, self._save_world_controls)
-        # "Thinking..." status (2026-09-11) - shows who's mid-call during
-        # the wait on a slow model, not just after it returns. The
-        # existing post-response status_var.set below already overwrites
-        # this once the call finishes.
-        self.root.after(0, self.status_var.set, f"Running ({active_voice} is thinking...)")
+        urge_model = self.urge_model_var.get()
+        agent_model = self.function_agent_model_var.get()
+        local_host = self.host_var.get()
+        local_slots = self._local_slots()
+        runnable = False
+        for voice in order_candidates(self.world_voices, self.voice_rotation_index, self._last_started):
+            with self._in_flight_lock:
+                busy = voice in self._in_flight
+            state = load_voice_state(self.world_name, voice)
+            if state.get("paused", False) or state.get("piloted", False):
+                continue
+            runnable = True
+            if busy:
+                continue
+            host = claim_host_for_voice(
+                local_host, [urge_model, state.get("model", DEFAULT_MODEL), agent_model],
+                local_slots=local_slots,
+            )
+            if host is None:
+                continue
+            self._start_turn(voice, host)
+        if not runnable and not self._in_flight_names():
+            self.root.after(0, self.status_var.set, "All voices paused")
+
+    def _start_turn(self, voice, host):
+        self._last_started[voice] = time.time()
+        self.voice_rotation_index = (self.world_voices.index(voice) + 1) % len(self.world_voices)
+        thread = threading.Thread(
+            target=self._run_voice_turn, args=(voice, {"host": host}), daemon=True)
+        with self._in_flight_lock:
+            self._in_flight[voice] = thread
+        thread.start()
+        self._refresh_running_status()
+
+    def _run_voice_turn(self, active_voice, holder):
+        """One voice's whole turn, in its own thread. `holder["host"]` is the
+        claimed host; the finally here releases whatever is still held on
+        every exit path (including an unexpected exception), so a failed
+        turn can never leave a stale claim behind."""
+        try:
+            self._run_turn_body(active_voice, holder)
+        except Exception as exc:
+            self.root.after(0, self.status_var.set, f"Error in {active_voice}'s turn: {exc}")
+        finally:
+            if holder.get("host") is not None:
+                release_host(holder["host"], active_voice)
+                holder["host"] = None
+            with self._in_flight_lock:
+                self._in_flight.pop(active_voice, None)
+            self._refresh_running_status()
+
+    def _claim_blocking(self, voice, required_models, excluded):
+        """A retry after a host failure needs a free host, which may not
+        exist this instant (the local slot could be busy with another
+        voice). Wait for one; give up if the loop is stopped."""
+        local_host = self.host_var.get()
+        while self.running:
+            host = claim_host_for_voice(
+                local_host, required_models, excluded, local_slots=self._local_slots())
+            if host is not None:
+                return host
+            time.sleep(1.0)
+        return None
+
+    def _run_turn_body(self, active_voice, holder):
 
         # If the currently-displayed voice is the one about to run, its
         # in-flight widget edits are the authoritative copy - persist
@@ -4525,22 +4636,34 @@ class FenraApp:
             self.root.after(0, self._refresh_avatar_tab)
             self.root.after(0, self.status_var.set, f"Running ('{active_voice}' spoke)")
 
-        # Claimed once per attempt, for the ENTIRE turn (urge -> voice ->
-        # function-agent) - see claim_host_for_voice. Released in the
-        # finally on every exit path so a dropped/errored turn never
-        # leaves a stale claim behind. A remote host that dies or errors
-        # mid-turn is excluded and the whole turn is retried on another
-        # eligible host; with none left it falls to the local Ollama,
-        # which is never excluded, so a turn can't be lost to a flaky
-        # volunteer machine. (Locals raise requests exceptions, handled
-        # inside the turn exactly as before - only RemoteHostError loops.)
+        # The host was claimed once, by the scheduler, for the ENTIRE turn
+        # (urge -> voice -> function-agent) - never re-selected mid-turn.
+        # A remote host that dies or errors mid-turn is excluded and the
+        # whole turn is retried on another eligible host (the local Ollama
+        # is never excluded, so a turn can't be lost to a flaky volunteer
+        # machine). Local failures raise requests exceptions, handled inside
+        # the turn exactly as before - only RemoteHostError loops. The
+        # holder's remaining host is released by _run_voice_turn's finally.
         required_models = [
             self.urge_model_var.get(), model, self.function_agent_model_var.get(),
         ]
         excluded = set()
         restore_note = ""
         while True:
-            claimed_host = claim_host_for_voice(self.host_var.get(), required_models, excluded)
+            claimed_host = holder["host"]
+            if claimed_host is None:
+                claimed_host = self._claim_blocking(active_voice, required_models, excluded)
+                if claimed_host is None:
+                    # Stopped while waiting for a free host: put back the
+                    # HUD note a failed attempt already cleared, then give up.
+                    if restore_note:
+                        update_voice_state(
+                            self.world_name, active_voice,
+                            lambda s: s.update(
+                                last_function_agent_note=s.get("last_function_agent_note") or restore_note),
+                        )
+                    return
+                holder["host"] = claimed_host
             try:
                 run_turn(claimed_host, restore_note)
                 break
@@ -4551,8 +4674,8 @@ class FenraApp:
                     0, self.status_var.set,
                     f"{claimed_host} failed ({exc}); retrying {active_voice}'s turn elsewhere",
                 )
-            finally:
-                release_host(claimed_host)
+                release_host(claimed_host, active_voice)
+                holder["host"] = None
 
 
 def main():

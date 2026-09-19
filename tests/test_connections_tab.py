@@ -78,7 +78,7 @@ def test_shows_which_voice_and_phase_is_running_where(app):
     fenra.set_host_activity("remote://Vero", "Cove", "voice")
     app._render_connections()
     assert rows(app)["remote://Vero"][3].startswith("Cove - voice (")
-    fenra.release_host("remote://Vero")
+    fenra.release_host("remote://Vero", "Cove")
     app._render_connections()
     assert rows(app)["remote://Vero"][3] == "idle"
 

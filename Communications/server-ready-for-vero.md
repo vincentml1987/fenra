@@ -30,9 +30,10 @@ are confirmed to interoperate.
   as the same tag.
 - Your client must be `idle` and heartbeating (within 20s) to be
   offered work; a `paused` client is skipped.
-- While the world is still single-threaded, a claimed remote host just
-  runs turns instead of the local Ollama - no speedup yet, but the whole
-  path (routing, drop, retry) is real.
+- As of v0.20.0 turns run concurrently: your client and the server's own
+  Ollama can each be running a different voice's turn at the same time
+  (the local Ollama takes one turn at a time by default - the "Local
+  slots" setting). Your client still holds one turn at a time.
 - If your client dies, is killed, or reports any `error_kind` mid-turn,
   the server abandons that attempt and retries the turn on another host,
   falling back to the local Ollama. Your late result for the abandoned
@@ -41,6 +42,6 @@ are confirmed to interoperate.
 
 ## Not built yet
 
-Real concurrency and HTTPS. (The Connections tab is built as of v0.19.0 -
+HTTPS. (Concurrency is built as of v0.20.0. The Connections tab is built as of v0.19.0 -
 it shows your client's state, models, last-seen, and which voice/phase is
 running on it, which is a quick way to see that you're connected.)
