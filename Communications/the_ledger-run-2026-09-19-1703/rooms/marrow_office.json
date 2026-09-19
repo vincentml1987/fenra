@@ -1,0 +1,17 @@
+{
+  "name": "marrow_office",
+  "adjacent": [
+    "atrium"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "Beyond This Room",
+      "text": "This office is only where you started, not a boundary. The atrium sits just past that doorway, and there's more of this place, and others in it, past that.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    }
+  ],
+  "log": []
+}

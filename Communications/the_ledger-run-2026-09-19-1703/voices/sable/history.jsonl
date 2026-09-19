@@ -1,0 +1,1 @@
+{"timestamp": "2026-09-19T16:42:12", "message_id": 1, "urge": {"say": 1.0, "whisper": 1.0, "yell": 1.0, "move_room": 1.0, "create_room": 1.0, "read_room_log": 1.0, "room_state": 1.0, "give_item": 1.0, "post_board": 1.0, "skim_board": 1.0, "read_board": 0.0, "delete_board": 1.0}, "inventory": {"vosk": 24, "nyth": 8, "plor": 10, "skae": 3}}
