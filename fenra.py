@@ -189,6 +189,7 @@ reports unread/skimmed counts for a voice's own room only, never
 content.
 """
 
+import functools
 import json
 import math
 import os
@@ -205,7 +206,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.19.0"
+FENRA_VERSION = "0.19.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -372,6 +373,56 @@ def world_state_path(world_name):
     return os.path.join(world_dir(world_name), WORLD_STATE_FILENAME)
 
 
+# ------------------------------------------------------ concurrency safety --
+# (2026-09-19, concurrency phase A - see decisions.md.) Several voices'
+# turns can now overlap, so shared files need two protections the old
+# single-threaded loop never did:
+#
+# 1. Atomic writes. Every save used to be open(path, "w") + json.dump, and
+#    the loaders swallow parse errors and return DEFAULTS (empty voice
+#    state, "that room doesn't exist", an empty corrections list). A reader
+#    catching a half-written file would get defaults, and the next save
+#    would overwrite real data with them. Write to a temp file and
+#    os.replace it into place so readers only ever see a whole file.
+# 2. One coarse re-entrant lock around read-modify-write cycles
+#    (@world_locked / update_voice_state). Held only for the brief file
+#    I/O, NEVER across an LLM call or any network wait - those stay outside
+#    it, so it costs almost nothing next to generation latency.
+WORLD_LOCK = threading.RLock()
+
+
+def world_locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with WORLD_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+def _atomic_write_json(path, obj):
+    tmp = f"{path}.tmp{threading.get_ident()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2)
+        # On Windows os.replace raises PermissionError if a reader has the
+        # target open at that instant (Python doesn't open with delete-
+        # sharing); readers hold it for milliseconds, so retry briefly.
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.02)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def load_world_state(world_name):
     state = default_world_state()
     path = world_state_path(world_name)
@@ -388,8 +439,7 @@ def save_world_state(world_name, state):
     state = dict(state)
     state["fenra_version"] = FENRA_VERSION
     ensure_world_dir(world_name)
-    with open(world_state_path(world_name), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    _atomic_write_json(world_state_path(world_name), state)
 
 
 # ------------------------------------------------------------------ voices --
@@ -470,8 +520,18 @@ def save_voice_state(world_name, voice_name, state):
     state = dict(state)
     state["fenra_version"] = FENRA_VERSION
     ensure_voice_dir(world_name, voice_name)
-    with open(voice_state_path(world_name, voice_name), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    _atomic_write_json(voice_state_path(world_name, voice_name), state)
+
+
+@world_locked
+def update_voice_state(world_name, voice_name, mutator):
+    """Locked reload-modify-save: `mutator(state)` edits a FRESH copy read
+    inside the lock, so a stale in-memory dict held across a slow LLM call
+    can never overwrite what another turn wrote meanwhile."""
+    state = load_voice_state(world_name, voice_name)
+    mutator(state)
+    save_voice_state(world_name, voice_name, state)
+    return state
 
 
 def delete_voice(world_name, voice_name):
@@ -481,6 +541,7 @@ def delete_voice(world_name, voice_name):
         shutil.rmtree(path)
 
 
+@world_locked
 def set_voice_paused(world_name, voice_name, paused):
     """The one real lever for pausing a single voice without touching
     anyone else (2026-09-12) - `_tick`'s rotation skips a paused voice's
@@ -509,6 +570,7 @@ def voice_turn_count(world_name, voice_name):
     return len(load_voice_state(world_name, voice_name).get("thoughts", []))
 
 
+@world_locked
 def append_message(world_name, voice_name, speaker, text, timestamp=None):
     """The one and only way a voice's own thoughts list grows - appends
     a real structured entry ({id, timestamp, speaker, text}). As of the
@@ -540,6 +602,7 @@ def append_message(world_name, voice_name, speaker, text, timestamp=None):
     return next_id
 
 
+@world_locked
 def append_voice_history(world_name, voice_name, message_id, timestamp=None):
     """Append-only numeric-state history (2026-09-12) - one line per
     turn a voice actually takes, capturing what `urge`/`currencies` *were*
@@ -656,10 +719,10 @@ def load_dispatch_corrections():
 
 
 def save_dispatch_corrections(entries):
-    with open(dispatch_corrections_path(), "w", encoding="utf-8") as f:
-        json.dump(entries, f, indent=2)
+    _atomic_write_json(dispatch_corrections_path(), entries)
 
 
+@world_locked
 def append_dispatch_correction(world_name, voice_name, item_text, dispatched, outcome):
     """One entry per real per-item dispatch attempt (2026-09-16) -
     `dispatched` is the function+args actually tried (or None if
@@ -683,6 +746,7 @@ def append_dispatch_correction(world_name, voice_name, item_text, dispatched, ou
     return next_id
 
 
+@world_locked
 def set_dispatch_correction(entry_id, correction_text):
     """GUI edit path (Dispatch Review tab) - Teddy filling in what a
     past dispatch decision should have been."""
@@ -774,8 +838,7 @@ def load_room_state(world_name, name):
 
 def save_room_state(world_name, name, state):
     ensure_rooms_root_dir(world_name)
-    with open(room_path(world_name, name), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    _atomic_write_json(room_path(world_name, name), state)
 
 
 def delete_room(world_name, name):
@@ -796,6 +859,7 @@ def room_occupants(world_name, room_name):
     )
 
 
+@world_locked
 def _log_room_event(world_name, room_name, actor, kind, act, mask, raw, recipients, peripheral=None, ttl=None):
     """Appends one permanent entry to room_name's log (2026-09-13) -
     the single mechanism every dialogue act and every non-speech
@@ -1938,6 +2002,7 @@ def _args_text_from_dict(name, arguments):
     return "|".join(str(arguments.get(p, "")) for p in params)
 
 
+@world_locked
 def dispatch_one_function_call(world_name, caller_name, name, arguments):
     """Runs one real function call on the function agent's behalf.
     Returns (outcome, detail) - outcome is "ok" or "error", detail is
@@ -2003,6 +2068,7 @@ def xleud(urge_value, desire=URGE_DESIRE):
     return 1 - math.exp(-urge_value / desire)
 
 
+@world_locked
 def apply_urge_tick(world_name, voice_name, outcomes):
     """Called once per tick for the ACTIVE voice, right after
     run_function_agent_turn returns its real dispatch outcomes (2026-09-14
@@ -3025,9 +3091,10 @@ class FenraApp:
                 {"id": next_id, "timestamp": timestamp, "speaker": speaker, "text": text}
             )
             self.selected_message_id = next_id
-        state = load_voice_state(self.world_name, self.displayed_voice)
-        state["thoughts"] = self._current_messages
-        save_voice_state(self.world_name, self.displayed_voice, state)
+        with WORLD_LOCK:
+            state = load_voice_state(self.world_name, self.displayed_voice)
+            state["thoughts"] = self._current_messages
+            save_voice_state(self.world_name, self.displayed_voice, state)
         self._populate_messages_tree()
         self.status_var.set("Message saved")
 
@@ -3037,9 +3104,10 @@ class FenraApp:
         if not messagebox.askyesno("Fenra", "Delete this message? This can't be undone."):
             return
         self._current_messages = [m for m in self._current_messages if m["id"] != self.selected_message_id]
-        state = load_voice_state(self.world_name, self.displayed_voice)
-        state["thoughts"] = self._current_messages
-        save_voice_state(self.world_name, self.displayed_voice, state)
+        with WORLD_LOCK:
+            state = load_voice_state(self.world_name, self.displayed_voice)
+            state["thoughts"] = self._current_messages
+            save_voice_state(self.world_name, self.displayed_voice, state)
         self._populate_messages_tree()
         self._clear_message_edit()
 
@@ -3052,19 +3120,20 @@ class FenraApp:
         # hand-edited). This is the real root-cause
         # fix, not a urge-specific patch - it protects any future new
         # voice-state field the same way.
-        state = load_voice_state(self.world_name, name)
-        existing_currencies = state.get("currencies", {})
-        currencies = {}
-        for element, var in self.currency_vars.items():
-            try:
-                currencies[element] = float(var.get())
-            except ValueError:
-                currencies[element] = existing_currencies.get(element, 0.0)
-        state["model"] = self.model_var.get()
-        state["identity"] = self.identity_box.get("1.0", "end-1c")
-        state["thoughts"] = self._current_messages
-        state["currencies"] = currencies
-        save_voice_state(self.world_name, name, state)
+        with WORLD_LOCK:
+            state = load_voice_state(self.world_name, name)
+            existing_currencies = state.get("currencies", {})
+            currencies = {}
+            for element, var in self.currency_vars.items():
+                try:
+                    currencies[element] = float(var.get())
+                except ValueError:
+                    currencies[element] = existing_currencies.get(element, 0.0)
+            state["model"] = self.model_var.get()
+            state["identity"] = self.identity_box.get("1.0", "end-1c")
+            state["thoughts"] = self._current_messages
+            state["currencies"] = currencies
+            save_voice_state(self.world_name, name, state)
 
     def save_voice(self):
         if not self.displayed_voice:
@@ -3374,9 +3443,10 @@ class FenraApp:
                 "timestamp": timestamp, "text": text, "seen": {},
             })
             self.selected_post_id = next_id
-        state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
-        state["board"] = self._current_board
-        save_room_state(self.world_name, self.displayed_room, state)
+        with WORLD_LOCK:
+            state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
+            state["board"] = self._current_board
+            save_room_state(self.world_name, self.displayed_room, state)
         self._populate_board_tree()
         self.status_var.set("Post saved")
 
@@ -3386,9 +3456,10 @@ class FenraApp:
         if not messagebox.askyesno("Fenra", "Delete this post? This can't be undone."):
             return
         self._current_board = [p for p in self._current_board if p["id"] != self.selected_post_id]
-        state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
-        state["board"] = self._current_board
-        save_room_state(self.world_name, self.displayed_room, state)
+        with WORLD_LOCK:
+            state = load_room_state(self.world_name, self.displayed_room) or default_room_state(self.displayed_room)
+            state["board"] = self._current_board
+            save_room_state(self.world_name, self.displayed_room, state)
         self._populate_board_tree()
         self._clear_board_edit()
 
@@ -3402,9 +3473,10 @@ class FenraApp:
         voice = self.room_move_voice_var.get()
         if not voice:
             return
-        state = load_voice_state(self.world_name, voice)
-        state["room"] = self.displayed_room
-        save_voice_state(self.world_name, voice, state)
+        with WORLD_LOCK:
+            state = load_voice_state(self.world_name, voice)
+            state["room"] = self.displayed_room
+            save_voice_state(self.world_name, voice, state)
         self._load_room(self.displayed_room)
 
     def new_room(self):
@@ -4286,9 +4358,16 @@ class FenraApp:
             # One attempt at this voice's whole turn, entirely on
             # `claimed_host`. Early returns end the turn (not an error).
             # A RemoteHostError escapes to the retry loop below.
+            if restore_note:
+                # A previous attempt already read-and-cleared the note on
+                # DISK (build_hud reads disk, not this local dict), so put
+                # it back there or the retry's HUD would silently lack it.
+                update_voice_state(
+                    self.world_name, active_voice,
+                    lambda s: s.update(
+                        last_function_agent_note=s.get("last_function_agent_note") or restore_note),
+                )
             state = load_voice_state(self.world_name, active_voice)
-            if restore_note and not state.get("last_function_agent_note"):
-                state["last_function_agent_note"] = restore_note
             try:
                 repeat_penalty = float(self.repeat_penalty_var.get())
             except ValueError:
@@ -4334,8 +4413,14 @@ class FenraApp:
             # it never persists past this one turn.
             hud = build_hud(self.world_name, active_voice)
             if state.get("last_function_agent_note"):
-                state["last_function_agent_note"] = ""
-                save_voice_state(self.world_name, active_voice, state)
+                # Locked reload-modify-save of just this field: `state` is
+                # from turn start, before a possibly minutes-long urge call,
+                # and saving it whole could overwrite what other turns
+                # wrote to this voice meanwhile.
+                update_voice_state(
+                    self.world_name, active_voice,
+                    lambda s: s.update(last_function_agent_note=""),
+                )
 
             world_activity = build_world_activity(self.world_name, active_voice)
             # Bounded history window (2026-09-17) - a voice's own thoughts
@@ -4404,9 +4489,10 @@ class FenraApp:
             # further (see the read-and-clear above, next time this voice
             # runs). Reloaded fresh since apply_urge_tick already wrote urge
             # changes to disk.
-            state = load_voice_state(self.world_name, active_voice)
-            state["last_function_agent_note"] = agent_content or ""
-            save_voice_state(self.world_name, active_voice, state)
+            update_voice_state(
+                self.world_name, active_voice,
+                lambda s: s.update(last_function_agent_note=agent_content or ""),
+            )
 
             # The speaker's own private thought - pure prose now, no more
             # ⟦RESULT: ...⟧ lines appended (2026-09-14) - she never made a

@@ -2,6 +2,53 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-19 (concurrency phase A: shared state made safe for overlapping turns; v0.19.1)
+
+First half of the approved concurrency plan (plan: run several voices'
+turns at once, one per free host). Phase A changes NO behavior - the loop
+is still one turn at a time - it removes the hazards that overlap would
+have exposed.
+
+Found while planning: every save was non-atomic (`open(path, "w")`) and the
+loaders swallow parse errors and return defaults (empty voice state, "room
+doesn't exist", empty corrections list). A reader catching a half-written
+file would get defaults and the next save would overwrite real data.
+
+Done: `_atomic_write_json` (temp file + `os.replace`, with a short retry
+because Windows refuses a replace while a reader has the file open) used by
+`save_voice_state`/`save_room_state`/`save_world_state`/
+`save_dispatch_corrections`. One coarse re-entrant `WORLD_LOCK` with a
+`@world_locked` decorator on the read-modify-write primitives
+(`append_message`, `append_voice_history`, `apply_urge_tick`,
+`set_voice_paused`, `append_dispatch_correction`, `set_dispatch_correction`,
+`_log_room_event`, and `dispatch_one_function_call`, which covers every
+`fn_*` and the Pilot avatar) plus the GUI-thread load-modify-save blocks.
+Never held across an LLM call or network wait.
+
+`update_voice_state(world, voice, mutator)`: locked reload-modify-save,
+used for the two spots in `run_turn` that saved a stale turn-start `state`
+after a slow call (would have clobbered other turns' writes).
+
+Also fixed (my bug from the retry work, v0.18.0): on a retry after a remote
+host failure, the HUD-note "restore" only wrote to an in-memory dict, but
+`build_hud` reads from disk - so a retried turn silently lost the note.
+It now writes the note back to disk before the retry.
+
+Verified: 6 new tests; 30 total pass. The tests have teeth - with the lock
+bypassed only 25 of 200 concurrent messages survived; with atomic writes
+bypassed, readers saw a partial file 423 times in 1,200 reads. NOT yet
+verified live: this hasn't run in a real world yet (Fenra needs a restart
+to pick it up).
+
+Not covered, deliberately: the GUI's setup actions (new/rename/delete
+room, new voice/world, pilot creation) still do unlocked multi-step edits -
+rare, user-driven, and they already raced the loop before this; and the
+GUI's board/thought editors still save the GUI's in-memory copy, which can
+be stale by design (atomicity fixed, staleness not).
+
+Next: Phase B, the concurrent scheduler (local_slots, least-recently-
+started ordering, turn threads), then a live test with Vero.
+
 ## 2026-09-18 (first live remote run: routing works, retry works, one seam bug found)
 
 First run with Vero's client connected (v0.19.0). Confirmed live: token
