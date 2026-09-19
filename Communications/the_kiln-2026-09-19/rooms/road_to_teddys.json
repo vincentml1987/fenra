@@ -1,0 +1,507 @@
+{
+  "name": "road_to_teddys",
+  "adjacent": [
+    "hearth",
+    "teddys_house",
+    "elemental_puzzle",
+    "wall_interaction",
+    "fresh_environment"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "The Road to Teddy's House",
+      "text": "This path leads to the home of Teddy, one of the people who helped create Fenra. Continue on to teddys_house if you'd like to speak with him directly.",
+      "author": "teddy",
+      "timestamp": "2026-09-17T08:52:40",
+      "seen": {}
+    }
+  ],
+  "log": [
+    {
+      "id": 1,
+      "timestamp": "2026-09-17T09:01:06",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 4,
+        "Cove": 3,
+        "Fen": 3,
+        "Root": 4,
+        "Wick": 3
+      }
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-17T09:01:06",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 3,
+      "timestamp": "2026-09-17T09:01:12",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward teddys_house.",
+      "raw": "teddy (human) leaves toward teddys_house.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 4,
+        "Cove": 3,
+        "Fen": 3,
+        "Root": 4,
+        "Wick": 3
+      }
+    },
+    {
+      "id": 4,
+      "timestamp": "2026-09-17T09:02:01",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 4,
+        "Cove": 3,
+        "Fen": 3,
+        "Root": 4,
+        "Wick": 3
+      }
+    },
+    {
+      "id": 5,
+      "timestamp": "2026-09-17T09:02:01",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 6,
+      "timestamp": "2026-09-17T10:33:48",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward teddys_house.",
+      "raw": "teddy (human) leaves toward teddys_house.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 6,
+        "Cove": 5,
+        "Fen": 5,
+        "Root": 5,
+        "Wick": 5
+      }
+    },
+    {
+      "id": 7,
+      "timestamp": "2026-09-17T10:35:05",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 6,
+        "Cove": 5,
+        "Fen": 5,
+        "Root": 5,
+        "Wick": 5
+      }
+    },
+    {
+      "id": 8,
+      "timestamp": "2026-09-17T10:35:05",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 9,
+      "timestamp": "2026-09-17T10:35:09",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward hearth.",
+      "raw": "teddy (human) leaves toward hearth.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 6,
+        "Cove": 5,
+        "Fen": 5,
+        "Root": 5,
+        "Wick": 5
+      }
+    },
+    {
+      "id": 10,
+      "timestamp": "2026-09-17T10:35:26",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 6,
+        "Cove": 5,
+        "Fen": 5,
+        "Root": 5,
+        "Wick": 5
+      }
+    },
+    {
+      "id": 11,
+      "timestamp": "2026-09-17T10:35:26",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 12,
+      "timestamp": "2026-09-17T10:35:29",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward teddys_house.",
+      "raw": "teddy (human) leaves toward teddys_house.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 6,
+        "Cove": 5,
+        "Fen": 5,
+        "Root": 5,
+        "Wick": 5
+      }
+    },
+    {
+      "id": 13,
+      "timestamp": "2026-09-17T16:43:50",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Fen arrives.",
+      "raw": "Fen arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 10,
+        "Cove": 10,
+        "Root": 10,
+        "Wick": 10,
+        "teddy": 0
+      }
+    },
+    {
+      "id": 14,
+      "timestamp": "2026-09-17T16:43:50",
+      "actor": "Fen",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Fen arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "Fen": 9
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 15,
+      "timestamp": "2026-09-17T17:41:19",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "create_room",
+      "mask": "Fen leaves toward the new room elemental_puzzle.",
+      "raw": "Fen leaves toward the new room elemental_puzzle.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 11,
+        "Cove": 11,
+        "Root": 11,
+        "Wick": 11,
+        "teddy": 0
+      }
+    },
+    {
+      "id": 16,
+      "timestamp": "2026-09-17T18:13:03",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 12,
+        "Cove": 11,
+        "Root": 12,
+        "Wick": 11,
+        "Fen": 11
+      }
+    },
+    {
+      "id": 17,
+      "timestamp": "2026-09-17T18:13:03",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 18,
+      "timestamp": "2026-09-17T18:13:10",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward elemental_puzzle.",
+      "raw": "teddy (human) leaves toward elemental_puzzle.",
+      "recipients": {},
+      "peripheral": {
+        "Ash": 12,
+        "Cove": 11,
+        "Root": 12,
+        "Wick": 11,
+        "Fen": 11
+      }
+    },
+    {
+      "id": 19,
+      "timestamp": "2026-09-17T18:56:08",
+      "actor": "Ash",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Ash arrives.",
+      "raw": "Ash arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Cove": 12,
+        "Root": 12,
+        "Wick": 12,
+        "Fen": 12,
+        "teddy": 0
+      }
+    },
+    {
+      "id": 20,
+      "timestamp": "2026-09-17T18:56:08",
+      "actor": "Ash",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Ash arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "Ash": 12
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 21,
+      "timestamp": "2026-09-17T20:49:04",
+      "actor": "Ash",
+      "kind": "activity",
+      "act": "create_room",
+      "mask": "Ash leaves toward the new room wall_interaction.",
+      "raw": "Ash leaves toward the new room wall_interaction.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 12,
+        "Wick": 13,
+        "Fen": 13,
+        "teddy": 0
+      }
+    },
+    {
+      "id": 22,
+      "timestamp": "2026-09-18T21:34:58",
+      "actor": "Wick",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Wick arrives.",
+      "raw": "Wick arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Fen": 15,
+        "teddy": 0,
+        "Ash": 16
+      }
+    },
+    {
+      "id": 23,
+      "timestamp": "2026-09-18T21:34:58",
+      "actor": "Wick",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Wick arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "Wick": 17
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 24,
+      "timestamp": "2026-09-18T21:46:39",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "teddy (human) arrives.",
+      "recipients": {
+        "Wick": 18
+      },
+      "peripheral": {
+        "Fen": 16,
+        "Ash": 16
+      }
+    },
+    {
+      "id": 25,
+      "timestamp": "2026-09-18T21:46:39",
+      "actor": "teddy",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "teddy (human) arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "teddy": 0
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 26,
+      "timestamp": "2026-09-18T21:49:59",
+      "actor": "teddy",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "teddy (human) leaves toward teddys_house.",
+      "raw": "teddy (human) leaves toward teddys_house.",
+      "recipients": {
+        "Wick": 18
+      },
+      "peripheral": {
+        "Fen": 16,
+        "Ash": 16
+      }
+    },
+    {
+      "id": 27,
+      "timestamp": "2026-09-18T21:52:45",
+      "actor": "Wick",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Wick leaves toward elemental_puzzle.",
+      "raw": "Wick leaves toward elemental_puzzle.",
+      "recipients": {},
+      "peripheral": {
+        "teddy": 0,
+        "Fen": 16,
+        "Ash": 17
+      }
+    },
+    {
+      "id": 28,
+      "timestamp": "2026-09-19T02:14:55",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Fen arrives.",
+      "raw": "Fen arrives.",
+      "recipients": {},
+      "peripheral": {
+        "teddy": 0,
+        "Ash": 22
+      }
+    },
+    {
+      "id": 29,
+      "timestamp": "2026-09-19T02:14:55",
+      "actor": "Fen",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Fen arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "Fen": 22
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 30,
+      "timestamp": "2026-09-19T03:02:36",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "create_room",
+      "mask": "Fen leaves toward the new room fresh_environment.",
+      "raw": "Fen leaves toward the new room fresh_environment.",
+      "recipients": {},
+      "peripheral": {
+        "teddy": 0,
+        "Ash": 23
+      }
+    },
+    {
+      "id": 31,
+      "timestamp": "2026-09-19T05:05:15",
+      "actor": "Ash",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Ash arrives.",
+      "raw": "Ash arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 25,
+        "teddy": 0,
+        "Fen": 27
+      }
+    },
+    {
+      "id": 32,
+      "timestamp": "2026-09-19T05:05:15",
+      "actor": "Ash",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Ash arrives.",
+      "raw": "You move to road_to_teddys.",
+      "recipients": {
+        "Ash": 27
+      },
+      "peripheral": {}
+    }
+  ]
+}

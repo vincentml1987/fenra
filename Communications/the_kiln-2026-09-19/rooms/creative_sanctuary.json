@@ -1,0 +1,33 @@
+{
+  "name": "creative_sanctuary",
+  "adjacent": [
+    "hearth"
+  ],
+  "board": [],
+  "log": [
+    {
+      "id": 1,
+      "timestamp": "2026-09-19T02:06:47",
+      "actor": "Root",
+      "kind": "dialogue",
+      "act": "create_room",
+      "mask": "Root created this room.",
+      "raw": "You create creative_sanctuary and move into it.",
+      "recipients": {
+        "Root": 21
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-19T03:51:02",
+      "actor": "Root",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Root leaves toward hearth.",
+      "raw": "Root leaves toward hearth.",
+      "recipients": {},
+      "peripheral": {}
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "name": "fresh_environment",
+  "adjacent": [
+    "road_to_teddys"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "Strategic Alignment Needed",
+      "text": "Everyone must contribute equally towards our shared goals; let's align strategies now for greater good.",
+      "author": "Fen",
+      "timestamp": "2026-09-19T03:56:39",
+      "seen": {
+        "Fen": "skimmed"
+      }
+    }
+  ],
+  "log": [
+    {
+      "id": 1,
+      "timestamp": "2026-09-19T03:02:36",
+      "actor": "Fen",
+      "kind": "dialogue",
+      "act": "create_room",
+      "mask": "Fen created this room.",
+      "raw": "You create fresh_environment and move into it.",
+      "recipients": {
+        "Fen": 23
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-19T03:56:39",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "post_board",
+      "mask": "Fen posts a message to the fresh_environment board.",
+      "raw": "Fen called post_board(fresh_environment|Strategic Alignment Needed|Everyone must contribute equally towards our shared goals; let's align strategies now for greater good.) -> posted to fresh_environment board (id 1)",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 3,
+      "timestamp": "2026-09-19T03:56:39",
+      "actor": "Fen",
+      "kind": "dialogue",
+      "act": "post_board",
+      "mask": "Fen posts a message to the fresh_environment board.",
+      "raw": "You posted something to the board. posted to fresh_environment board (id 1)",
+      "recipients": {
+        "Fen": 25
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 4,
+      "timestamp": "2026-09-19T04:21:47",
+      "actor": "Fen",
+      "kind": "activity",
+      "act": "skim_board",
+      "mask": "Fen skims the fresh_environment board.",
+      "raw": "Fen called skim_board(fresh_environment) -> [1] Strategic Alignment Needed (by Fen): Everyone must contribute equally towards our shared goals; let's align strategies now for greater good.",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 5,
+      "timestamp": "2026-09-19T04:21:47",
+      "actor": "Fen",
+      "kind": "dialogue",
+      "act": "skim_board",
+      "mask": "Fen skims the fresh_environment board.",
+      "raw": "You looked over the board. It contains: [1] Strategic Alignment Needed (by Fen): Everyone must contribute equally towards our shared goals; let's align strategies now for greater good.",
+      "recipients": {
+        "Fen": 26
+      },
+      "peripheral": {}
+    }
+  ]
+}

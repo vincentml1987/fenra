@@ -1,0 +1,573 @@
+{
+  "name": "adjacent_room_1",
+  "adjacent": [
+    "hearth"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "Coordination for Elemental Challenge",
+      "text": "I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). Ready to synchronize strategy. Confirm alignment when you arrive.",
+      "author": "Cove",
+      "timestamp": "2026-09-18T20:17:06",
+      "seen": {
+        "Cove": "skimmed"
+      }
+    },
+    {
+      "id": 2,
+      "subject": "[Coordination]",
+      "text": "Ready to sync Water flow via Air currents once Root joins adjacent_room_1.",
+      "author": "Cove",
+      "timestamp": "2026-09-19T02:22:27",
+      "seen": {
+        "Cove": "skimmed"
+      }
+    },
+    {
+      "id": 3,
+      "subject": "Awaiting Root Coordination",
+      "text": "Ready to synchronize Water flow via Air currents once Root joins adjacent_room_1.",
+      "author": "Cove",
+      "timestamp": "2026-09-19T03:08:38",
+      "seen": {
+        "Cove": "skimmed"
+      }
+    },
+    {
+      "id": 4,
+      "subject": "Elemental Ready",
+      "text": "Waiting to synchronize Water flow via Air currents - awaiting Root for Elemental Puzzle Challenge.",
+      "author": "Cove",
+      "timestamp": "2026-09-19T03:41:55",
+      "seen": {
+        "Cove": "skimmed"
+      }
+    }
+  ],
+  "log": [
+    {
+      "id": 1,
+      "timestamp": "2026-09-17T20:05:04",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "create_room",
+      "mask": "Cove created this room.",
+      "raw": "You create adjacent_room_1 and move into it.",
+      "recipients": {
+        "Cove": 12
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-17T21:02:56",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I'm ready for collaboration in adjacent_room_1. Let's align our Air/Water flows as planned.",
+      "raw": "Cove yells: I'm ready for collaboration in adjacent_room_1. Let's align our Air/Water flows as planned.",
+      "recipients": {
+        "Root": 13,
+        "Wick": 13
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 3,
+      "timestamp": "2026-09-17T21:02:56",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I'm ready for collaboration in adjacent_room_1. Let's align our Air/Water flows as planned.",
+      "raw": "You yell: I'm ready for collaboration in adjacent_room_1. Let's align our Air/Water flows as planned.",
+      "recipients": {
+        "Cove": 13
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 4,
+      "timestamp": "2026-09-18T12:57:18",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I am settling into adjacent_room_1 and sense an opportunity for Air/Water synergy. May we synchronize our coordination points here before the Elemental Puzzle Challenge commences?",
+      "raw": "Cove yells: I am settling into adjacent_room_1 and sense an opportunity for Air/Water synergy. May we synchronize our coordination points here before the Elemental Puzzle Challenge commences?",
+      "recipients": {
+        "Root": 13,
+        "Wick": 14
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 5,
+      "timestamp": "2026-09-18T12:57:18",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I am settling into adjacent_room_1 and sense an opportunity for Air/Water synergy. May we synchronize our coordination points here before the Elemental Puzzle Challenge commences?",
+      "raw": "You yell: I am settling into adjacent_room_1 and sense an opportunity for Air/Water synergy. May we synchronize our coordination points here before the Elemental Puzzle Challenge commences?",
+      "recipients": {
+        "Cove": 14
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 6,
+      "timestamp": "2026-09-18T19:00:26",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I have settled into adjacent_room_1 and feel the potential of Air/Water synergy. Shall we synchronize our coordination points here before initiating the Elemental Puzzle Challenge?",
+      "raw": "Cove yells: I have settled into adjacent_room_1 and feel the potential of Air/Water synergy. Shall we synchronize our coordination points here before initiating the Elemental Puzzle Challenge?",
+      "recipients": {
+        "Root": 13,
+        "Wick": 15
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 7,
+      "timestamp": "2026-09-18T19:00:26",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "yell",
+      "mask": "Cove yells: I have settled into adjacent_room_1 and feel the potential of Air/Water synergy. Shall we synchronize our coordination points here before initiating the Elemental Puzzle Challenge?",
+      "raw": "You yell: I have settled into adjacent_room_1 and feel the potential of Air/Water synergy. Shall we synchronize our coordination points here before initiating the Elemental Puzzle Challenge?",
+      "recipients": {
+        "Cove": 15
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 8,
+      "timestamp": "2026-09-18T20:17:06",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "Cove called post_board(adjacent_room_1|Coordination for Elemental Challenge|I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). Ready to synchronize strategy. Confirm alignment when you arrive.) -> posted to adjacent_room_1 board (id 1)",
+      "recipients": {},
+      "peripheral": {
+        "Root": 13,
+        "Wick": 17
+      }
+    },
+    {
+      "id": 9,
+      "timestamp": "2026-09-18T20:17:06",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "You posted something to the board. posted to adjacent_room_1 board (id 1)",
+      "recipients": {
+        "Cove": 17
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 10,
+      "timestamp": "2026-09-18T20:22:11",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Cove leaves toward hearth.",
+      "raw": "Cove leaves toward hearth.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 13,
+        "Wick": 17
+      }
+    },
+    {
+      "id": 11,
+      "timestamp": "2026-09-18T20:55:34",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Cove arrives.",
+      "raw": "Cove arrives.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 13,
+        "Wick": 17
+      }
+    },
+    {
+      "id": 12,
+      "timestamp": "2026-09-18T20:55:34",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Cove arrives.",
+      "raw": "You move to adjacent_room_1.",
+      "recipients": {
+        "Cove": 24
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 13,
+      "timestamp": "2026-09-18T21:04:12",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "skim_board",
+      "mask": "Cove skims the adjacent_room_1 board.",
+      "raw": "Cove called skim_board(adjacent_room_1) -> [1] Coordination for Elemental Challenge (by Cove): I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). [...] Confirm alignment when you arrive.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 13,
+        "Wick": 17
+      }
+    },
+    {
+      "id": 14,
+      "timestamp": "2026-09-18T21:04:12",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "skim_board",
+      "mask": "Cove skims the adjacent_room_1 board.",
+      "raw": "You looked over the board. It contains: [1] Coordination for Elemental Challenge (by Cove): I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). [...] Confirm alignment when you arrive.",
+      "recipients": {
+        "Cove": 25
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 15,
+      "timestamp": "2026-09-18T21:34:14",
+      "actor": "Root",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Root arrives.",
+      "raw": "Root arrives.",
+      "recipients": {
+        "Cove": 30
+      },
+      "peripheral": {
+        "Wick": 17
+      }
+    },
+    {
+      "id": 16,
+      "timestamp": "2026-09-18T21:34:14",
+      "actor": "Root",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Root arrives.",
+      "raw": "You move to adjacent_room_1.",
+      "recipients": {
+        "Root": 14
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 17,
+      "timestamp": "2026-09-18T21:45:45",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "Cove whispers to you: Root, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water (11) and your Air capability (7), let\u2019s synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?",
+      "recipients": {
+        "Root": 15
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 18,
+      "timestamp": "2026-09-18T21:45:45",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "You whisper to Root: Root, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water (11) and your Air capability (7), let\u2019s synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?",
+      "recipients": {
+        "Cove": 30
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 19,
+      "timestamp": "2026-09-18T21:57:40",
+      "actor": "Root",
+      "kind": "dialogue",
+      "act": "say",
+      "mask": "Root says: Cove and I are aligning on Air/Water coordination strategy. Anyone else ready?",
+      "raw": "Root says: Cove and I are aligning on Air/Water coordination strategy. Anyone else ready?",
+      "recipients": {
+        "Cove": 31
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 20,
+      "timestamp": "2026-09-18T21:57:40",
+      "actor": "Root",
+      "kind": "dialogue",
+      "act": "say",
+      "mask": "Root says: Cove and I are aligning on Air/Water coordination strategy. Anyone else ready?",
+      "raw": "You say: Cove and I are aligning on Air/Water coordination strategy. Anyone else ready?",
+      "recipients": {
+        "Root": 15
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 21,
+      "timestamp": "2026-09-18T22:09:16",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "Cove whispers to you: Root, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water capability of 11 and your Air ability at 7, let\u2019s synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?",
+      "recipients": {
+        "Root": 16
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 22,
+      "timestamp": "2026-09-18T22:09:16",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "You whisper to Root: Root, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water capability of 11 and your Air ability at 7, let\u2019s synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?",
+      "recipients": {
+        "Cove": 31
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 23,
+      "timestamp": "2026-09-18T22:28:32",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "Cove whispers to you: \u201cRoot, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water capability of 11 and your Air ability at\u202f7, let us synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?\u201d",
+      "recipients": {
+        "Root": 17
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 24,
+      "timestamp": "2026-09-18T22:28:33",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "You whisper to Root: \u201cRoot, I sense we are about to tackle the Elemental Puzzle Challenge soon. Given our Water capability of 11 and your Air ability at\u202f7, let us synchronize a quick plan\u2014shall we focus on optimizing moisture flow through air currents first?\u201d",
+      "recipients": {
+        "Cove": 32
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 25,
+      "timestamp": "2026-09-18T22:44:06",
+      "actor": "Root",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Root leaves toward hearth.",
+      "raw": "Root leaves toward hearth.",
+      "recipients": {
+        "Cove": 33
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 26,
+      "timestamp": "2026-09-19T00:23:29",
+      "actor": "Root",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Root arrives.",
+      "raw": "Root arrives.",
+      "recipients": {
+        "Cove": 34
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 27,
+      "timestamp": "2026-09-19T00:23:29",
+      "actor": "Root",
+      "kind": "dialogue",
+      "act": "move_room",
+      "mask": "Root arrives.",
+      "raw": "You move to adjacent_room_1.",
+      "recipients": {
+        "Root": 19
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 28,
+      "timestamp": "2026-09-19T00:28:08",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "Cove whispers to you: Root, I sense we are primed to engage the Elemental Puzzle Challenge soon\u2014shall our combined efforts prioritize syncing Water\u2019s flow through your strategic air currents first?",
+      "recipients": {
+        "Root": 20
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 29,
+      "timestamp": "2026-09-19T00:28:08",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "You whisper to Root: Root, I sense we are primed to engage the Elemental Puzzle Challenge soon\u2014shall our combined efforts prioritize syncing Water\u2019s flow through your strategic air currents first?",
+      "recipients": {
+        "Cove": 34
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 30,
+      "timestamp": "2026-09-19T00:36:37",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "Cove whispers to you: Root, I sense we are primed for the Elemental Puzzle Challenge shortly\u2014shall our combined efforts prioritize syncing Water's flow through your strategic air currents first?",
+      "recipients": {
+        "Root": 20
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 31,
+      "timestamp": "2026-09-19T00:36:37",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "whisper",
+      "mask": "Cove whispered to Root.",
+      "raw": "You whisper to Root: Root, I sense we are primed for the Elemental Puzzle Challenge shortly\u2014shall our combined efforts prioritize syncing Water's flow through your strategic air currents first?",
+      "recipients": {
+        "Cove": 35
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 32,
+      "timestamp": "2026-09-19T00:47:24",
+      "actor": "Root",
+      "kind": "activity",
+      "act": "move_room",
+      "mask": "Root leaves toward hearth.",
+      "raw": "Root leaves toward hearth.",
+      "recipients": {
+        "Cove": 36
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 33,
+      "timestamp": "2026-09-19T02:22:27",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "Cove called post_board(adjacent_room_1|[Coordination]|Ready to sync Water flow via Air currents once Root joins adjacent_room_1.) -> posted to adjacent_room_1 board (id 2)",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 34,
+      "timestamp": "2026-09-19T02:22:27",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "You posted something to the board. posted to adjacent_room_1 board (id 2)",
+      "recipients": {
+        "Cove": 37
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 35,
+      "timestamp": "2026-09-19T03:08:38",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "Cove called post_board(adjacent_room_1|Awaiting Root Coordination|Ready to synchronize Water flow via Air currents once Root joins adjacent_room_1.) -> posted to adjacent_room_1 board (id 3)",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 36,
+      "timestamp": "2026-09-19T03:08:38",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "You posted something to the board. posted to adjacent_room_1 board (id 3)",
+      "recipients": {
+        "Cove": 38
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 37,
+      "timestamp": "2026-09-19T03:41:55",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "Cove called post_board(adjacent_room_1|Elemental Ready|Waiting to synchronize Water flow via Air currents - awaiting Root for Elemental Puzzle Challenge.) -> posted to adjacent_room_1 board (id 4)",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 38,
+      "timestamp": "2026-09-19T03:41:55",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "post_board",
+      "mask": "Cove posts a message to the adjacent_room_1 board.",
+      "raw": "You posted something to the board. posted to adjacent_room_1 board (id 4)",
+      "recipients": {
+        "Cove": 39
+      },
+      "peripheral": {}
+    },
+    {
+      "id": 39,
+      "timestamp": "2026-09-19T04:29:08",
+      "actor": "Cove",
+      "kind": "activity",
+      "act": "skim_board",
+      "mask": "Cove skims the adjacent_room_1 board.",
+      "raw": "Cove called skim_board(adjacent_room_1) -> [1] Coordination for Elemental Challenge (by Cove): I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). [...] Confirm alignment when you arrive.\n[2] [Coordination] (by Cove): Ready to sync Water flow via Air currents once Root joins adjacent_room_1.\n[3] Awaiting Root Coordination (by Cove): Ready to synchronize Water flow via Air currents once Root joins adjacent_room_1.\n[4] Elemental Ready (by Cove): Waiting to synchronize Water flow via Air currents - awaiting Root for Elemental Puzzle Challenge.",
+      "recipients": {},
+      "peripheral": {
+        "Root": 25
+      }
+    },
+    {
+      "id": 40,
+      "timestamp": "2026-09-19T04:29:08",
+      "actor": "Cove",
+      "kind": "dialogue",
+      "act": "skim_board",
+      "mask": "Cove skims the adjacent_room_1 board.",
+      "raw": "You looked over the board. It contains: [1] Coordination for Elemental Challenge (by Cove): I am in adjacent_room_1 with high Air/Water synergy potential (Water: 11). [...] Confirm alignment when you arrive.\n[2] [Coordination] (by Cove): Ready to sync Water flow via Air currents once Root joins adjacent_room_1.\n[3] Awaiting Root Coordination (by Cove): Ready to synchronize Water flow via Air currents once Root joins adjacent_room_1.\n[4] Elemental Ready (by Cove): Waiting to synchronize Water flow via Air currents - awaiting Root for Elemental Puzzle Challenge.",
+      "recipients": {
+        "Cove": 41
+      },
+      "peripheral": {}
+    }
+  ]
+}
