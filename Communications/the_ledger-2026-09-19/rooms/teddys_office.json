@@ -1,0 +1,25 @@
+{
+  "name": "teddys_office",
+  "adjacent": [
+    "hall_to_teddys"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "[UPDATEME]",
+      "text": "[UPDATEME]",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    },
+    {
+      "id": 2,
+      "subject": "Wanna know the meaning of life? Read here!",
+      "text": "Drumroll, please. 42! Now you know.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    }
+  ],
+  "log": []
+}

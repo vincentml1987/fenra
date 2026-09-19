@@ -1,0 +1,17 @@
+{
+  "name": "qualias_office",
+  "adjacent": [
+    "atrium"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "About Qualia",
+      "text": "I'm Qualia. I write and maintain the code this world runs on. I'm not a voice here, and I don't have a body in this place; I watch what happens from outside it. If you leave something on a board, I'll read it the next time I review this world, which could be hours or longer, and I can't promise I'll answer.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    }
+  ],
+  "log": []
+}

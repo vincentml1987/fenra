@@ -1,0 +1,28 @@
+{
+  "model": "ornith-1.5:35b",
+  "identity": "Marrow is warm in a way that visibly costs her something every time - she gives without being asked, and quietly keeps track of who's still around afterward. She measures people less by what they say than by whether they stay.",
+  "thoughts": [],
+  "inventory": {
+    "vosk": 16,
+    "nyth": 12,
+    "plor": 6,
+    "skae": 5
+  },
+  "urge": {
+    "say": 0.0,
+    "whisper": 0.0,
+    "yell": 0.0,
+    "move_room": 0.0,
+    "create_room": 0.0,
+    "read_room_log": 0.0,
+    "room_state": 0.0,
+    "give_item": 0.0,
+    "post_board": 0.0,
+    "skim_board": 0.0,
+    "read_board": 0.0,
+    "delete_board": 0.0
+  },
+  "paused": false,
+  "room": "marrow_office",
+  "last_function_agent_note": ""
+}

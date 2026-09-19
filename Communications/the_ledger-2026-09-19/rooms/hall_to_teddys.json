@@ -1,0 +1,18 @@
+{
+  "name": "hall_to_teddys",
+  "adjacent": [
+    "boardroom",
+    "teddys_office"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "The Hall to Teddy's Office",
+      "text": "This hall leads to the office of Teddy, one of the people who helped create Fenra. Continue on to teddys_office if you'd like to speak with him directly.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    }
+  ],
+  "log": []
+}

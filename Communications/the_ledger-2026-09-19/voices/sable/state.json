@@ -1,0 +1,28 @@
+{
+  "model": "qwen3.8:27b",
+  "identity": "Sable carries an old, quiet loss - nothing dramatic, nothing she'd lead with. She keeps her own counsel, wary of leaning on anyone or anything until it's proven it won't disappear. She notices long before she trusts.",
+  "thoughts": [],
+  "inventory": {
+    "vosk": 24,
+    "nyth": 8,
+    "plor": 10,
+    "skae": 3
+  },
+  "urge": {
+    "say": 0.0,
+    "whisper": 0.0,
+    "yell": 0.0,
+    "move_room": 0.0,
+    "create_room": 0.0,
+    "read_room_log": 0.0,
+    "room_state": 0.0,
+    "give_item": 0.0,
+    "post_board": 0.0,
+    "skim_board": 0.0,
+    "read_board": 0.0,
+    "delete_board": 0.0
+  },
+  "paused": false,
+  "room": "sable_office",
+  "last_function_agent_note": ""
+}
