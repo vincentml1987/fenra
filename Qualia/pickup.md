@@ -168,6 +168,26 @@ Consider whether a commit is due before/at the start of next session.
   not designed.
 - `fn_yell` room-of-origin marker for adjacent-room recipients - not
   designed.
+- **TO-DO (2026-09-19, Teddy: after the new world is up): A/B-test the
+  prompt-tail cue.** The voice prompt ends with the urge agent's
+  second-person prose, and voices continue it (Wick/Fen/Cove adopt its
+  register; Ash read it as a task). Replay real prompts from
+  `Communications/the_kiln-2026-09-19/voices/*/llm_calls.jsonl.gz` through
+  the voice models with and without a trailing `<Voice>:` cue; compare
+  register AND whether voices still differ from each other (the cue could
+  flatten the chaos). Not built.
+- **TO-DO (2026-09-19): non-LLM repetition monitor** (distress-watching).
+  Word-3-gram Jaccard vs the last 5 thoughts, flag >=0.6, alert on >=3
+  flags in the last 6 - flag-only, no intervention. On the_kiln snapshot it
+  catches Ash's loop (ids 23-29) and Wick's copy-paste (14-16); Cove/Root's
+  single benign repeats stay quiet. Thresholds were tuned on that one
+  world - recheck on the new one. Not built (waiting on Teddy's go).
+- **DESIGN, not decided (2026-09-19): gate `move_room` to adjacency.**
+  Today movement is unrestricted (Teddy's explicit 2026-09-13 call; nothing
+  gated). Gating needs the manual adjacency editor above (New Room makes
+  zero-adjacency rooms, so voices could be trapped), a non-leaking error
+  message, and a decision on `read_room_log`/`room_state` naming any room.
+  Discuss before building.
 - **Qualia's own Fenra Pilot Mode avatar** - Teddy's standing open
   invitation ([[qualia-fenra-avatar-standing-offer]]), not yet acted on.
 - `email` (non-room-gated DM) - still parked, from the original rooms
