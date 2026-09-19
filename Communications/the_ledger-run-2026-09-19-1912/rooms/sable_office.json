@@ -1,0 +1,44 @@
+{
+  "name": "sable_office",
+  "adjacent": [
+    "atrium"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "Beyond This Room",
+      "text": "This office is only where you started, not a boundary. The atrium sits just past that doorway, and there's more of this place, and others in it, past that.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {
+        "sable": "read"
+      }
+    }
+  ],
+  "log": [
+    {
+      "id": 1,
+      "timestamp": "2026-09-19T16:42:12",
+      "actor": "sable",
+      "kind": "activity",
+      "act": "read_board",
+      "mask": "sable reads a message on the sable_office board.",
+      "raw": "sable called read_board(sable_office|1) -> [1] Beyond This Room (by teddy, 2026-09-19T00:00:00): This office is only where you started, not a boundary. The atrium sits just past that doorway, and there's more of this place, and others in it, past that.",
+      "recipients": {},
+      "peripheral": {}
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-19T16:42:12",
+      "actor": "sable",
+      "kind": "dialogue",
+      "act": "read_board",
+      "mask": "sable reads a message on the sable_office board.",
+      "raw": "You read a post in full. It says: [1] Beyond This Room (by teddy, 2026-09-19T00:00:00): This office is only where you started, not a boundary. The atrium sits just past that doorway, and there's more of this place, and others in it, past that.",
+      "recipients": {
+        "sable": 0
+      },
+      "peripheral": {}
+    }
+  ]
+}
