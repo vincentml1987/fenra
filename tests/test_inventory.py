@@ -191,3 +191,15 @@ def test_old_currency_worlds_load_without_upgrade_and_are_flagged(world):
         assert json.load(f)["currencies"] == {"Air": 3.0, "Water": 9.0}   # rides along
     make_voice("Cove", {"zib": 1})
     assert fenra.old_currency_format_voices(W) == []   # Ash was re-saved, so now has an inventory field
+
+
+# ---- v0.21.1: no timestamps in the model-facing history ----------------------
+
+def test_model_history_has_no_timestamps_but_the_gui_render_keeps_them():
+    thoughts = [
+        {"id": 1, "timestamp": "2026-09-19T03:05:47", "speaker": "Ash", "text": "first"},
+        {"id": 2, "timestamp": "2026-09-19T03:15:47", "speaker": "Ash", "text": "second"},
+    ]
+    assert fenra.render_thoughts(thoughts) == "Ash: first\nAsh: second"
+    assert "2026-09-19T03:05:47" in fenra.render_thoughts_for_display(thoughts)
+    assert thoughts[0]["timestamp"] == "2026-09-19T03:05:47"      # stored field untouched

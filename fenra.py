@@ -201,7 +201,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.21.0"
+FENRA_VERSION = "0.21.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -863,21 +863,24 @@ def _unescape_literal_newlines(text):
 
 
 def render_thoughts(thoughts):
-    """Flattens a voice's private thoughts list back into the exact
-    text the model has always received - "[timestamp] speaker: text"
-    per line, newline-joined. Storage/GUI changed (2026-09-10); what
-    Ollama sees given the same content did not. Renamed from
+    """Flattens a voice's private thoughts list into the model-facing
+    history - "speaker: text" per line, newline-joined. Renamed from
     render_messages (2026-09-13) - as of the rooms redesign this only
-    ever renders a voice's own generations, never anyone else's."""
-    return "\n".join(f"[{m['timestamp']}] {m['speaker']}: {m['text']}" for m in thoughts)
+    ever renders a voice's own generations, never anyone else's.
+    Timestamps were dropped from this render on 2026-09-19 (v0.21.1):
+    the "[timestamp] speaker:" line format was being imitated, so voices
+    invented future-dated stamps and events (Root: `2026-10-05T23:47:39`
+    posts that never happened; Fen: `[2036-19T5:47]`). The stored
+    `timestamp` field is untouched - the GUI and analysis still use it."""
+    return "\n".join(f"{m['speaker']}: {m['text']}" for m in thoughts)
 
 
 def render_thoughts_for_display(thoughts):
-    """GUI-only (2026-09-15) - same real per-entry text render_thoughts
-    sends to the model (each already carries its own real timestamp),
-    just with a blank-line divider between entries so a multi-line
-    thought doesn't visually run into the next one. Never used for a
-    real prompt."""
+    """GUI-only (2026-09-15) - the same entries render_thoughts sends to
+    the model, but WITH each entry's real timestamp (the model-facing
+    render dropped them 2026-09-19) and a blank-line divider between
+    entries so a multi-line thought doesn't visually run into the next
+    one. Never used for a real prompt."""
     return "\n\n".join(
         _unescape_literal_newlines(f"[{m['timestamp']}] {m['speaker']}: {m['text']}") for m in thoughts
     )
