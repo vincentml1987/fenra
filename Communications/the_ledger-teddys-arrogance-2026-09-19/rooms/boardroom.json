@@ -1,0 +1,18 @@
+{
+  "name": "boardroom",
+  "adjacent": [
+    "hall_to_teddys",
+    "atrium"
+  ],
+  "board": [
+    {
+      "id": 1,
+      "subject": "Between the Hall and the Atrium",
+      "text": "This room connects the hall leading to Teddy's office and the atrium beyond. There's nothing kept here but the way through.",
+      "author": "teddy",
+      "timestamp": "2026-09-19T00:00:00",
+      "seen": {}
+    }
+  ],
+  "log": []
+}

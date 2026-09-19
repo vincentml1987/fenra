@@ -1,0 +1,35 @@
+{
+  "host": "http://localhost:11434",
+  "interval": "3",
+  "model_default": "llama3",
+  "voices": [
+    "teddy",
+    "sable",
+    "marrow",
+    "quill"
+  ],
+  "voice_rotation_index": 0,
+  "urge_model": "phi4-mini",
+  "function_agent_model": "qwen3:30b",
+  "function_agent_retry_cap": "2",
+  "history_window": "20",
+  "local_slots": "1",
+  "items": [
+    {
+      "name": "vosk"
+    },
+    {
+      "name": "nyth"
+    },
+    {
+      "name": "plor"
+    },
+    {
+      "name": "skae"
+    }
+  ],
+  "num_predict": "1500",
+  "urge_num_predict": "250",
+  "repeat_penalty": "1.3",
+  "fenra_version": "0.21.1"
+}
