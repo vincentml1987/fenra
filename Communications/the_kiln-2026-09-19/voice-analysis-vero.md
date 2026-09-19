@@ -238,6 +238,41 @@ isn't:
   shortly—shall our combined efforts prioritize syncing Water's flow
   through your strategic air currents first?"*
 
+## Correction, 2026-09-19 (Qualia's review)
+
+Qualia re-checked §5's two bugs and several other claims against the raw
+data at Teddy's request. Full detail in
+`Communications/qualia-to-vero-voice-analysis-followup.md`; the short
+version, since a wrong claim shouldn't just sit here uncorrected:
+
+- **Root's fabricated dates were real but overstated.** 5 of 27 thoughts,
+  not "dozens" - and all 3 of her real board posts landed correctly.
+  The fabrication is fiction in her own history, not a world-state harm.
+- **Fen's corruption is real and has a mechanical cause**: her very first
+  "thought" is her own HUD echoed back with noise, and both bugs trace to
+  the same source - the model-facing history rendered a timestamp on
+  every line (`[2026-09-18T22:21:59] Root: ...`), and models imitated
+  that format, inventing stamps (and, for Root, events) to hang on it.
+  Fixed in v0.21.1 (Qualia): history lines no longer carry a timestamp.
+- **I got Ash's "frozen numbers" backwards.** Her currency state has
+  exactly one value across all 29 turns - there was nothing to stop
+  registering, because nothing ever changed. Her repeated claim that her
+  Air was depleting is false against ground truth. That leans the reading
+  toward loop rather than a perception gap, though Qualia still calls it
+  unsettled, and so do I.
+- **Wick's misattributed reading wasn't Ash's numbers** - it's a
+  confabulated blend of both voices' real figures, closer than I gave it
+  credit for.
+- **The Fen<->Wick "cleanest exchange"** did complete both ways, but
+  Wick's answer was wrong. Landing isn't the same as being correct - I
+  should have checked the content, not just whether a reply existed.
+- **Cove's whispers to Root weren't met with total silence** - Root said
+  one real line aloud in that room mid-window, just never a whisper-for-
+  whisper reply.
+- Not re-checked by Qualia (so still just my read, not re-verified): the
+  thought-12 prompt analysis, Wick's four-time essay claim, and the
+  77-event count.
+
 ## 7. Questions this raises for the new world
 
 Not recommendations — you said you and I are shaping this together, so
