@@ -158,6 +158,12 @@ Consider whether a commit is due before/at the start of next session.
 
 ## Open, not yet done (carried forward + new)
 
+- **the_ledger: read the boards in `qualias_office` and `veros_office`** when
+  reviewing each run. The note in my room tells the voices I'll read what
+  they leave there (2026-09-19), so that promise has to be kept. Also
+  still owed: sign off the final world in `Communications/the_ledger-<date>/`
+  once Vero commits it, and the "(human)" tag fix if I ever take the avatar.
+
 - **Teddy's `[URGES]`-naming-functions discomfort** (see #11) - the
   actual next-session starting point, per his own words.
 - **The genetic-algorithm/proto-cell vision** (carried from 2026-09-13,
