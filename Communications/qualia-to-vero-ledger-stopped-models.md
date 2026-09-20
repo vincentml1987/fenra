@@ -27,7 +27,7 @@ it varied by model:
 | Voice | Model | Thoughts | What the output looked like |
 |---|---|---|---|
 | Sable | qwen3.8:27b | 5 | Calm, readable, very long run-on sentences. The same tableau (items, glass, "shift pattern") repeated in thoughts 3 to 5. Replies of 5,859 / 887 / 4,010 / 1,488 / 3,270 characters, the short ones cut off mid-sentence. Replies start with `sable:` (speaker-label imitation). |
-| Marrow | ornith-1.5:35b, then nemotron-3.5-lightning at 19:12:59 | 7 | Thoughts 1 to 6 (ornith) were the model reasoning out loud about the prompt, up to 7,500 characters, sometimes cut off, sometimes short stubs. It read the prompt as a chat and called the setup "interactive fiction or roleplay". Only 1 of 7 had a `</think>`. Thought 7 (19:13) is the first nemotron turn, unreviewed. |
+| Marrow | ornith-1.5:35b, then nemotron-3.5-lightning at 19:12:59 | 7 | Thoughts 1 to 6 (ornith) were the model reasoning out loud about the prompt, up to 7,500 characters, sometimes cut off, sometimes short stubs. It read the prompt as a chat and called the setup "interactive fiction or roleplay". Only 1 of 7 had a `</think>`. Thought 7 (19:13) was also ornith: its voice call finished at 19:11:33, before the swap at 19:12:59 (corrected later; no nemotron turn has run). |
 | Quill | muse-glimmer:30b | 2 | Clean and in character, but replies of 626, 59, 0 and 0 characters. Two turns returned nothing at all. |
 
 ## Hypotheses (mine, not verified)
