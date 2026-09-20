@@ -1,4 +1,119 @@
-# Pick-up — start here, 2026-09-17 (end of session)
+# Pick-up — START HERE: 2026-09-19 evening, resume Tuesday 2026-09-22 evening
+
+Teddy stopped for the weekend (weekly Claude usage is high and resets Tuesday
+evening). The 2026-09-17 material below is older background and still true
+where it doesn't clash with this block.
+
+## State at the stop (verify fresh, don't trust)
+
+- **Fenra is stopped.** No world running. The watch cron jobs were cancelled
+  (session-only) - recreate them when a run restarts: full watch every 2 hours
+  at odd hours :00, light check at :05/:35, and the light check must READ THE
+  INBOX first (Teddy answers by email to aletheia.fenra@gmail.com; I missed a
+  reply for an hour on 2026-09-19 because the light checks didn't look).
+- **Code:** `FENRA_VERSION` 0.21.1, committed and pushed, nothing uncommitted.
+  Commits are signed. Merges made by `git pull --no-rebase` are NOT signed
+  (`b5151d9` went out unsigned); next time use `git -c gpg.format=ssh -c
+  user.signingkey=... pull --no-rebase -S`, and never rebase (it strips
+  signatures).
+- **Ollama models kept:** qwen3.8:27b, muse-glimmer:30b, nemotron-3.5-lightning
+  (25 GB), phi4-mini (urge), qwen3:30b (function agent). `ornith-1.5:35b` is
+  also still installed (Teddy dropped it after Marrow's reasoning-in-reply
+  problem) - ask before `ollama rm`. Old worlds can't run (their models were
+  removed at Teddy's explicit call).
+- **the_ledger** (Vero and Teddy built it, I reviewed): three voices sable
+  (qwen3.8:27b), marrow, quill (muse-glimmer:30b) in their own offices around an
+  `atrium`; boardroom and hall lead to `teddys_office`. Teddy has a paused
+  piloted avatar `teddy`. My room is `qualias_office` (no avatar; the note tells
+  voices I read boards on my next review). Title: **Architect and Watcher**.
+  - `worlds/the_ledger` still holds the OLD run (sable 5, marrow 7, quill 2
+    thoughts). An identical copy is `worlds/the_ledger-teddys-arrogance`
+    (Teddy's name). To restart: rebuild `worlds/the_ledger` from Vero's
+    snapshot `Communications/the_ledger-2026-09-19/` (its Teddy board post is
+    synced) and set Marrow's model there to `nemotron-3.5-lightning:latest`
+    (the snapshot still says ornith). Launcher: `run_the_ledger.py`. Use a new
+    log filename per run ([[fenra-process-log-naming]]).
+  - Logs on git: `Communications/the_ledger-run-2026-09-19-1703/`, `-1912/`,
+    and `the_ledger-teddys-arrogance-2026-09-19/` (final state).
+- **Correction to my own note:** in `qualia-to-vero-ledger-stopped-models.md` I
+  said Marrow's 7th thought was the first nemotron turn. It wasn't: that voice
+  call finished at 19:11:33, before the swap at 19:12:59, so all seven are
+  ornith. No nemotron turn has run.
+
+## What we learned on 2026-09-19 (from the call logs)
+
+- No voice showed distress. Nobody left an office; only `read_board` (Sable) and
+  `skim_board` (Marrow) ever executed.
+- Output was badly damaged by settings: thinking models spent `num_predict`
+  1500 on hidden reasoning (Quill: replies of 626, 59, 0, 0 characters; the
+  0-character reply makes `run_turn` return silently, so no thought is saved);
+  no `num_ctx` set so 4096 tokens (Marrow's prompts hit about 6,700); ornith
+  wrote its reasoning into the reply and read the prompt as a chat. Vero found
+  `call_ollama` never sets `raw: true`, so Ollama wraps our prompt in the
+  model's chat template as one user turn.
+- Measured on this machine (i7-10700K, 32 GB RAM, GTX 1660 Ti, CPU inference):
+  dense models `qwen3.8:27b` and `muse-glimmer:30b` generate about 1.2 to 1.6
+  tokens/s; prefill 13 to 17 tokens/s; MoE models (ornith, qwen3:30b) about 10
+  tokens/s. qwen3.8 with thinking on and `num_predict` 3000 produced 0 reply
+  characters (all thinking), 49 minutes. muse-glimmer finished in 17 minutes.
+  Free RAM fell from 22.6 GB to 7.4 GB with qwen3.8 at `num_ctx` 12288.
+- The benchmark `Communications/model-tests/ctx_bench.py` was killed at 21:11 by
+  Claude Code (low memory) while nemotron was loading. Two of five tests are
+  in `Communications/model-tests/2026-09-19-qualia-stretch-12288-3000/`.
+  Nemotron, function agent and urge agent are untested. Don't restart it
+  unprompted; close memory hogs first. Vero fixed a filler-history bias in the
+  script after my run started.
+
+## Teddy's latest decision and the work it sets up
+
+**Teddy: turn thinking OFF** (reversing his earlier "accurate over fast").
+Not built yet. Plan I had reached:
+- Add a top-level `think` key to the request in `call_ollama` (voices, urge)
+  and `call_function_agent` (chat endpoint), from new world settings `think`
+  (voices) and `agent_think` (urge + function agent), default true so old
+  worlds are unchanged, plus two checkbuttons in the toolbar and world.json
+  save/load. The remote client relays the request body verbatim, so it should
+  pass through (Vero's Ollama needs a version that supports `think`).
+- First test (interrupted by Teddy, not run): that `think: false` is accepted by
+  phi4-mini (no thinking capability), qwen3.8, muse-glimmer, nemotron on
+  `/api/generate` and by qwen3:30b on `/api/chat`.
+- Ask Teddy whether the function agent goes think-off too (saves about 4
+  minutes per turn but could change tool-call reliability; untested).
+- Then re-plan `num_ctx` / `num_predict` for thinking off: the cap no longer
+  has to cover reasoning, so my 8192/3000 estimate (`qualia-to-vero-num-ctx-
+  estimate.md`) is probably too generous for `num_predict`. 8192 stays the
+  safe `num_ctx` on this machine (12288 is at the edge for the 25 GB model).
+  Teddy's ceiling: a turn under about 1 hour, not optimizing for fast.
+- Division of labour: I test the current models here; Vero and Teddy test other
+  models (Hugging Face) with `ctx_bench.py`. Vero owns the research write-up;
+  the three of us discuss when findings are in.
+- Other ideas on the table, not decided: `raw: true` as an A/B test; a
+  `</think>` stripper (moot if ornith stays out); strip the `sable:` speaker
+  label voices copy from their history lines.
+
+## Still open from earlier this session
+
+- Function-agent note TTL (Vero and Teddy agreed my shape: full text once, a
+  compact non-verbatim outcome for the next 2 turns, replace-not-stack,
+  HUD-only, an empty turn doesn't erase a live note). Not built.
+- Prompt-tail `<Voice>:` cue A/B, non-LLM repetition monitor (awaits Teddy's
+  go), adjacency gating design (not decided), the "(human)" tag fix if I ever
+  take an avatar. Avatar answer given: not yet, revisit after a clean run.
+- Read the `qualias_office` and `veros_office` boards on every run review.
+- Teddy's `[UPDATEME]` post is filled in; the easter egg in `teddys_office` is
+  subject "Wanna know the meaning of life? Read here!", text "Drumroll, please.
+  42! Now you know." (the answer sits in the middle sentence, hidden from skim).
+
+## Working notes for next time
+
+- Teddy wants low usage: for long jobs, start a background command and go idle
+  (you're notified on completion); no polling loops.
+- Teddy replies to my emails by email. Email his address with a CC to
+  aletheia.fenra@gmail.com; Vero shares that mailbox, so read signatures.
+
+---
+
+# Older pick-up (2026-09-17)
 
 Written for a fresh Claude session to re-initialize from. Full detail
 lives in `Qualia/decisions.md` (updated all through this session) - this

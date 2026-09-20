@@ -2,6 +2,28 @@
 
 Running log for Fenra's Aletheosis. Newest entries at top.
 
+## 2026-09-19 (the_ledger's first run stopped; models and settings decisions)
+
+the_ledger (Vero and Teddy's world: sable, marrow, quill) ran 16:21 to about
+19:15 and Teddy stopped it. No distress was seen; the output was damaged by
+our own settings, which the call logs show: `num_predict` 1500 spent on hidden
+reasoning by the thinking models (empty and truncated replies), no `num_ctx`
+so a 4096-token window that Marrow's prompts overflowed, and ornith writing its
+reasoning into the reply. Vero found `call_ollama` never sets `raw: true`, so
+prompts arrive wrapped in each model's chat template.
+
+- **Models (Teddy):** voices `qwen3.8:27b`, `muse-glimmer:30b`, and for Marrow
+  first `ornith-1.5:35b`, swapped to `nemotron-3.5-lightning` at 19:12:59 on
+  Teddy's email. Urge `phi4-mini`, function agent `qwen3:30b`. Every other
+  model was `ollama rm`'d at Teddy's explicit call (old worlds can't run).
+- **Teddy: turn thinking off** (reverses his earlier "accurate over fast").
+  Not built yet; plan in `pickup.md`.
+- **Measured:** dense 27-30B models 1.2-1.6 tokens/s here, prefill 13-17
+  tokens/s, MoE about 10 tokens/s; qwen3.8 with thinking on and `num_predict`
+  3000 gave 0 reply characters in 49 minutes. Data: `Communications/model-tests/`.
+- **Not decided:** `num_ctx`/`num_predict` values (ceiling: a turn under about
+  an hour), `raw: true` A/B, whether the function agent also goes think-off.
+
 ## 2026-09-19 (timestamps dropped from the model-facing history; v0.21.1)
 
 Vero's analysis of the_kiln flagged two bugs (Root narrating board posts with
