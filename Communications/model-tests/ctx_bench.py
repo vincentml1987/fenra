@@ -27,17 +27,21 @@ def calls(voice):
         return [json.loads(line) for line in f if line.strip()]
 
 
-def build_history(chars):
-    thoughts = []
-    for v in ("sable", "marrow", "quill"):
-        with open(os.path.join(SNAP, "voices", v, "state.json"), encoding="utf-8") as f:
-            for t in json.load(f)["thoughts"]:
-                thoughts.append((t["timestamp"], v, t["text"]))
-    thoughts.sort()
+def build_history(voice, chars):
+    """Filler padding for ONE voice's own real thoughts only - a real voice's
+    prompt never contains another voice's raw first-person thoughts under a
+    name label, so mixing all three (the original approach) biased every
+    tested voice toward whichever voice had the most real thoughts in the
+    stopped run (marrow, at 7) regardless of which voice's own tail followed.
+    Fixed 2026-09-19 after that showed up as identity confusion in both the
+    Stheno and nemo-gutenberg benchmark runs."""
+    with open(os.path.join(SNAP, "voices", voice, "state.json"), encoding="utf-8") as f:
+        thoughts = [t["text"] for t in json.load(f)["thoughts"]]
+    if not thoughts:
+        return ""
     out, n, i = [], 0, 0
     while n < chars:
-        _, v, text = thoughts[i % len(thoughts)]
-        piece = f"{v}: {text}\n\n"
+        piece = thoughts[i % len(thoughts)] + "\n\n"
         out.append(piece)
         n += len(piece)
         i += 1
@@ -50,7 +54,7 @@ def voice_prompt(voice, model, history_chars):
              for r in calls(voice) if r["kind"] == "voice" and marker in r["prompt"]]
     tail = min(tails, key=len)
     tail = tail.replace("Model: ornith-1.5:35b", f"Model: {model}")
-    return build_history(history_chars) + tail
+    return build_history(voice, history_chars) + tail
 
 
 def real_prompt(kind):
