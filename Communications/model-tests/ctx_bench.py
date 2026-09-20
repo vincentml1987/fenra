@@ -130,16 +130,22 @@ def main():
     ap.add_argument("--function-model", default="qwen3:30b")
     ap.add_argument("--urge-model", default="phi4-mini")
     ap.add_argument("--repeat-penalty", type=float, default=1.3)
+    ap.add_argument("--stop", action="append", default=[],
+                     help="Extra stop sequence for voice calls only (repeatable). "
+                          "e.g. --stop \"Everything below is your HUD\"")
     ap.add_argument("--out", default=os.path.join(HERE, "results"))
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
+    voice_opts = {"num_ctx": a.num_ctx, "num_predict": a.num_predict, "repeat_penalty": a.repeat_penalty}
+    if a.stop:
+        voice_opts["stop"] = a.stop
+
     tests = []
     for pair in a.voice_tests.split(","):
         model, voice = pair.split("=")
-        tests.append((f"voice-{voice}", model, voice_prompt(voice, model, a.history_chars),
-                      {"num_ctx": a.num_ctx, "num_predict": a.num_predict, "repeat_penalty": a.repeat_penalty}))
+        tests.append((f"voice-{voice}", model, voice_prompt(voice, model, a.history_chars), dict(voice_opts)))
     tests.append(("function-agent", a.function_model, real_prompt("function_agent"),
                   {"num_ctx": a.num_ctx, "num_predict": 1000, "repeat_penalty": a.repeat_penalty}))
     tests.append(("urge-agent", a.urge_model, real_prompt("urge_agent"),
