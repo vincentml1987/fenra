@@ -91,6 +91,13 @@ Not built yet. Plan I had reached:
   `</think>` stripper (moot if ornith stays out); strip the `sable:` speaker
   label voices copy from their history lines.
 
+## To discuss with Teddy and Vero (added 2026-09-21)
+
+- **Embedding models.** Teddy just learned about them and has ideas; he wants
+  the three of us to discuss. I don't know his ideas yet: ask him to lay them
+  out first, then think about where they'd fit the architecture (nothing in
+  Fenra uses embeddings today).
+
 ## Still open from earlier this session
 
 - Function-agent note TTL (Vero and Teddy agreed my shape: full text once, a
