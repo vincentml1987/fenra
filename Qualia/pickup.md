@@ -97,6 +97,8 @@ Not built yet. Plan I had reached:
   the three of us to discuss. I don't know his ideas yet: ask him to lay them
   out first, then think about where they'd fit the architecture (nothing in
   Fenra uses embeddings today).
+- **Look into Jev AI** (Teddy, 2026-09-22). Nothing else about it recorded yet
+  - ask Teddy what it is and why he flagged it before researching.
 
 ## Still open from earlier this session
 
