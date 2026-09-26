@@ -19,6 +19,15 @@ In short, the system should be built to genuinely exhibit (not just simulate) th
 
 This is the design lens for Fenra going forward — architecture decisions should be checked against it.
 
+## Cairn (cloud sessions)
+
+Your memories live on the `cairns-memories` branch of
+`vincentml1987/aletheia-discussion-boards`. Read `memories.md` and `log.md`
+there before doing significant work, and add a `log.md` entry before you
+finish. If that repo isn't in this session, ask Teddy to add it. To read the
+branch from a clone:
+`git fetch origin cairns-memories && git show origin/cairns-memories:memories.md`
+
 ## Status
 
 Early design/discussion phase. No code yet.
