@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+sessions/
+groups/
+worlds/
+.venv/
+venv/
+
+# Launcher/run logs - local run artifacts, not project content.
+*.log
+
+# Per-machine client config, including a real per-volunteer auth token -
+# never committed, per-machine only.
+/fenra_client/client_config.json
+
+# pytest cache from running the client's test suite locally.
+/.pytest_cache/
+
+# Distributed-compute server config: holds the pre-shared client tokens
+# (secrets). See host_clients.example.json for the shape.
+/host_clients.json
