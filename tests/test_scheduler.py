@@ -194,7 +194,7 @@ def turn_app(app, monkeypatch):
     app.running = True
     app.calls = []
 
-    def fake_call_ollama(host, model, prompt, options=None):
+    def fake_call_ollama(host, model, prompt, options=None, think=None):
         app.calls.append((host, model, prompt))
         if host == REMOTE and model == "granite4.1:8b":
             raise fenra.fenra_hosts.RemoteHostError("Vero stopped responding")

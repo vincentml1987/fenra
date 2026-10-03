@@ -91,3 +91,32 @@ def test_function_agent_first_attempt_host_loss_propagates_for_a_turn_retry(monk
     monkeypatch.setattr(fenra, "build_function_agent_prompt", lambda *a, **k: "p")
     with pytest.raises(fenra_hosts.RemoteHostError):
         fenra.run_function_agent_turn(REMOTE, "w", "v", "text", "hud", "m")
+
+
+# ---- per-world `think` (v0.22.0) ------------------------------------------
+
+def test_think_is_omitted_from_requests_when_unset(fake):
+    fenra.call_ollama(REMOTE, "m", "hi")
+    fenra.call_function_agent(REMOTE, "m", "system", [])
+    assert all("think" not in request for _, _, request in fake.calls)
+
+
+def test_think_false_reaches_both_request_shapes(fake):
+    fenra.call_ollama(REMOTE, "m", "hi", think=False)
+    fenra.call_function_agent(REMOTE, "m", "system", [], think=False)
+    assert [request["think"] for _, _, request in fake.calls] == [False, False]
+
+
+@pytest.mark.parametrize("stored, expected", [
+    (None, None), (False, False), (True, True),
+    ("false", False), ("True", True), ("", None), ("maybe", None),
+])
+def test_world_think_setting_parses_bool_and_string_values(monkeypatch, stored, expected):
+    state = {} if stored is None else {"think": stored}
+    monkeypatch.setattr(fenra, "load_world_state", lambda name: state)
+    assert fenra.world_think_setting("w") is expected
+
+
+def test_function_agent_think_is_a_separate_key(monkeypatch):
+    monkeypatch.setattr(fenra, "load_world_state", lambda name: {"think": False})
+    assert fenra.world_think_setting("w", "function_agent_think") is None

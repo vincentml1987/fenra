@@ -201,7 +201,7 @@ import requests
 
 import fenra_hosts
 
-FENRA_VERSION = "0.21.1"
+FENRA_VERSION = "0.22.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORLDS_DIR = os.path.join(BASE_DIR, "worlds")
@@ -2243,7 +2243,7 @@ def build_urge_agent_prompt(top_perform):
 
 # ------------------------------------------------------------------ model --
 
-def call_ollama(host, model, prompt, options=None):
+def call_ollama(host, model, prompt, options=None, think=None):
     # No fixed timeout, matching fenras-aletheosis's own REQUEST_TIMEOUT=None
     # (its comment applies here too, unchanged): some models are legitimately
     # slow, and a client-side timeout doesn't cancel server-side generation -
@@ -2257,11 +2257,29 @@ def call_ollama(host, model, prompt, options=None):
     # build the options from world/voice-specific settings; this function
     # doesn't know or care where they came from.
     request = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+    # `think` (2026-10-02, v0.22.0) - per-world, see world_think_setting.
+    # None (the default) leaves the request exactly as it always was.
+    if think is not None:
+        request["think"] = think
     if fenra_hosts.is_remote_host(host):
         return HOSTS.call(host, "generate", request).get("response", "")
     resp = requests.post(f"{host}/api/generate", json=request, timeout=None)
     resp.raise_for_status()
     return resp.json().get("response", "")
+
+
+def world_think_setting(world_name, key="think"):
+    """A world.json `think` / `function_agent_think` value as True, False or
+    None (2026-10-02, v0.22.0). None - unset, or anything unrecognized -
+    means "don't send a think field at all", i.e. today's behavior, so a
+    world only changes if it opts in. Accepts a real bool or the strings
+    "true"/"false" (the window saves most world values as strings)."""
+    value = load_world_state(world_name).get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
 
 
 def list_ollama_models(host):
@@ -2314,7 +2332,7 @@ def build_function_agent_tools():
     return tools
 
 
-def call_function_agent(host, model, system_text, tools, options=None):
+def call_function_agent(host, model, system_text, tools, options=None, think=None):
     """Sibling to call_ollama, but hits /api/chat with a real `tools`
     payload instead of /api/generate - Ollama's native tool-calling only
     lives on the chat endpoint. call_ollama itself is untouched; voice/
@@ -2328,6 +2346,8 @@ def call_function_agent(host, model, system_text, tools, options=None):
         "stream": False,
         "options": options or {},
     }
+    if think is not None:
+        request["think"] = think
     if fenra_hosts.is_remote_host(host):
         return HOSTS.call(host, "chat", request).get("message", {})
     resp = requests.post(f"{host}/api/chat", json=request, timeout=None)
@@ -2444,7 +2464,8 @@ def build_function_agent_prompt(voice_name, voice_text, hud_text, urge_text, rec
 
 
 def run_function_agent_turn(
-    host, world_name, caller_name, voice_text, hud_text, model, urge_text="", options=None, retry_cap=FUNCTION_AGENT_RETRY_CAP
+    host, world_name, caller_name, voice_text, hud_text, model, urge_text="", options=None, retry_cap=FUNCTION_AGENT_RETRY_CAP,
+    think=None,
 ):
     """The real per-turn orchestration, including retry. Dispatches every
     call the function agent returns immediately - a call that succeeds is
@@ -2514,7 +2535,7 @@ def run_function_agent_turn(
             caller_name, voice_text, hud_text, urge_text, recent_corrections, retry_note
         )
         try:
-            message = call_function_agent(host, model, system_text, tools, options)
+            message = call_function_agent(host, model, system_text, tools, options, think=think)
         except fenra_hosts.RemoteHostError:
             if attempt == 0:
                 # Nothing dispatched yet this turn - safe for _tick to
@@ -4550,6 +4571,7 @@ class FenraApp:
                     urge_raw = call_ollama(
                         claimed_host, self.urge_model_var.get(), urge_prompt,
                         options={"num_predict": urge_num_predict, "repeat_penalty": repeat_penalty},
+                        think=world_think_setting(self.world_name),
                     )
                     log_llm_call(
                         self.world_name, active_voice, "urge_agent",
@@ -4610,6 +4632,7 @@ class FenraApp:
                 response = call_ollama(
                     claimed_host, model, prompt,
                     options={"num_predict": num_predict, "repeat_penalty": repeat_penalty},
+                    think=world_think_setting(self.world_name),
                 )
             except requests.RequestException as exc:
                 self.root.after(0, self.status_var.set, f"Error calling {model}: {exc}")
@@ -4639,6 +4662,7 @@ class FenraApp:
                 urge_text=render_urge_lines(urge_snapshot["top_perform"]),
                 options={"num_predict": -1, "repeat_penalty": repeat_penalty},
                 retry_cap=retry_cap,
+                think=world_think_setting(self.world_name, "function_agent_think"),
             )
             apply_urge_tick(self.world_name, active_voice, outcomes)
 
